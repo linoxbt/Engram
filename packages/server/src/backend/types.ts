@@ -76,7 +76,7 @@ export interface FileStore {
   delete(bucket: string, fileId: string): Promise<void>;
 }
 
-export interface User { id: string; email: string; name: string }
+export interface User { id: string; email: string; name: string; emailVerified?: boolean }
 export interface AuthStore {
   signUp(email: string, password: string, name: string): Promise<User>;
   signIn(email: string, password: string): Promise<{ secret: string; userId: string; expire: string }>;
@@ -86,6 +86,19 @@ export interface AuthStore {
   createJwt(secret: string): Promise<string | null>;
   /** Admin lookup for scripts (seeding). */
   findUserByEmail(email: string): Promise<User | null>;
+  /**
+   * Email a password-reset link pointing at `url`. Silent for unknown addresses, so the endpoint
+   * cannot be used to discover accounts. The local backend cannot send email and returns the link.
+   */
+  requestRecovery(email: string, url: string): Promise<{ devLink?: string }>;
+  completeRecovery(userId: string, secret: string, password: string): Promise<void>;
+  /** Email a verification link to the signed-in user. The local backend returns the link instead. */
+  requestVerification(sessionSecret: string, url: string): Promise<{ devLink?: string }>;
+  completeVerification(userId: string, secret: string, sessionSecret: string | null): Promise<void>;
+  updateName(sessionSecret: string, name: string): Promise<User>;
+  updatePassword(sessionSecret: string, oldPassword: string, password: string): Promise<void>;
+  /** Permanently remove the account and every session it holds. */
+  deleteUser(userId: string): Promise<void>;
 }
 
 export interface Jobs {

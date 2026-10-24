@@ -16,7 +16,7 @@ const LiveCtx = createContext<LiveMode>("polling");
 export const useOpenMemory = () => useContext(OpenCtx);
 export const useLiveMode = () => useContext(LiveCtx);
 
-export function SpaceShell({ spaceKey, user, children }: { spaceKey: string; user: { name: string; email: string }; children: ReactNode }) {
+export function SpaceShell({ spaceKey, user, children }: { spaceKey: string; user: { name: string; email: string; emailVerified?: boolean }; children: ReactNode }) {
   const info = useSpaceInfo(spaceKey);
   const live = useLive(spaceKey);
   const [open, setOpen] = useState<string | null>(null);

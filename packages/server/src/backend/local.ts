@@ -18,7 +18,9 @@ interface Db {
   docs: Record<Collection, Record<string, VDoc>>;
   teams: Record<string, { name: string; prefs: object; members: Record<string, string[]> }>;
   files: Record<string, Record<string, { name: string; createdAt: string; b64: string }>>;
-  users: Record<string, { email: string; name: string; hash: string; salt: string }>;
+  users: Record<string, { email: string; name: string; hash: string; salt: string; verified?: boolean }>;
+  /** One-time recovery and verification tokens, keyed by secret. */
+  tokens?: Record<string, { userId: string; kind: "recovery" | "verify"; expire: string }>;
   sessions: Record<string, { userId: string; expire: string }>;
 }
 
@@ -213,10 +215,81 @@ class LocalAuth implements AuthStore {
     const s = this.s.db.sessions[secret];
     if (!s || s.expire < now()) return null;
     const u = this.s.db.users[s.userId];
-    return u ? { id: s.userId, email: u.email, name: u.name } : null;
+    return u ? { id: s.userId, email: u.email, name: u.name, emailVerified: !!u.verified } : null;
   }
   async signOut(secret: string) { delete this.s.db.sessions[secret]; this.s.save(); }
   async createJwt() { return null; }
+  private token(userId: string, kind: "recovery" | "verify", hours: number) {
+    const secret = randomBytes(24).toString("hex");
+    (this.s.db.tokens ??= {})[secret] = { userId, kind, expire: new Date(Date.now() + hours * 3_600_000).toISOString() };
+    this.s.save();
+    return secret;
+  }
+  private useToken(userId: string, secret: string, kind: "recovery" | "verify", invalid: string) {
+    const t = this.s.db.tokens?.[secret];
+    if (!t || t.userId !== userId || t.kind !== kind || t.expire < now()) throw new EngramError("bad_request", invalid);
+    delete this.s.db.tokens![secret];
+  }
+  private link(url: string, userId: string, secret: string) {
+    const u = new URL(url);
+    u.searchParams.set("userId", userId);
+    u.searchParams.set("secret", secret);
+    return u.toString();
+  }
+  async requestRecovery(email: string, url: string) {
+    const e = Object.entries(this.s.db.users).find(([, u]) => u.email === email.toLowerCase());
+    if (!e) return {};
+    const devLink = this.link(url, e[0], this.token(e[0], "recovery", 1));
+    console.info(`[engram] password reset link for ${e[1].email}: ${devLink}`);
+    return { devLink };
+  }
+  async completeRecovery(userId: string, secret: string, password: string) {
+    if (password.length < 8) throw new EngramError("bad_request", "Password must be at least 8 characters.");
+    this.useToken(userId, secret, "recovery", "This reset link is invalid or has expired. Request a new one.");
+    const u = this.s.db.users[userId];
+    if (!u) throw new EngramError("bad_request", "This reset link is invalid or has expired. Request a new one.");
+    u.salt = randomBytes(16).toString("hex");
+    u.hash = scryptSync(password, u.salt, 32).toString("hex");
+    // A reset signs the account out everywhere.
+    for (const [k, v] of Object.entries(this.s.db.sessions)) if (v.userId === userId) delete this.s.db.sessions[k];
+    this.s.save();
+  }
+  async requestVerification(sessionSecret: string, url: string) {
+    const user = await this.getUser(sessionSecret);
+    if (!user) throw new EngramError("unauthorized", "Sign in to continue.");
+    const devLink = this.link(url, user.id, this.token(user.id, "verify", 24 * 7));
+    console.info(`[engram] verification link for ${user.email}: ${devLink}`);
+    return { devLink };
+  }
+  async completeVerification(userId: string, secret: string) {
+    this.useToken(userId, secret, "verify", "This verification link is invalid or has expired. Send a new one from your account.");
+    const u = this.s.db.users[userId];
+    if (u) u.verified = true;
+    this.s.save();
+  }
+  async updateName(sessionSecret: string, name: string): Promise<User> {
+    const user = await this.getUser(sessionSecret);
+    if (!user) throw new EngramError("unauthorized", "Sign in to continue.");
+    this.s.db.users[user.id].name = name;
+    this.s.save();
+    return { ...user, name };
+  }
+  async updatePassword(sessionSecret: string, oldPassword: string, password: string) {
+    const user = await this.getUser(sessionSecret);
+    if (!user) throw new EngramError("unauthorized", "Sign in to continue.");
+    const u = this.s.db.users[user.id];
+    if (!timingSafeEqual(Buffer.from(u.hash, "hex"), scryptSync(oldPassword, u.salt, 32))) throw new EngramError("unauthorized", "Your current password is incorrect.");
+    if (password.length < 8) throw new EngramError("bad_request", "Password must be at least 8 characters.");
+    u.salt = randomBytes(16).toString("hex");
+    u.hash = scryptSync(password, u.salt, 32).toString("hex");
+    this.s.save();
+  }
+  async deleteUser(userId: string) {
+    delete this.s.db.users[userId];
+    for (const [k, v] of Object.entries(this.s.db.sessions)) if (v.userId === userId) delete this.s.db.sessions[k];
+    for (const t of Object.values(this.s.db.teams)) delete t.members[userId];
+    this.s.save();
+  }
   async findUserByEmail(email: string): Promise<User | null> {
     const e = Object.entries(this.s.db.users).find(([, u]) => u.email === email.toLowerCase());
     return e ? { id: e[0], email: e[1].email, name: e[1].name } : null;

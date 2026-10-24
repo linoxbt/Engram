@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CookieSettingsLink } from "./cookie-settings-link";
 import { Wordmark } from "./icons";
 
 export function SiteHeader({ signedIn }: { signedIn?: boolean }) {
@@ -29,7 +30,12 @@ export function SiteFooter() {
     <footer className="border-t border-line">
       <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-6 text-2xs text-muted sm:flex-row sm:justify-between">
         <span>Engram · memory you can prove · built solo for the Appwrite Databases Hackathon, 19–31 October 2026</span>
-        <span>Runs on Appwrite VectorsDB</span>
+        <span className="flex flex-wrap gap-x-4 gap-y-1">
+          <Link href="/legal/terms" className="hover:text-text">Terms</Link>
+          <Link href="/legal/privacy" className="hover:text-text">Privacy</Link>
+          <Link href="/legal/cookies" className="hover:text-text">Cookies</Link>
+          <CookieSettingsLink className="hover:text-text" />
+        </span>
       </div>
     </footer>
   );

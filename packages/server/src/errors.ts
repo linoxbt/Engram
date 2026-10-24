@@ -1,10 +1,10 @@
 export type ErrorCode =
   | "bad_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "too_large"
-  | "rate_limited" | "chain_busy" | "embeddings_unavailable" | "not_sandbox" | "unavailable" | "internal";
+  | "rate_limited" | "chain_busy" | "embeddings_unavailable" | "not_sandbox" | "unavailable" | "cookies_required" | "internal";
 
 const STATUS: Record<ErrorCode, number> = {
   bad_request: 400, unauthorized: 401, forbidden: 403, not_found: 404, conflict: 409, too_large: 413,
-  rate_limited: 429, chain_busy: 503, embeddings_unavailable: 503, not_sandbox: 403, unavailable: 503, internal: 500,
+  rate_limited: 429, chain_busy: 503, embeddings_unavailable: 503, not_sandbox: 403, unavailable: 503, cookies_required: 403, internal: 500,
 };
 
 export class EngramError extends Error {

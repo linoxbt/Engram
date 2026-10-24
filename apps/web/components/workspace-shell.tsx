@@ -5,10 +5,12 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
+import { readConsent } from "@/lib/client/consent";
 import { storageDown, useEachSpace, useHealth, useSpaces } from "@/lib/client/workspace";
 import {
   IconBolt, IconBook, IconChevron, IconCross, IconGrid, IconInbox, IconKey, IconLogo, IconMenu, IconPlug, IconPulse, IconSeal, IconShield, IconSidebar, IconUser, Wordmark,
 } from "./icons";
+import { VerifyBanner } from "./verify-banner";
 
 export type NavItem = { href: string; label: string; icon: ComponentType<{ size?: number }>; exact?: boolean; badge?: number };
 
@@ -30,7 +32,7 @@ const RIGHT_COLLAPSE_KEY = "engram.spacebar.mini";
  * and becomes a drawer under the app bar on phones. The logo always leads to the landing page.
  */
 export function WorkspaceShell({ user, space, header, wide, children }: {
-  user: { name: string; email: string };
+  user: { name: string; email: string; emailVerified?: boolean };
   space?: SpaceSection;
   header?: ReactNode;
   wide?: boolean;
@@ -55,7 +57,8 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
       setRightMini(localStorage.getItem(RIGHT_COLLAPSE_KEY) === "1");
     } catch { /* storage blocked */ }
   }, []);
-  const remember = (key: string, on: boolean) => { try { localStorage.setItem(key, on ? "1" : "0"); } catch { /* storage blocked */ } };
+  // Layout preferences are kept only for visitors who accepted cookies and similar storage.
+  const remember = (key: string, on: boolean) => { if (readConsent() !== "accepted") return; try { localStorage.setItem(key, on ? "1" : "0"); } catch { /* storage blocked */ } };
   const toggleMini = () => setMini((m) => { remember(COLLAPSE_KEY, !m); return !m; });
   const toggleRightMini = () => setRightMini((m) => { remember(RIGHT_COLLAPSE_KEY, !m); return !m; });
 
@@ -180,6 +183,7 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
             {menu ? <IconCross size={16} /> : <IconMenu size={16} />}
           </button>
         </header>
+        {user.emailVerified === false && <VerifyBanner email={user.email} />}
         {header && (
           <div className="sticky top-14 z-10 border-b border-line bg-bg/90 backdrop-blur lg:top-0">{header}</div>
         )}

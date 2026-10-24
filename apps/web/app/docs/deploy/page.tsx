@@ -34,6 +34,15 @@ export default function DeployDocs() {
         <li>Never re-embed in place: the vector hash would break. Create a new collection and copy, or mark a new model from a given sequence number onward.</li>
         <li>Rotate the server key after events where it may have been exposed. Rotating the checkpoint key means publishing the new public key and a new key ID; old checkpoints stay verifiable with the old key.</li>
       </ul>
+
+      <h2>Accounts, email and operations</h2>
+      <ul>
+        <li>Verification and password-reset emails are sent by Appwrite. Add your site&rsquo;s hostname (for example <code>engram-os.netlify.app</code>) as a Web platform in the Appwrite console, or Appwrite will refuse the email links. <code>NEXT_PUBLIC_APP_URL</code> must match it.</li>
+        <li>Signing in requires the visitor to accept cookies; the server rejects sign-in and sign-up without the <code>engram_consent=accepted</code> cookie.</li>
+        <li>Sign-in, sign-up, password resets, verification emails and agent-key creation are rate limited per IP address, account or user.</li>
+        <li>Browser errors are written to the function logs as <code>[engram:client-error]</code> lines. Set <code>ERROR_WEBHOOK_URL</code> to a Slack or Discord incoming webhook to be alerted. Point an uptime monitor at <code>/api/v1/health</code>, which returns 503 when a dependency is down.</li>
+        <li>Set <code>NEXT_PUBLIC_CONTACT_EMAIL</code> to the address shown on the Terms, Privacy and Cookie pages.</li>
+      </ul>
     </>
   );
 }

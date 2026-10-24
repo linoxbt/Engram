@@ -23,6 +23,14 @@ function mapError(e: unknown): unknown {
   }
   return e;
 }
+/** Appwrite only redirects to hosts registered as a platform; say so plainly instead of a raw 400. */
+function authLinkError(e: unknown): unknown {
+  if (e instanceof AppwriteException && e.code === 400 && /url/i.test(e.message)) {
+    return new EngramError("unavailable", "Email links need this site's address added as a Web platform in the Appwrite console.");
+  }
+  if (e instanceof AppwriteException && e.code === 429) return new EngramError("rate_limited", "Too many emails were requested. Try again in a few minutes.");
+  return mapError(e);
+}
 async function call<T>(fn: () => Promise<T>): Promise<T> {
   try { return await fn(); } catch (e) { throw mapError(e); }
 }
@@ -254,7 +262,7 @@ class AppwriteAuth implements AuthStore {
   async getUser(secret: string): Promise<User | null> {
     try {
       const u = await new Account(this.anon().setSession(secret)).get();
-      return { id: u.$id, email: u.email, name: u.name };
+      return { id: u.$id, email: u.email, name: u.name, emailVerified: u.emailVerification };
     } catch { return null; }
   }
   async signOut(secret: string) {
@@ -264,6 +272,57 @@ class AppwriteAuth implements AuthStore {
     const res = await call(() => new Users(this.admin).list({ queries: [Query.equal("email", [email]), Query.limit(1)] }));
     const u = res.users[0];
     return u ? { id: u.$id, email: u.email, name: u.name } : null;
+  }
+  async requestRecovery(email: string, url: string) {
+    try {
+      await new Account(this.anon()).createRecovery({ email, url });
+    } catch (e) {
+      if (e instanceof AppwriteException && e.code === 404) return {}; // unknown address: say nothing
+      throw authLinkError(e);
+    }
+    return {};
+  }
+  async completeRecovery(userId: string, secret: string, password: string) {
+    try {
+      await new Account(this.anon()).updateRecovery({ userId, secret, password });
+    } catch (e) {
+      if (e instanceof AppwriteException && e.code === 400 && /password/i.test(e.message)) throw new EngramError("bad_request", e.message);
+      if (e instanceof AppwriteException && (e.code === 401 || e.code === 404 || e.code === 400)) throw new EngramError("bad_request", "This reset link is invalid or has expired. Request a new one.");
+      throw mapError(e);
+    }
+  }
+  async requestVerification(sessionSecret: string, url: string) {
+    try {
+      await new Account(this.anon().setSession(sessionSecret)).createEmailVerification({ url });
+    } catch (e) {
+      throw authLinkError(e);
+    }
+    return {};
+  }
+  async completeVerification(userId: string, secret: string, sessionSecret: string | null) {
+    const client = sessionSecret ? this.anon().setSession(sessionSecret) : this.anon();
+    try {
+      await new Account(client).updateEmailVerification({ userId, secret });
+    } catch (e) {
+      if (e instanceof AppwriteException && (e.code === 401 || e.code === 404 || e.code === 400)) throw new EngramError("bad_request", "This verification link is invalid or has expired. Send a new one from your account.");
+      throw mapError(e);
+    }
+  }
+  async updateName(sessionSecret: string, name: string): Promise<User> {
+    const u = await call(() => new Account(this.anon().setSession(sessionSecret)).updateName({ name }));
+    return { id: u.$id, email: u.email, name: u.name, emailVerified: u.emailVerification };
+  }
+  async updatePassword(sessionSecret: string, oldPassword: string, password: string) {
+    try {
+      await new Account(this.anon().setSession(sessionSecret)).updatePassword({ password, oldPassword });
+    } catch (e) {
+      if (e instanceof AppwriteException && e.code === 401) throw new EngramError("unauthorized", "Your current password is incorrect.");
+      if (e instanceof AppwriteException && e.code === 400) throw new EngramError("bad_request", e.message);
+      throw mapError(e);
+    }
+  }
+  async deleteUser(userId: string) {
+    await call(() => new Users(this.admin).delete({ userId }));
   }
   async createJwt(secret: string) {
     const u = await this.getUser(secret);

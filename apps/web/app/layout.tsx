@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { AppwritePing } from "@/components/appwrite-ping";
+import { CookieBanner } from "@/components/cookie-banner";
+import { ErrorReporter } from "@/components/error-reporter";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
@@ -29,6 +31,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className="min-h-screen">
         <AppwritePing />
         <Providers>{children}</Providers>
+        <CookieBanner />
+        <ErrorReporter />
       </body>
     </html>
   );

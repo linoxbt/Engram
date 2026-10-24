@@ -11,12 +11,35 @@ async function signIn(page: Page) {
   await page.waitForURL("**/app");
 }
 
+test.describe("cookie consent", () => {
+  test("signing up waits for cookies, and the policies are linked from the banner", async ({ page }) => {
+    await page.goto("/signup");
+    const banner = page.getByRole("dialog", { name: "Engram uses cookies" });
+    await expect(banner).toBeVisible();
+    await expect(banner.getByRole("link", { name: "Privacy Policy" })).toHaveAttribute("href", "/legal/privacy");
+    await banner.getByRole("button", { name: "Decline" }).click();
+    await expect(page.getByText("Engram needs cookies to keep you signed in")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Create account" })).toBeDisabled();
+    await page.getByRole("button", { name: "Accept cookies" }).click();
+    await expect(page.getByText("Engram needs cookies to keep you signed in")).toHaveCount(0);
+    // The server enforces the same rule for clients that skip the page.
+    const res = await page.request.post("/api/auth/login", { data: { email: "x@example.com", password: "x" }, headers: { cookie: "" } });
+    expect([401, 403]).toContain(res.status());
+  });
+});
+
 test.describe.serial("signature path", () => {
+  test.beforeEach(async ({ context, baseURL }) => {
+    await context.addCookies([{ name: "engram_consent", value: "accepted", url: baseURL! }]);
+  });
+
   test("sign up and create a seeded, publicly verifiable sandbox", async ({ page }) => {
     await page.goto("/signup");
     await page.getByLabel("Name").fill("E2E");
     await page.getByLabel("Email").fill(email);
     await page.getByLabel("Password").fill("password123");
+    await expect(page.getByRole("button", { name: "Create account" })).toBeDisabled();
+    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Create account" }).click();
     await page.waitForURL("**/app");
     await page.getByRole("button", { name: /New sandbox/ }).click();
@@ -86,5 +109,24 @@ test.describe.serial("signature path", () => {
     await page.goto(`/verify/${sandbox}`);
     await expect(page.getByText(/Verified through #\d+\./)).toBeVisible();
     await expect(page.getByText("Ada downgraded")).toHaveCount(0);
+  });
+
+  test("a forgotten password can be reset from the emailed link", async ({ page }) => {
+    await page.goto("/login");
+    await page.getByRole("link", { name: "Forgot password?" }).click();
+    await page.getByLabel("Email").fill(email);
+    await page.getByRole("button", { name: "Send reset link" }).click();
+    await expect(page.getByText(/a reset link is on its way/)).toBeVisible();
+    // The local backend cannot send email, so it shows the link instead.
+    await page.getByRole("link", { name: "open the reset link" }).click();
+    await page.getByLabel("New password", { exact: true }).fill("password456");
+    await page.getByLabel("Confirm new password").fill("password456");
+    await page.getByRole("button", { name: "Set new password" }).click();
+    await expect(page.getByRole("heading", { name: "Password changed" })).toBeVisible();
+    await page.goto("/login");
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password").fill("password456");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.waitForURL("**/app");
   });
 });

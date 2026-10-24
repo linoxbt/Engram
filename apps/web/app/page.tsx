@@ -3,6 +3,7 @@ import { currentUser } from "@/lib/server/session";
 import { IconLogo, Wordmark } from "@/components/icons";
 import { CopyCommand } from "@/components/landing/copy-command";
 import { WaveMesh } from "@/components/landing/wave-mesh";
+import { CookieSettingsLink } from "@/components/cookie-settings-link";
 import { ProofPlayground } from "@/components/landing/proof-playground";
 import { Reveal } from "@/components/landing/reveal";
 import { TimeScrubber } from "@/components/landing/time-scrubber";
@@ -223,7 +224,7 @@ export default async function Landing() {
         <div className="mx-auto flex max-w-6xl flex-col gap-3 px-5 py-8 font-mono text-[11px] text-muted sm:flex-row sm:items-center sm:justify-between sm:px-8">
           <span className="flex items-center gap-2"><IconLogo size={16} /> engram · memory you can prove</span>
           <span>Built solo for the Appwrite Databases Hackathon · October 2026</span>
-          <span className="flex gap-4"><Link href="/docs" className="hover:text-text">Docs</Link><Link href="/verify" className="hover:text-text">Verify</Link><a href="https://github.com/linoxbt/Engram" className="hover:text-text">GitHub</a></span>
+          <span className="flex flex-wrap gap-x-4 gap-y-1"><Link href="/docs" className="hover:text-text">Docs</Link><Link href="/verify" className="hover:text-text">Verify</Link><a href="https://github.com/linoxbt/Engram" className="hover:text-text">GitHub</a><Link href="/legal/terms" className="hover:text-text">Terms</Link><Link href="/legal/privacy" className="hover:text-text">Privacy</Link><Link href="/legal/cookies" className="hover:text-text">Cookies</Link><CookieSettingsLink className="hover:text-text" /></span>
         </div>
       </footer>
     </div>
