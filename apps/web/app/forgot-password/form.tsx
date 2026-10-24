@@ -4,13 +4,18 @@ import { useState } from "react";
 import { AuthCard } from "@/components/auth-card";
 import { Button, ErrorNote, Field, Input } from "@/components/ui";
 import { api } from "@/lib/client/api";
+import { useHydrated } from "@/lib/client/hydrated";
 
 export function ForgotForm() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState<{ devLink?: string } | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
-  const submit = async () => {
+  const hydrated = useHydrated();
+  // Read from the form, so an address typed before hydration finished is not lost.
+  const submit = async (form: HTMLFormElement) => {
+    const email = String(new FormData(form).get("email") ?? "");
+    setEmail(email);
     setLoading(true); setError(null);
     try { setSent(await api<{ devLink?: string }>("/api/auth/recovery", { method: "POST", json: { email } })); }
     catch (e) { setError(e); } finally { setLoading(false); }
@@ -25,10 +30,10 @@ export function ForgotForm() {
           {sent.devLink && <p className="break-all text-2xs text-muted">Local backend (no email): <a className="text-text underline" href={sent.devLink}>open the reset link</a></p>}
         </div>
       ) : (
-        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-          <Field label="Email"><Input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+        <form method="post" className="space-y-3" onSubmit={(e) => { e.preventDefault(); void submit(e.currentTarget); }}>
+          <Field label="Email"><Input name="email" type="email" autoComplete="email" required /></Field>
           <ErrorNote error={error} />
-          <Button type="submit" variant="primary" className="w-full" loading={loading}>Send reset link</Button>
+          <Button type="submit" variant="primary" className="w-full" loading={loading} disabled={!hydrated}>Send reset link</Button>
         </form>
       )}
     </AuthCard>
