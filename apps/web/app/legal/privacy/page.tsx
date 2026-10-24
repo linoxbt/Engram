@@ -58,7 +58,8 @@ export default function PrivacyPage() {
       <ul>
         <li><strong>Account data:</strong> until you delete your account.</li>
         <li><strong>Space content:</strong> until you forget the memory, delete the space or delete your account. Deleting your account deletes every space you own.</li>
-        <li><strong>Forgotten memories:</strong> the text and its embedding are erased; a record of the erasure and a salted hash remain so the chain still verifies. The original text cannot be recovered from them.</li>
+        <li><strong>Forgotten memories:</strong> the text, its salt and its embedding are erased, and so are copies built from it: concept labels and summaries are rebuilt without it, summaries derived from it are forgotten too, and recall logs that returned it lose their query text. A record of the erasure and salted hashes remain so the chain still verifies; the original text cannot be recovered from them. Exports you downloaded before the erasure are yours to delete.</li>
+        <li><strong>Exports:</strong> generated on request and sent straight to your browser. We do not keep a copy.</li>
         <li><strong>Sessions:</strong> until you sign out or the session expires.</li>
         <li><strong>Rate-limit counters:</strong> held in memory for at most one hour.</li>
         <li><strong>Error reports and hosting logs:</strong> kept by our hosting provider for its standard log retention period.</li>

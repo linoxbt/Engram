@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { api, ApiError } from "@/lib/client/api";
 import { useConsent } from "@/lib/client/consent";
+import { safeNext } from "@/lib/client/safe-next";
 import { AuthCard } from "./auth-card";
 import { CookieNotice } from "./cookie-notice";
 import { Button, ErrorNote, Field, Input } from "./ui";
@@ -24,7 +25,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     setLoading(true); setError(null);
     try {
       await api(`/api/auth/${mode}`, { method: "POST", json: mode === "signup" ? { email, password, name, acceptTerms: agree } : { email, password } });
-      router.push(next && next.startsWith("/") ? next : "/app");
+      router.push(safeNext(next));
       router.refresh();
     } catch (e) { setError(e); } finally { setLoading(false); }
   };

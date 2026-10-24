@@ -72,7 +72,7 @@ export default function ChainPage() {
       for (let i = 0; i < entries.length; i += 500) pages.push({ entries: entries.slice(i, i + 500), next: i + 500 < entries.length ? String(i + 500) : null });
       let pi = 0;
       const r = await runVerification({
-        space, mode, publicKey: pub, checkpoints,
+        space, mode, publicKey: pub, checkpoints, trust: !info.data?.settings.sandbox,
         fetchPage: async () => pages[pi++] ?? { entries: [], next: null },
         onProgress: (p) => { results = p.results; },
       });

@@ -19,8 +19,13 @@ export const headerHash = (h: Header) => sha256Hex("engram:entry:v1:" + canonica
 /** Round to 5 decimals so float32 storage round-trips to identical integers. */
 export const quantize = (v: number[]) => v.map((x) => Math.round(x * 1e5) / 1e5);
 
-export async function embHash(v: number[]): Promise<string> {
-  const prefix = enc.encode("engram:emb:v1:");
+/**
+ * With a salt (the entry's content salt), the hash cannot be used to test guesses: anyone holding the public
+ * header could otherwise embed a candidate text and compare. The salt is erased with the text on forget.
+ * Unsalted (v1) hashes remain valid for tombstones and for entries written before salting.
+ */
+export async function embHash(v: number[], salt?: string | null): Promise<string> {
+  const prefix = enc.encode(salt ? `engram:emb:v2:${salt}:` : "engram:emb:v1:");
   const buf = new Uint8Array(prefix.length + v.length * 4);
   buf.set(prefix, 0);
   const view = new DataView(buf.buffer);

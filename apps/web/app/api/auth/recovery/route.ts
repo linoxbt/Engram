@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getBackend } from "@engram/server";
+import { getBackend, getConfig } from "@engram/server";
 import { readJson, route } from "@/lib/server/api";
 import { appOrigin } from "@/lib/server/consent";
 import { clientIp, HOUR, MINUTE, rateLimit } from "@/lib/server/rate-limit";
@@ -13,5 +13,5 @@ export const POST = route(async (req) => {
   rateLimit("recovery-ip", clientIp(req), 6, 15 * MINUTE, "Too many reset requests.");
   rateLimit("recovery-email", body.email, 3, HOUR, "Too many reset emails for this address.");
   const r = await getBackend().auth.requestRecovery(body.email, `${appOrigin(req)}/reset-password`);
-  return { ok: true, devLink: r.devLink };
+  return { ok: true, ...(getConfig().devLinks ? { devLink: r.devLink } : {}) };
 });

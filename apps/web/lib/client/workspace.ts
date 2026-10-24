@@ -1,6 +1,6 @@
 "use client";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { api } from "./api";
+import { api, readJson } from "./api";
 import type { Integrity } from "@/components/integrity-badge";
 
 export interface SpaceRow {
@@ -21,7 +21,7 @@ export const useSpaces = () => useQuery({ queryKey: ["spaces"], queryFn: () => a
 
 export const useHealth = () => useQuery({
   queryKey: ["health"],
-  queryFn: () => fetch("/api/v1/health").then((r) => r.json() as Promise<Health>),
+  queryFn: () => fetch("/api/v1/health?fresh=1").then((r) => readJson<Health>(r)),
   staleTime: 30_000,
 });
 

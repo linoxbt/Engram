@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { deleteSpace, EngramError, getBackend, isEngramError, listSpacesForUser, membership } from "@engram/server";
+import { deleteSpace, EngramError, getBackend, isEngramError, isOwnerRole, listSpacesForUser, membership } from "@engram/server";
 import { readJson, route } from "@/lib/server/api";
 import { MINUTE, rateLimit } from "@/lib/server/rate-limit";
 import { clearSession, currentUser, requireUser, sessionSecret } from "@/lib/server/session";
@@ -29,7 +29,7 @@ export const DELETE = route(async (req) => {
   await b.auth.signOut(check.secret);
   for (const space of await listSpacesForUser(b, user.id)) {
     const m = await membership(b, space.key, user.id);
-    if (!m?.roles.includes("owner")) continue;
+    if (!m || !isOwnerRole(m.roles)) continue;
     try {
       await deleteSpace(b, space.key);
     } catch (e) {

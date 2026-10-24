@@ -2,6 +2,10 @@
 
 export interface EngramConfig {
   backend: "appwrite" | "local";
+  /** Set when production would otherwise fall back to the local backend; getBackend() refuses to start. */
+  configError: string | null;
+  /** Return email links in API responses (local backend in development, or ENGRAM_DEV_LINKS=true). */
+  devLinks: boolean;
   appwrite: {
     endpoint: string;
     projectId: string;
@@ -18,6 +22,8 @@ export interface EngramConfig {
   embedPrefixes: boolean;
   localDataDir: string;
   classifierModel: string | null;
+  /** Models a space owner may choose (CLASSIFIER_MODELS, comma-separated, plus CLASSIFIER_MODEL). The operator pays for every call. */
+  allowedModels: string[];
   modelApiKey: string | null;
   /** Required by Anthropic for keys that are not scoped to a workspace. */
   anthropicWorkspaceId: string | null;
@@ -44,9 +50,18 @@ export function getConfig(): EngramConfig {
   if (cached) return cached;
   const endpoint = env("APPWRITE_ENDPOINT") ?? "";
   const backendEnv = env("ENGRAM_BACKEND");
+  const production = env("NODE_ENV") === "production";
+  const missing = ["APPWRITE_ENDPOINT", "APPWRITE_PROJECT_ID", "APPWRITE_API_KEY"].filter((k) => !env(k));
+  // Appwrite when configured. Without it the local backend keeps every screen working in development, but
+  // production must ask for it explicitly: an ephemeral per-instance store silently losing accounts is worse than an error.
+  const backend = backendEnv === "local" || backendEnv === "appwrite" ? backendEnv : missing.length ? (production ? "appwrite" : "local") : "appwrite";
+  const configError = backend === "appwrite" && missing.length
+    ? `Engram is not configured: set ${missing.join(", ")} (or ENGRAM_BACKEND=local for a throwaway demo).`
+    : null;
   cached = {
-    // Appwrite only when it is fully configured; otherwise the local backend keeps every screen working.
-    backend: backendEnv === "local" || backendEnv === "appwrite" ? backendEnv : endpoint && env("APPWRITE_PROJECT_ID") && env("APPWRITE_API_KEY") ? "appwrite" : "local",
+    backend,
+    configError,
+    devLinks: backend === "local" && (!production || bool("ENGRAM_DEV_LINKS", false)),
     appwrite: {
       endpoint,
       projectId: env("APPWRITE_PROJECT_ID") ?? "",
@@ -63,6 +78,7 @@ export function getConfig(): EngramConfig {
     // Serverless filesystems are read-only outside /tmp; there the local backend is ephemeral.
     localDataDir: env("ENGRAM_LOCAL_DIR") ?? (env("AWS_LAMBDA_FUNCTION_NAME") || env("NETLIFY") ? "/tmp/engram-local" : ".engram-local"),
     classifierModel: env("CLASSIFIER_MODEL"),
+    allowedModels: [...new Set([env("CLASSIFIER_MODEL"), ...(env("CLASSIFIER_MODELS") ?? "").split(",").map((x) => x.trim())].filter((x): x is string => !!x))],
     modelApiKey: env("MODEL_API_KEY"),
     anthropicWorkspaceId: env("ANTHROPIC_WORKSPACE_ID"),
     checkpoint: {

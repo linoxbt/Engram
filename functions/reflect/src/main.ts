@@ -16,7 +16,7 @@ export default async (ctx: FnContext) => {
     const targets = data.concept ? [data.concept] : (await b.vectors.query<ConceptMeta>("concepts", { filters: [{ op: "eq", path: "metadata.space", values: [space!.key] }], limit: 200, withVectors: false }))
       .filter((x) => (x.metadata.membersN ?? 0) >= 10).map((x) => x.$id);
     for (const id of targets) {
-      try { const r = await reflect(c, id); results.push({ space: space!.key, concept: id, seq: r.seq }); logJson(ctx, "reflect", results[results.length - 1]); }
+      try { const r = await reflect(c, id); if (r.unchanged) continue; results.push({ space: space!.key, concept: id, seq: r.seq }); logJson(ctx, "reflect", results[results.length - 1]); }
       catch (e) { ctx.error(`reflect ${id}: ${e instanceof Error ? e.message : e}`); }
     }
   }

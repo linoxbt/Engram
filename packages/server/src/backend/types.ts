@@ -104,7 +104,7 @@ export interface AuthStore {
 export interface Jobs {
   /** Ask the checkpoint Function to run for a space. Returns false if no Function is configured. */
   triggerCheckpoint(spaceKey: string): Promise<boolean>;
-  notifyTamper(args: { spaceKey: string; spaceName: string; ownerEmail?: string; message: string }): Promise<void>;
+  notifyTamper(args: { spaceKey: string; spaceName: string; ownerId?: string; message: string }): Promise<void>;
 }
 
 export interface Backend {

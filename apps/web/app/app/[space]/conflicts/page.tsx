@@ -1,6 +1,6 @@
 "use client";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
 import { when } from "@/lib/format";
@@ -16,13 +16,20 @@ export default function ConflictsPage() {
   const toast = useToast();
   const open = useOpenMemory();
   const q = useQuery({ queryKey: ["space", space, "conflicts"], queryFn: () => api<{ pairs: Pair[] }>(`/api/app/spaces/${space}/conflicts`) });
-  const [busy, setBusy] = useState<string | null>(null);
+  // Pending decisions per conflict pair, so overlapping mutations neither clear each other nor double-submit.
+  const [pending, setPending] = useState<Record<string, string>>({});
+  const inFlight = useRef(new Set<string>());
   const resolve = useMutation({
-    mutationFn: (v: { winnerId: string; loserId: string; action: "supersede" | "refine" | "dismiss" }) => api<{ seq: number }>(`/api/app/spaces/${space}/conflicts`, { method: "POST", json: { ...v, reason: v.action === "supersede" ? "Resolved in the conflict inbox" : v.action === "refine" ? "Both true" : "Not a real conflict" } }),
-    onMutate: (v) => setBusy(v.loserId + v.winnerId),
-    onSuccess: (r) => { toast(`Recorded as entry #${r.seq}.`, "ok"); qc.invalidateQueries({ queryKey: ["space", space] }); },
-    onSettled: () => setBusy(null),
+    mutationFn: (v: { pair: string; winnerId: string; loserId: string; action: "supersede" | "refine" | "dismiss" }) => api<{ seq: number }>(`/api/app/spaces/${space}/conflicts`, { method: "POST", json: { winnerId: v.winnerId, loserId: v.loserId, action: v.action, reason: v.action === "supersede" ? "Resolved in the conflict inbox" : v.action === "refine" ? "Both true" : "Not a real conflict" } }),
+    onMutate: (v) => setPending((m) => ({ ...m, [v.pair]: v.action + v.winnerId })),
+    onSuccess: (r) => { toast(`Recorded as entry #${r.seq}.`, "ok"); return qc.invalidateQueries({ queryKey: ["space", space] }); },
+    onSettled: (_r, _e, v) => { inFlight.current.delete(v.pair); setPending((m) => { const n = { ...m }; delete n[v.pair]; return n; }); },
   });
+  const decide = (pair: string, action: "supersede" | "refine" | "dismiss", winnerId: string, loserId: string) => {
+    if (inFlight.current.has(pair)) return;
+    inFlight.current.add(pair);
+    resolve.mutate({ pair, winnerId, loserId, action });
+  };
   return (
     <div className="space-y-4">
       <PageHeader title="Conflict inbox">Two memories disagree and nothing shows which is right. Every decision appends a link entry, so the history shows when and by whom a conflict was settled.</PageHeader>
@@ -41,8 +48,8 @@ export default function ConflictsPage() {
                   <div className="mt-2 flex flex-wrap gap-1.5 text-2xs text-muted">
                     <span>{s.agentName}</span><span>· {when(s.createdAt)}</span>{s.source && <Pill tone="accent">{s.source}</Pill>}<span>· importance {s.importance}</span>
                   </div>
-                  <Button className="mt-3" variant="outline" loading={busy === (i === 0 ? p.b.id + p.a.id : p.a.id + p.b.id) && resolve.variables?.action === "supersede"}
-                    onClick={() => resolve.mutate({ winnerId: s.id, loserId: i === 0 ? p.b.id : p.a.id, action: "supersede" })}>
+                  <Button className="mt-3" variant="outline" loading={pending[key] === "supersede" + s.id} disabled={!!pending[key]}
+                    onClick={() => decide(key, "supersede", s.id, i === 0 ? p.b.id : p.a.id)}>
                     {i === 0 ? "A" : "B"} is right
                   </Button>
                 </div>
@@ -51,8 +58,8 @@ export default function ConflictsPage() {
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-2.5">
               <p className="text-2xs text-muted">{p.reason}</p>
               <div className="flex gap-2">
-                <Button size="sm" variant="ghost" onClick={() => resolve.mutate({ winnerId: p.b.id, loserId: p.a.id, action: "refine" })}>Both true</Button>
-                <Button size="sm" variant="ghost" onClick={() => resolve.mutate({ winnerId: p.b.id, loserId: p.a.id, action: "dismiss" })}>Dismiss</Button>
+                <Button size="sm" variant="ghost" loading={pending[key] === "refine" + p.b.id} disabled={!!pending[key]} onClick={() => decide(key, "refine", p.b.id, p.a.id)}>Both true</Button>
+                <Button size="sm" variant="ghost" loading={pending[key] === "dismiss" + p.b.id} disabled={!!pending[key]} onClick={() => decide(key, "dismiss", p.b.id, p.a.id)}>Dismiss</Button>
               </div>
             </div>
           </Card>

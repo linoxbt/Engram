@@ -1,6 +1,7 @@
 "use client";
 import clsx from "clsx";
-import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ButtonHTMLAttributes, type RefObject, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { createPortal } from "react-dom";
 import { IconCopy, IconCross, IconTick } from "./icons";
 import { shortHash } from "@/lib/format";
 
@@ -141,19 +142,64 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: 
   );
 }
 
-export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean }) {
-  const ref = useRef<HTMLDivElement>(null);
+type Layer = { close: () => void; el: () => HTMLElement | null; trap: boolean };
+const layers: Layer[] = [];
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+const FIELD = 'input:not([disabled]):not([type=hidden]),textarea:not([disabled]),select:not([disabled])';
+const focusables = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.getClientRects().length > 0);
+
+function onLayerKey(e: KeyboardEvent) {
+  const top = layers[layers.length - 1];
+  if (!top || e.defaultPrevented || e.isComposing) return;
+  if (e.key === "Escape") { e.preventDefault(); top.close(); return; }
+  const root = top.el();
+  if (e.key !== "Tab" || !top.trap || !root) return;
+  const els = focusables(root);
+  const active = document.activeElement;
+  if (!els.length) { e.preventDefault(); root.focus(); return; }
+  const first = els[0], last = els[els.length - 1];
+  if (!root.contains(active)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+  else if (e.shiftKey && (active === first || active === root)) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+}
+
+/**
+ * One stack of open overlays: only the topmost handles Escape (and traps Tab when `trap`). Focus moves in once on
+ * open (`field`: first form field, else the layer; `first`: first focusable; `self`: the layer) and returns on close.
+ */
+export function useLayer(open: boolean, onClose: () => void, ref: RefObject<HTMLElement | null>, { trap = true, focus = "field" }: { trap?: boolean; focus?: "field" | "first" | "self" } = {}) {
+  const close = useRef(onClose);
+  useEffect(() => { close.current = onClose; });
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    ref.current?.querySelector<HTMLElement>("input,textarea,button,select")?.focus();
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const layer: Layer = { close: () => close.current(), el: () => ref.current, trap };
+    layers.push(layer);
+    if (layers.length === 1) window.addEventListener("keydown", onLayerKey);
+    const root = ref.current;
+    if (root && !root.contains(document.activeElement)) {
+      const target = focus === "self" ? root : focus === "first" ? focusables(root)[0] : root.querySelector<HTMLElement>(FIELD);
+      (target ?? root).focus({ preventScroll: true });
+    }
+    return () => {
+      layers.splice(layers.indexOf(layer), 1);
+      if (!layers.length) window.removeEventListener("keydown", onLayerKey);
+      const active = document.activeElement;
+      if (prev?.isConnected && (!active || active === document.body || root?.contains(active))) prev.focus({ preventScroll: true });
+    };
+  }, [open, ref, trap, focus]);
+}
+
+/** Overlays render into <body>, out of any transformed or stacking ancestor (a Modal opened from a Drawer). */
+const portal = (node: ReactNode) => (typeof document === "undefined" ? node : createPortal(node, document.body));
+
+export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayer(open, onClose, ref);
   if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-6 anim-fade" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div ref={ref} role="dialog" aria-modal="true" aria-label={title} className={clsx("card max-h-[90vh] w-full overflow-auto", wide ? "sm:max-w-3xl" : "sm:max-w-lg")}>
+  return portal(
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-6 anim-fade" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} className={clsx("card max-h-[90vh] w-full overflow-auto focus:outline-none", wide ? "sm:max-w-3xl" : "sm:max-w-lg")}>
         <header className="flex items-center justify-between border-b border-line px-4 py-3">
           <h2 className="label">{title}</h2>
           <button onClick={onClose} aria-label="Close" className="text-muted hover:text-text"><IconCross /></button>
@@ -166,16 +212,12 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
 
 /** Right-side drawer on desktop, bottom sheet below 900px. Escape closes. */
 export function Drawer({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  const ref = useRef<HTMLElement>(null);
+  useLayer(open, onClose, ref, { focus: "self" });
   if (!open) return null;
-  return (
+  return portal(
     <div className="fixed inset-0 z-40 bg-black/50 anim-fade" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside role="dialog" aria-modal="true" className="absolute bottom-0 right-0 flex max-h-[88vh] w-full flex-col border-t border-line bg-panel min-[900px]:top-0 min-[900px]:max-h-none min-[900px]:w-[560px] min-[900px]:border-l min-[900px]:border-t-0 anim-slide-in">
+      <aside ref={ref} role="dialog" aria-modal="true" tabIndex={-1} className="absolute bottom-0 right-0 flex max-h-[88vh] w-full flex-col border-t border-line bg-panel focus:outline-none min-[900px]:top-0 min-[900px]:max-h-none min-[900px]:w-[560px] min-[900px]:border-l min-[900px]:border-t-0 anim-slide-in">
         <header className="flex items-center justify-between border-b border-line px-4 py-3">
           <div className="min-w-0">{title}</div>
           <button onClick={onClose} aria-label="Close drawer" className="text-muted hover:text-text"><IconCross /></button>
@@ -199,7 +241,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={push}>
       {children}
-      <div aria-live="polite" className="pointer-events-none fixed bottom-4 right-4 z-[60] flex max-w-sm flex-col gap-2">
+      <div aria-live="polite" className="pointer-events-none fixed bottom-4 right-4 z-[90] flex max-w-sm flex-col gap-2">
         {items.map((t) => (
           <div key={t.id} className={clsx("panel anim-slide-in px-3 py-2 text-xs shadow-lg", t.tone === "ok" && "border-valid/50 text-valid", t.tone === "error" && "border-tamper/50 text-tamper")}>{t.text}</div>
         ))}
@@ -215,10 +257,6 @@ export function Stat({ label, value, tone, hint }: { label: string; value: React
       <div className={clsx("mt-1 text-xl tabular", tone === "valid" && "text-valid", tone === "warn" && "text-warn", tone === "tamper" && "text-tamper", tone === "gold" && "text-gold", tone === "muted" && "text-muted")}>{value}</div>
     </div>
   );
-}
-
-export function useStableId(prefix: string) {
-  return `${prefix}-${useId().replace(/:/g, "")}`;
 }
 
 export function PageHeader({ title, children, actions }: { title: string; children?: ReactNode; actions?: ReactNode }) {

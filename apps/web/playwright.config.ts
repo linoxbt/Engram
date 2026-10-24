@@ -32,6 +32,7 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       ENGRAM_BACKEND: "local",
+      ENGRAM_DEV_LINKS: "true",
       ENGRAM_LOCAL_DIR: dir,
       CP_PRIVATE_KEY: raw(privateKey.export({ format: "der", type: "pkcs8" }) as Buffer),
       NEXT_PUBLIC_CP_PUBLIC_KEY: raw(publicKey.export({ format: "der", type: "spki" }) as Buffer),

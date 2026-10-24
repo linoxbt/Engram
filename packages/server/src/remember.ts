@@ -1,13 +1,13 @@
 /** remember: embed, find neighbours, relate, append to the chain, then post-commit work. */
-import { count8, iso, seqOf, type EntryMeta } from "@engram/core";
+import { count8, iso, seqOf, sha256Hex, type EntryMeta } from "@engram/core";
 import { agentNames, bumpAgentStats, requireScope } from "./agents";
 import { append, applyPending, patchDerived, type MemDoc } from "./chain";
 import { assignConcept } from "./concepts";
 import { requestCheckpoint } from "./checkpoints";
 import type { Ctx } from "./context";
 import { embedDocument } from "./embed";
-import { EngramError } from "./errors";
-import { effective, relate, type Neighbour, type Relation, type RelationKind } from "./relate";
+import { EngramError, isConflict } from "./errors";
+import { effective, relate, THRESHOLDS, type Neighbour, type Relation, type RelationKind } from "./relate";
 import { RememberInput } from "./schemas";
 import type { Filter } from "./backend/types";
 
@@ -61,11 +61,53 @@ export async function remember(ctx: Ctx, raw: unknown, opts: RememberOptions = {
   const input = RememberInput.parse(raw);
   const { b, space } = ctx;
 
-  if (input.idempotencyKey) {
-    const [hit] = await b.vectors.query<EntryMeta>("memories", { filters: [spaceF(ctx), { op: "eq", path: "metadata.idem", values: [input.idempotencyKey] }], limit: 1, withVectors: false });
-    if (hit) return { id: hit.$id, seq: seqOf(hit.$id), hash: hit.metadata.hash, status: "created", relations: refsAsRelations(hit.metadata), relateStatus: hit.metadata.d.relateStatus };
+  // Idempotency keys belong to the agent that sent them; another agent's key never matches.
+  const actor = opts.agent ?? ctx.actor;
+  const idem = input.idempotencyKey ? `${actor}:${input.idempotencyKey}` : null;
+  const replay = async () => {
+    const [hit] = await b.vectors.query<EntryMeta>("memories", { filters: [spaceF(ctx), { op: "eq", path: "metadata.idem", values: [idem!] }], limit: 1, withVectors: false });
+    return hit ? { id: hit.$id, seq: seqOf(hit.$id), hash: hit.metadata.hash, status: "created" as const, relations: refsAsRelations(hit.metadata), relateStatus: hit.metadata.d.relateStatus } : null;
+  };
+  if (idem) {
+    const hit = await replay();
+    if (hit) return hit;
   }
   if (!opts.createdAt) await enforceRate(ctx);
+  // Two retries racing each other would both miss the lookup above; a create-first lock lets only one write.
+  const lock = idem ? await takeIdemLock(ctx, idem, replay) : null;
+  if (lock && "id" in lock) return lock;
+  try {
+    return await write(ctx, input, opts, idem);
+  } finally {
+    if (lock) await lock.release();
+  }
+}
+
+async function takeIdemLock(ctx: Ctx, idem: string, replay: () => Promise<RememberResult | null>): Promise<{ release: () => Promise<void> } | RememberResult> {
+  const bucket = ctx.cfg.appwrite.checkpointsBucket;
+  const fileId = `idm_${ctx.space.key}_${(await sha256Hex(idem)).slice(0, 24)}`;
+  const release = () => ctx.b.files.delete(bucket, fileId).catch(() => undefined);
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      await ctx.b.files.put(bucket, fileId, `${fileId}.json`, new TextEncoder().encode(JSON.stringify({ at: iso() })), ctx.b.teamRead(ctx.space.teamId));
+      return { release };
+    } catch (e) {
+      if (!isConflict(e)) throw e;
+      const hit = await replay();
+      if (hit) return hit;
+      // A writer that died holding the lock must not block the key forever.
+      const raw = await ctx.b.files.get(bucket, fileId);
+      let at = 0;
+      try { at = raw ? Date.parse(JSON.parse(new TextDecoder().decode(raw)).at) : 0; } catch { at = 0; }
+      if (Date.now() - at > 60_000) { await release(); continue; }
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+  throw new EngramError("chain_busy", "A request with this idempotency key is still in progress. Retry with the same key.");
+}
+
+async function write(ctx: Ctx, input: RememberInput, opts: RememberOptions, idem: string | null): Promise<RememberResult> {
+  const { b, space } = ctx;
 
   const vector = opts.vector ?? (await embedDocument(ctx, input.text));
   // Earlier entries' effects must be in place before we look at neighbours' status.
@@ -86,7 +128,10 @@ export async function remember(ctx: Ctx, raw: unknown, opts: RememberOptions = {
         agentName: names[n.metadata.agent] ?? n.metadata.agent, subject: n.metadata.subject, kind: n.metadata.kind, distance: n.$distance ?? 1,
       }));
       const res = await relate(ctx, { text: input.text, kind: input.kind, subject: input.subject ?? null, createdAt, agentName: opts.agentName ?? ctx.actorName }, neighbours);
-      relations = res.relations;
+      // One write may retire at most two memories on a classifier's word; further "supersedes" become conflicts
+      // for a person to settle, so one crafted memory cannot wipe a neighbourhood.
+      let retired = 0;
+      relations = res.relations.map((r) => (r.relation === "supersedes" && r.confidence >= THRESHOLDS.supersedes && ++retired > 2 ? { ...r, relation: "contradicts" as const } : r));
       relateStatus = res.status;
     }
   }
@@ -116,7 +161,7 @@ export async function remember(ctx: Ctx, raw: unknown, opts: RememberOptions = {
       contradicts: eff.filter((r) => r.relation === "contradicts").map((r) => r.id),
       related: eff.filter((r) => r.relation === "refines").map((r) => r.id),
     },
-    idem: input.idempotencyKey ?? null,
+    idem,
     relateStatus,
     createdAt: opts.createdAt,
     agent: opts.agent,
@@ -156,7 +201,7 @@ async function retryRelate(ctx: Ctx, id: string, vector: number[], input: Rememb
   const doc = await ctx.b.vectors.get<EntryMeta>("memories", id);
   const res = await relate(ctx, { text: input.text, kind: input.kind, subject: input.subject ?? null, createdAt: doc?.metadata.createdAt ?? iso(), agentName: ctx.actorName },
     near.map((n) => ({ id: n.$id, text: n.metadata.c.text ?? "", createdAt: n.metadata.createdAt, agent: n.metadata.agent, agentName: names[n.metadata.agent] ?? n.metadata.agent, subject: n.metadata.subject, kind: n.metadata.kind, distance: n.$distance ?? 1 })),
-    { timeoutMs: 15_000 });
+    { timeoutMs: 15_000, fallback: true });
   if (res.status === "pending") return;
   for (const r of effective(res.relations)) {
     if (r.relation === "supersedes") await linkFound(ctx, { target: r.id, other: id, kind: "supersede", reason: r.reason });

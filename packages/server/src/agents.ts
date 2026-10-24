@@ -4,7 +4,7 @@ import type { Backend, VDoc } from "./backend/types";
 import { ALL_SCOPES, backgroundDefer, type Ctx, type Scope, type SpaceInfo } from "./context";
 import { getConfig } from "./config";
 import { embedAgentDescription } from "./embed";
-import { EngramError } from "./errors";
+import { EngramError, isConflict } from "./errors";
 import type { CreateAgentInput } from "./schemas";
 import { getSpace } from "./spaces";
 
@@ -66,10 +66,29 @@ export async function listAgents(b: Backend, space: string): Promise<PublicAgent
   return docs.map(toPublicAgent).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
 }
 
+/**
+ * Read-modify-write that only lands on the version it read. Revocation and stats bumps both rewrite the whole
+ * document; unconditional writes let a bump that read before a revoke write `status: "active"` back after it.
+ */
+async function updateAgent(b: Backend, id: string, mutate: (m: AgentMeta) => AgentMeta | null, attempts: number): Promise<AgentDoc | null> {
+  for (let i = 0; ; i++) {
+    const d = await b.vectors.get<AgentMeta>("agents", id);
+    if (!d) return null;
+    const next = mutate(d.metadata);
+    if (!next) return d;
+    try {
+      return await b.vectors.update<AgentMeta>("agents", id, { metadata: next }, undefined, { ifUpdatedAt: d.$updatedAt });
+    } catch (e) {
+      if (!isConflict(e) || i + 1 >= attempts) throw e;
+      await new Promise((r) => setTimeout(r, 20 + Math.random() * 40 * (i + 1)));
+    }
+  }
+}
+
 export async function revokeAgent(b: Backend, space: string, id: string) {
   const d = await b.vectors.get<AgentMeta>("agents", id);
   if (!d || d.metadata.space !== space) throw new EngramError("not_found", "Agent not found.");
-  await b.vectors.update("agents", id, { metadata: { ...d.metadata, status: "revoked" } });
+  await updateAgent(b, id, (m) => (m.status === "revoked" ? null : { ...m, status: "revoked" }), 10);
   authCache.clear();
 }
 
@@ -127,11 +146,11 @@ export function personCtx(b: Backend, space: SpaceInfo, user: { id: string; name
   return { b, cfg: getConfig(), space, actor: `user:${user.id}`, actorName: user.name || "person", scopes: ALL_SCOPES, defer };
 }
 
+/** Best effort: a counter that loses a race is not worth failing the request for, but it must never undo a revoke. */
 export async function bumpAgentStats(b: Backend, id: string, field: "writes" | "recalls") {
   if (id.startsWith("user:")) return;
-  const d = await b.vectors.get<AgentMeta>("agents", id);
-  if (!d) return;
-  const n = Number(d.metadata[field] ?? "0") + 1;
-  await b.vectors.update("agents", id, { metadata: { ...d.metadata, [field]: count8(n), lastSeenAt: iso() } });
+  await updateAgent(b, id, (m) => ({ ...m, [field]: count8(Number(m[field] ?? "0") + 1), lastSeenAt: iso() }), 3).catch((e) => {
+    if (!isConflict(e)) throw e;
+  });
 }
 

@@ -6,7 +6,7 @@ import type { VDoc } from "./backend/types";
 import { patchDerived } from "./chain";
 import type { Ctx } from "./context";
 import { isConflict } from "./errors";
-import { resolveModel } from "./relate";
+import { modelFor } from "./relate";
 
 export interface ConceptMeta {
   space: string;
@@ -67,7 +67,7 @@ export async function labelConcept(ctx: Ctx, id: string): Promise<{ label: strin
   const texts = mems.map((m) => m.metadata.c.text).filter((t): t is string => !!t);
   if (!texts.length) return null;
   let out = heuristicLabel(texts);
-  const model = resolveModel(space.settings.classifierModel ?? ctx.cfg.classifierModel, ctx.cfg.modelApiKey);
+  const model = modelFor(ctx);
   if (model) {
     try {
       const res = await generateText({
@@ -83,8 +83,38 @@ export async function labelConcept(ctx: Ctx, id: string): Promise<{ label: strin
       console.warn("[engram] labeler model failed, using heuristic", e instanceof Error ? e.message : e);
     }
   }
-  await b.vectors.update("concepts", id, { metadata: { ...c.metadata, label: out.label, summary: out.summary, labeledAtMembers: c.metadata.members } });
+  await writeLabel(ctx, id, out, true);
   return out;
+}
+
+/** Conditional label write: never overwrite a concurrent member-count update with a stale copy. */
+async function writeLabel(ctx: Ctx, id: string, out: { label: string; summary: string }, labeled: boolean) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const c = await ctx.b.vectors.get<ConceptMeta>("concepts", id);
+    if (!c) return;
+    const meta: ConceptMeta = { ...c.metadata, label: out.label, summary: out.summary, ...(labeled ? { labeledAtMembers: c.metadata.members } : {}) };
+    try {
+      await ctx.b.vectors.update("concepts", id, { metadata: meta }, undefined, { ifUpdatedAt: c.$updatedAt });
+      return;
+    } catch (e) {
+      if (!isConflict(e) || attempt === 3) throw e;
+    }
+  }
+}
+
+/**
+ * After a forget: labels and summaries are built from member text, so they can quote the forgotten memory.
+ * Rebuild them from what remains, with the rule-based labeller only (no forgotten text is sent to a model).
+ */
+export async function scrubConcept(ctx: Ctx, id: string, forgotten: string) {
+  const mems = await ctx.b.vectors.query<EntryMeta>("memories", {
+    filters: [{ op: "eq", path: "metadata.space", values: [ctx.space.key] }, { op: "eq", path: "metadata.d.concept", values: [id] }, { op: "eq", path: "metadata.status", values: ["active", "superseded"] }],
+    order: { field: "$id", dir: "desc" },
+    limit: 12,
+    withVectors: false,
+  });
+  const texts = mems.filter((m) => m.$id !== forgotten && m.metadata.d.status !== "forgotten").map((m) => m.metadata.c.text).filter((t): t is string => !!t);
+  await writeLabel(ctx, id, texts.length ? heuristicLabel(texts) : { label: "Forgotten memories", summary: "" }, false);
 }
 
 const STOP = new Set("a an the is are was were be been of to in on at for and or by with from as it its this that he she they his her their our we i has have had will would should can could not no yes about over after before into than then there here what when where who which on per".split(" "));

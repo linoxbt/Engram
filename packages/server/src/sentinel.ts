@@ -15,7 +15,7 @@ export async function runSentinel(b: Backend, opts: { spaces?: SpaceInfo[]; rete
       const before = s.settings.integrity?.status;
       const r = await verifyAndRecord(b, s);
       if (r.status === "tampered" && before !== "tampered" && !s.settings.sandbox) {
-        await b.jobs.notifyTamper({ spaceKey: s.key, spaceName: s.settings.name, message: r.findings.find((f) => f.severity === "critical")?.message ?? "Tampering detected." });
+        await b.jobs.notifyTamper({ spaceKey: s.key, spaceName: s.settings.name, ownerId: s.settings.ownerId || undefined, message: r.findings.find((f) => f.severity === "critical")?.message ?? "Tampering detected." });
       }
       const retained = opts.retention !== false && s.settings.retentionDays > 0 && !s.settings.sandbox ? await applyRetention(b, s) : 0;
       out.push({ space: s.key, status: r.status, validThrough: r.validThrough, findings: r.findings.length, retained });

@@ -4,7 +4,9 @@ import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
+import { useSpaceInfo, type SpaceInfoResponse } from "@/lib/client/hooks";
 import { pollInterval } from "@/lib/client/live";
+import { verifySpaceInBrowser } from "@/lib/client/verify";
 import { ChainStrip } from "@/components/chain-strip";
 import { Feed, type FeedItem } from "@/components/feed";
 import { IconTick } from "@/components/icons";
@@ -28,7 +30,7 @@ export default function OverviewPage() {
   const open = useOpenMemory();
   const qc = useQueryClient();
   // Stats and the strip refresh slowly; the cheap feed endpoint carries the live updates.
-  const q = useQuery({ queryKey: ["space", space, "overview"], queryFn: () => api<Overview>(`/api/app/spaces/${space}/overview`), refetchInterval: live === "polling" ? 15_000 : false });
+  const q = useQuery({ queryKey: ["space", space, "overview"], queryFn: () => api<Overview>(`/api/app/spaces/${space}/overview`), refetchInterval: live === "polling" ? 15_000 : 60_000 });
   const feedQ = useQuery({ queryKey: ["space", space, "feed"], queryFn: () => api<{ items: FeedItem[] }>(`/api/app/spaces/${space}/feed?limit=30`), refetchInterval: pollInterval(live) });
   const agents = useQuery({ queryKey: ["space", space, "agents"], queryFn: () => api<{ agents: { lastSeenAt: string | null; status: string }[] }>(`/api/app/spaces/${space}/agents`) });
   const recalls = useQuery({ queryKey: ["space", space, "recalls"], queryFn: () => api<{ recalls: unknown[] }>(`/api/app/spaces/${space}/recalls`) });
@@ -36,6 +38,18 @@ export default function OverviewPage() {
     mutationFn: () => api(`/api/app/spaces/${space}/verify`, { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["space", space] }),
   });
+  // The badge's button recomputes every hash, Merkle root and signature here; the server run after it only refreshes the stored badge.
+  const info = useSpaceInfo(space);
+  const [checked, setChecked] = useState(0);
+  const browserVerify = useMutation({
+    mutationFn: async () => {
+      setChecked(0);
+      const d = info.data ?? (await api<SpaceInfoResponse>(`/api/app/spaces/${space}`));
+      return verifySpaceInBrowser(space, d.publicKey, (p) => setChecked(p.done), !d.settings.sandbox);
+    },
+    onSuccess: () => verify.mutate(),
+  });
+  const browserReport = browserVerify.data;
 
   // New entries slide in.
   const seen = useRef<Set<string> | null>(null);
@@ -67,8 +81,16 @@ export default function OverviewPage() {
         <>
           <div className="grid gap-4 lg:grid-cols-3">
             <div className="lg:col-span-2">
-              <IntegrityBadge integrity={o.integrity} checkpoint={o.latestCheckpoint} size="lg" onVerify={() => verify.mutate()} />
-              {verify.isPending && <p className="mt-2 text-xs text-muted">Verifying on the server… for a trust-nobody check, open the <Link className="text-accent" href={`/app/${space}/chain`}>Chain</Link> page.</p>}
+              <IntegrityBadge integrity={o.integrity} checkpoint={o.latestCheckpoint} size="lg" onVerify={browserVerify.isPending ? undefined : () => browserVerify.mutate()} />
+              {browserVerify.isPending && <p className="mt-2 text-xs text-muted">Recomputing {checked} hashes in your browser…</p>}
+              {browserVerify.error ? <div className="mt-2"><ErrorNote error={browserVerify.error} /></div> : null}
+              {browserReport && !browserVerify.isPending && (
+                <p className={cx("mt-2 text-xs", browserReport.status === "valid" ? "text-valid" : browserReport.status === "warning" ? "text-warn" : "text-tamper")}>
+                  Your browser recomputed {browserReport.entries} entries: {browserReport.status === "tampered"
+                    ? `changed at #${browserReport.findings.find((f) => f.severity === "critical")?.seq ?? browserReport.validThrough + 1}.`
+                    : `verified through #${browserReport.validThrough}${browserReport.status === "warning" ? ", with warnings" : ""}.`} {browserReport.checkpointsValid}/{browserReport.checkpointsTotal} signed checkpoints valid. Details on the <Link className="text-accent" href={`/app/${space}/chain`}>Chain</Link> page.
+                </p>
+              )}
             </div>
             {showChecklist ? (
               <Card title="Get started" className="p-0">

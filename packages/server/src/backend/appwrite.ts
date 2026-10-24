@@ -6,6 +6,7 @@ import { InputFile } from "node-appwrite/file";
 import type { EngramConfig } from "../config";
 import { ConflictError, EngramError, isEngramError } from "../errors";
 import { evaluate } from "./query";
+import { afterFailure, assertNotLocked, type LoginFails } from "./login-guard";
 import { cosine } from "@engram/core";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Filter, Jobs, QuerySpec, TeamInfo, TeamStore, TxOp, User, VDoc, VectorStore,
@@ -186,8 +187,17 @@ class AppwriteTeams implements TeamStore {
     } catch (e) { if (isNotFound(e)) return null; throw mapError(e); }
   }
   async listForUser(userId: string): Promise<TeamInfo[]> {
-    const res = await call(() => this.users.listMemberships({ userId, queries: [Query.limit(100)] }));
-    return res.memberships.map((m) => ({ teamId: m.teamId, name: m.teamName, roles: m.roles }));
+    const out: TeamInfo[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+      const qs = [Query.limit(100), ...(cursor ? [Query.cursorAfter(cursor)] : [])];
+      const res = await call(() => this.users.listMemberships({ userId, queries: qs }));
+      // Invitations not yet accepted are not memberships.
+      for (const m of res.memberships) if (m.confirm) out.push({ teamId: m.teamId, name: m.teamName, roles: m.roles });
+      if (res.memberships.length < 100) break;
+      cursor = res.memberships[res.memberships.length - 1].$id;
+    }
+    return out;
   }
   async listAll(prefix: string) {
     const out: { teamId: string; name: string }[] = [];
@@ -251,11 +261,20 @@ class AppwriteAuth implements AuthStore {
     }
   }
   async signIn(email: string, password: string) {
+    const users = new Users(this.admin);
+    const u = (await call(() => users.list({ queries: [Query.equal("email", [email.trim().toLowerCase()]), Query.limit(1)] }))).users[0];
+    const prefs = (u?.prefs ?? {}) as Record<string, unknown>;
+    const guard = prefs.engramLogin as LoginFails | undefined;
+    assertNotLocked(guard);
     try {
       const s = await new Account(this.admin).createEmailPasswordSession({ email, password });
+      if (u && guard) await users.updatePrefs({ userId: u.$id, prefs: { ...prefs, engramLogin: null } }).catch(() => undefined);
       return { secret: s.secret, userId: s.userId, expire: s.expire };
     } catch (e) {
-      if (e instanceof AppwriteException && (e.code === 401 || e.code === 400)) throw new EngramError("unauthorized", "Invalid email or password.");
+      if (e instanceof AppwriteException && (e.code === 401 || e.code === 400)) {
+        if (u) await users.updatePrefs({ userId: u.$id, prefs: { ...prefs, engramLogin: afterFailure(guard) } }).catch((err) => console.warn("[engram] could not record failed sign-in", err));
+        throw new EngramError("unauthorized", "Invalid email or password.");
+      }
       throw mapError(e);
     }
   }
@@ -285,6 +304,9 @@ class AppwriteAuth implements AuthStore {
   async completeRecovery(userId: string, secret: string, password: string) {
     try {
       await new Account(this.anon()).updateRecovery({ userId, secret, password });
+      // A successful reset proves ownership of the email, so it lifts any sign-in lockout.
+      const users = new Users(this.admin);
+      await users.getPrefs({ userId }).then((p) => (p as Record<string, unknown>).engramLogin ? users.updatePrefs({ userId, prefs: { ...p, engramLogin: null } }) : null).catch(() => undefined);
     } catch (e) {
       if (e instanceof AppwriteException && e.code === 400 && /password/i.test(e.message)) throw new EngramError("bad_request", e.message);
       if (e instanceof AppwriteException && (e.code === 401 || e.code === 404 || e.code === 400)) throw new EngramError("bad_request", "This reset link is invalid or has expired. Request a new one.");
@@ -342,14 +364,15 @@ class AppwriteJobs implements Jobs {
     await call(() => new Functions(this.admin).createExecution({ functionId: fn, async: true, body: JSON.stringify({ space: spaceKey }) }));
     return true;
   }
-  async notifyTamper(args: { spaceKey: string; spaceName: string; ownerEmail?: string; message: string }) {
-    if (!args.ownerEmail || process.env.ENGRAM_ALERT_EMAILS !== "true") return;
+  async notifyTamper(args: { spaceKey: string; spaceName: string; ownerId?: string; message: string }) {
+    if (!args.ownerId || process.env.ENGRAM_ALERT_EMAILS !== "true") return;
     try {
+      // Addressed to the user, so Appwrite Messaging sends it to the account's email target.
       await new Messaging(this.admin).createEmail({
         messageId: ID.unique(),
         subject: `Engram integrity alert: ${args.spaceName}`,
         content: `${args.message}\n\nOpen ${this.cfg.appUrl}/app/${args.spaceKey}/chain to inspect the chain.`,
-        emails: [args.ownerEmail],
+        users: [args.ownerId],
       });
     } catch (e) {
       console.error("[engram] alert email failed", e);

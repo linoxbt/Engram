@@ -2,7 +2,7 @@
 import clsx from "clsx";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, type ComponentType, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
 import { readConsent } from "@/lib/client/consent";
@@ -10,6 +10,7 @@ import { storageDown, useEachSpace, useHealth, useSpaces } from "@/lib/client/wo
 import {
   IconBolt, IconBook, IconChevron, IconCross, IconGrid, IconInbox, IconKey, IconLogo, IconMenu, IconPlug, IconPulse, IconSeal, IconShield, IconSidebar, IconUser, Wordmark,
 } from "./icons";
+import { useLayer } from "./ui";
 import { VerifyBanner } from "./verify-banner";
 
 export type NavItem = { href: string; label: string; icon: ComponentType<{ size?: number }>; exact?: boolean; badge?: number };
@@ -24,6 +25,10 @@ export interface SpaceSection {
 }
 
 const COLLAPSE_KEY = "engram.sidebar.mini";
+const DESKTOP = "(min-width: 64rem)";
+const watchDesktop = (cb: () => void) => { const m = window.matchMedia(DESKTOP); m.addEventListener("change", cb); return () => m.removeEventListener("change", cb); };
+/** Sidebars are always on screen from `lg`; below it they are drawers. The server assumes desktop, so nothing is inert without JS. */
+const useDesktop = () => useSyncExternalStore(watchDesktop, () => window.matchMedia(DESKTOP).matches, () => true);
 const RIGHT_COLLAPSE_KEY = "engram.spacebar.mini";
 
 /**
@@ -45,6 +50,12 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
   const [spaceMenu, setSpaceMenu] = useState(false);
   const [mini, setMini] = useState(false);
   const [rightMini, setRightMini] = useState(false);
+  const desktop = useDesktop();
+  const leftRef = useRef<HTMLElement>(null);
+  const rightRef = useRef<HTMLElement>(null);
+  // Phone drawers: focus moves in on open, Escape closes (only when no modal sits above), and closed ones are inert.
+  useLayer(menu && !desktop, () => setMenu(false), leftRef, { trap: false, focus: "first" });
+  useLayer(spaceMenu && !desktop, () => setSpaceMenu(false), rightRef, { trap: false, focus: "first" });
   const health = useHealth();
   const spaces = useSpaces();
   const conflicts = useEachSpace<{ pairs: unknown[] }>(spaces.data?.spaces, "conflicts", (k) => `/api/app/spaces/${k}/conflicts`, !storageDown(health.data) && !!health.data);
@@ -91,6 +102,8 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
     <div className="flex min-h-screen">
       {/* Left: workspace features. */}
       <aside
+        ref={leftRef}
+        inert={!desktop && !menu}
         className={clsx(
           "fixed bottom-0 left-0 top-14 z-30 flex w-60 max-w-[78vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:top-0 lg:max-w-none lg:translate-x-0",
           menu ? "translate-x-0" : "-translate-x-full",
@@ -134,6 +147,8 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
       {/* Right: the features of the space being viewed. */}
       {space && (
         <aside
+          ref={rightRef}
+          inert={!desktop && !spaceMenu}
           className={clsx(
             // Phones: a drawer from the left, beneath the space header row. Desktop: the right-hand sidebar.
             "fixed bottom-0 left-0 top-[6.5rem] z-30 flex w-60 max-w-[78vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:left-auto lg:right-0 lg:top-0 lg:max-w-none lg:translate-x-0 lg:border-l lg:border-r-0",

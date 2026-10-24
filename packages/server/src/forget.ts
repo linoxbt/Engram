@@ -1,9 +1,10 @@
 /** forget (provable erasure) and link entries (conflict resolution, late findings). */
-import { seqOf, type EntryMeta, type LinkKind } from "@engram/core";
+import { seqOf, tombstoneVector, type EntryMeta, type LinkKind } from "@engram/core";
 import { requireScope } from "./agents";
 import { append, updateNeighbours } from "./chain";
-import type { Ctx } from "./context";
-import { EngramError } from "./errors";
+import { scrubConcept } from "./concepts";
+import { COLLECTION_DIMS, type Ctx } from "./context";
+import { EngramError, isEngramError } from "./errors";
 import { ForgetInput, ResolveInput } from "./schemas";
 
 export interface ForgetResult { forgetEntryId: string; seq: number; target: string; targetSeq: number; status: "forgotten"; erased: boolean }
@@ -36,8 +37,36 @@ export async function forget(ctx: Ctx, raw: unknown, opts: { createdAt?: string 
     erased = await updateNeighbours(ctx, res.id, res.meta.h, 8);
     if (!erased) ctx.defer(() => updateNeighbours(ctx, res.id, res.meta.h, 20));
   }
+  // Text also lives on in places built from it: concept labels, reflect summaries and recall logs.
+  await eraseCopies(ctx, input.id, m.d.concept ?? null).catch((e) => {
+    console.error("[engram] erasing copies failed; retrying in the background", e);
+    ctx.defer(() => eraseCopies(ctx, input.id, m.d.concept ?? null));
+  });
   return { forgetEntryId: res.id, seq: res.seq, target: input.id, targetSeq: seqOf(input.id), status: "forgotten", erased };
 }
+
+export async function eraseCopies(ctx: Ctx, target: string, concept: string | null) {
+  const { b, space } = ctx;
+  if (concept) await scrubConcept(ctx, concept, target);
+  // Summaries derived from the memory restate it, so they are forgotten too (and cascade in turn).
+  const reflections = await b.vectors.query<EntryMeta>("memories", {
+    filters: [{ op: "eq", path: "metadata.space", values: [space.key] }, { op: "eq", path: "metadata.op", values: ["reflect"] }],
+    limit: 500, withVectors: false,
+  });
+  for (const r of reflections) {
+    if (r.metadata.d.status === "forgotten" || !r.metadata.h.refs.derivedFrom.includes(target)) continue;
+    await forget(ctx, { id: r.$id, reason: `Derived from forgotten memory #${seqOf(target)}.` }).catch((e) => {
+      if (!(isEngramError(e) && e.code === "conflict")) throw e;
+    });
+  }
+  // Recall logs keep the query and its results; a query that surfaced the memory may quote it.
+  const logs = await b.vectors.query<{ returned: string[]; query: string }>("recalls", {
+    filters: [{ op: "eq", path: "metadata.space", values: [space.key] }], order: { field: "$id", dir: "desc" }, limit: 1000, withVectors: false,
+  });
+  await Promise.all(logs.filter((l) => l.metadata.returned.includes(target) && l.metadata.query !== REDACTED).map((l) =>
+    b.vectors.update("recalls", l.$id, { embeddings: tombstoneVector(COLLECTION_DIMS.recalls), metadata: { ...l.metadata, query: REDACTED } })));
+}
+const REDACTED = "[redacted: this recall returned a memory that was later forgotten]";
 
 export interface ResolveResult { linkEntryId: string; seq: number; action: LinkKind; winner: string; loser: string }
 

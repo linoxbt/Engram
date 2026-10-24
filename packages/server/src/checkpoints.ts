@@ -4,7 +4,7 @@
  * is configured); verifiers need only the public key.
  */
 import {
-  buildCheckpoint, checkpointFileId, cpSize, iso, signCheckpoint, toBase64, type Anchor, type Checkpoint,
+  buildCheckpoint, checkpointFileId, checkpointProblem, cpSize, iso, signCheckpoint, toBase64, verifySpace, type Anchor, type Checkpoint,
 } from "@engram/core";
 import type { Backend } from "./backend/types";
 import { chainHead, loadChain } from "./chain";
@@ -12,6 +12,7 @@ import { getConfig, type EngramConfig } from "./config";
 import type { Ctx, SpaceInfo } from "./context";
 import { isConflict } from "./errors";
 import { getSpace, updateSettings } from "./spaces";
+import { integrityOf } from "./verify";
 
 const fileCache = new Map<string, Checkpoint>();
 const dec = new TextDecoder();
@@ -26,6 +27,8 @@ export async function loadCheckpoints(b: Backend, spaceKey: string): Promise<Che
       const bytes = await b.files.get(bucket, f.fileId);
       if (!bytes) continue;
       try { cp = JSON.parse(dec.decode(bytes)) as Checkpoint; } catch { continue; }
+      // A malformed file is left to the verifier to report; the engine must never build on it.
+      if (checkpointProblem(cp, spaceKey)) continue;
       fileCache.set(f.fileId, cp);
     }
     out.push(cp);
@@ -55,8 +58,16 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
   const lockId = `cpl_${space.key}_${prev ? prev.seq : "genesis"}`;
   if (!(await takeLock(b, bucket, lockId, space, prev))) return { created: false, reason: "another checkpoint run is extending the latest checkpoint" };
 
-  const entries = await loadChain(b, space.key);
-  const hashes = entries.slice(0, size).map((e) => e.metadata.hash);
+  const entries = (await loadChain(b, space.key)).slice(0, size);
+  // The signer is the trust anchor: it must never certify a chain that does not verify. Without this, anyone who
+  // rewrites or deletes entries after the latest checkpoint gets the change signed on the next scheduled run.
+  const report = await verifySpace({ space: space.key, entries, checkpoints: prev ? [...(await loadCheckpoints(b, space.key))] : [], publicKeyHex: cfg.checkpoint.publicKey ?? undefined });
+  if (entries.length !== size || report.status === "tampered") {
+    await b.files.delete(bucket, lockId).catch(() => undefined);
+    await updateSettings(b, space.key, { integrity: integrityOf(report) }).catch(() => undefined);
+    return { created: false, reason: `refusing to sign: ${report.findings.find((f) => f.severity === "critical")?.message ?? "the chain is incomplete"}` };
+  }
+  const hashes = entries.map((e) => e.metadata.hash);
   let anchor: Anchor | null = null;
   const anchorDue = !space.settings.lastAnchorAt || Date.now() - Date.parse(space.settings.lastAnchorAt) > 3_600_000;
   if (space.settings.anchoring && prev && anchorDue && cfg.anchor.token && cfg.anchor.repo) {

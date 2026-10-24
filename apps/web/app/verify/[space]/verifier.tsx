@@ -2,6 +2,7 @@
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { type Checkpoint, type PublicEntry, type Report } from "@engram/core";
+import { readOk } from "@/lib/client/api";
 import { runVerification } from "@/lib/client/verify";
 import { walkProof, type ProofStep } from "@/lib/client/proof";
 import { shortHash, when } from "@/lib/format";
@@ -12,12 +13,7 @@ import { Button, Card, CopyButton, ErrorNote, Pill, Skeleton, cx } from "@/compo
 
 interface Info { key: string; name: string; publicKey: string | null; keyId: string; latestCheckpoint: { size: number; createdAt: string } | null; sandbox: boolean }
 
-async function get<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error?.message ?? `Request failed (${res.status})`);
-  return data as T;
-}
+const get = <T,>(url: string) => fetch(url).then((r) => readOk<T>(r));
 
 export function PublicVerifier({ space }: { space: string }) {
   const params = useSearchParams();
@@ -39,7 +35,7 @@ export function PublicVerifier({ space }: { space: string }) {
       const { checkpoints } = await get<{ checkpoints: Checkpoint[] }>(`/api/v1/spaces/${space}/checkpoints`);
       const all: PublicEntry[] = [];
       const r = await runVerification({
-        space, mode: "public", publicKey: i.publicKey, checkpoints,
+        space, mode: "public", publicKey: i.publicKey, checkpoints, trust: !i.sandbox,
         fetchPage: async (cursor) => {
           const p = await get<{ entries: PublicEntry[]; next: string | null }>(`/api/v1/spaces/${space}/chain?limit=500${cursor ? `&cursor=${cursor}` : ""}`);
           all.push(...p.entries);

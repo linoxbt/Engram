@@ -32,7 +32,8 @@ export default function ApiDocs() {
       </tbody></table>
       <h2>SDK</h2>
       <pre><code>{`import { Engram } from "engram-sdk";
-const mem = new Engram({ url: process.env.ENGRAM_URL!, key: process.env.ENGRAM_KEY! });
+// publicKey: the checkpoint key you trust, never one the server hands you.
+const mem = new Engram({ url: process.env.ENGRAM_URL!, key: process.env.ENGRAM_KEY!, publicKey: process.env.ENGRAM_CP_PUBLIC_KEY });
 await mem.remember({ text: "Ada prefers email over phone calls.", subject: "customer:ada", kind: "preference" });
 const { memories } = await mem.recall({ query: "How should we contact Ada?", k: 3 });
 const then = await mem.recall({ query: "What plan is Ada on?", asOf: "2026-10-20T12:00:00Z" });

@@ -27,6 +27,25 @@ export async function readJson<T = unknown>(req: NextRequest | Request): Promise
 
 type Params<P> = { params: Promise<P> };
 
+/**
+ * Cookie-authenticated writes must come from our own pages. SameSite=Lax already blocks most cross-site posts;
+ * this also refuses the ones browsers mark as cross-site (and any with a foreign Origin).
+ */
+const hostOf = (url?: string) => { try { return url ? new URL(url).host : null; } catch { return null; } };
+
+export function requireSameOrigin(req: NextRequest | Request) {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return;
+  const site = req.headers.get("sec-fetch-site");
+  if (site === "cross-site") throw new EngramError("forbidden", "Cross-site requests are not allowed.");
+  const origin = req.headers.get("origin");
+  if (origin && origin !== "null") {
+    let host = "";
+    try { host = new URL(origin).host; } catch { host = ""; }
+    const own = [req.headers.get("x-forwarded-host"), req.headers.get("host"), hostOf(process.env.NEXT_PUBLIC_APP_URL)];
+    if (!host || !own.includes(host)) throw new EngramError("forbidden", "Cross-site requests are not allowed.");
+  }
+}
+
 /** Agent-key routes under /api/v1. */
 export function agentRoute<P = Record<string, string>>(scope: Scope | null, fn: (ctx: Ctx, req: NextRequest, params: P) => Promise<unknown>) {
   return async (req: NextRequest, { params }: Params<P>) => {
@@ -44,6 +63,7 @@ export function agentRoute<P = Record<string, string>>(scope: Scope | null, fn: 
 export function spaceRoute<P extends { key: string } = { key: string }>(fn: (ctx: Ctx, access: SpaceAccess, req: NextRequest, params: P) => Promise<unknown>) {
   return async (req: NextRequest, { params }: Params<P>) => {
     try {
+      requireSameOrigin(req);
       const p = await params;
       const access = await requireSpaceAccess(p.key);
       const ctx = personCtx(getBackend(), access.space, access.user, defer);
@@ -59,6 +79,7 @@ export function spaceRoute<P extends { key: string } = { key: string }>(fn: (ctx
 export function route<P = Record<string, string>>(fn: (req: NextRequest, params: P) => Promise<unknown>) {
   return async (req: NextRequest, ctx: Params<P>) => {
     try {
+      requireSameOrigin(req);
       const out = await fn(req, await ctx.params);
       return out instanceof Response ? out : json(out);
     } catch (e) {

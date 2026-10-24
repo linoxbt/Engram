@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { normalize } from "@engram/core";
 import { ConflictError, EngramError } from "../errors";
 import { evaluate } from "./query";
+import { afterFailure, assertNotLocked, type LoginFails } from "./login-guard";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Jobs, QuerySpec, TeamInfo, TeamStore, TxOp, User, VDoc, VectorStore,
 } from "./types";
@@ -200,11 +201,19 @@ class LocalAuth implements AuthStore {
     this.s.save();
     return { id, email, name };
   }
+  private loginFails = new Map<string, LoginFails>();
   async signIn(email: string, password: string) {
     email = email.toLowerCase();
+    assertNotLocked(this.loginFails.get(email));
     const entry = Object.entries(this.s.db.users).find(([, u]) => u.email === email);
-    const ok = entry && timingSafeEqual(Buffer.from(entry[1].hash, "hex"), scryptSync(password, entry[1].salt, 32));
-    if (!entry || !ok) throw new EngramError("unauthorized", "Invalid email or password.");
+    // Hash even for unknown addresses, so response time does not reveal which accounts exist.
+    const derived = scryptSync(password, entry?.[1].salt ?? "engram-timing-pad", 32);
+    const ok = entry && timingSafeEqual(Buffer.from(entry[1].hash, "hex"), derived);
+    if (!entry || !ok) {
+      if (entry) this.loginFails.set(email, afterFailure(this.loginFails.get(email)));
+      throw new EngramError("unauthorized", "Invalid email or password.");
+    }
+    this.loginFails.delete(email);
     const secret = randomBytes(32).toString("hex");
     const expire = new Date(Date.now() + 30 * 86_400_000).toISOString();
     this.s.db.sessions[secret] = { userId: entry[0], expire };
@@ -250,6 +259,7 @@ class LocalAuth implements AuthStore {
     if (!u) throw new EngramError("bad_request", "This reset link is invalid or has expired. Request a new one.");
     u.salt = randomBytes(16).toString("hex");
     u.hash = scryptSync(password, u.salt, 32).toString("hex");
+    this.loginFails.delete(u.email);
     // A reset signs the account out everywhere.
     for (const [k, v] of Object.entries(this.s.db.sessions)) if (v.userId === userId) delete this.s.db.sessions[k];
     this.s.save();

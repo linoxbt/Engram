@@ -159,7 +159,8 @@ export type Rule =
   | "copy"
   | "checkpoint"
   | "signature"
-  | "truncation";
+  | "truncation"
+  | "rollback";
 
 export interface Finding {
   seq: number;

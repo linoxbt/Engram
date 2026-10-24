@@ -71,7 +71,7 @@ export default function LabPage() {
       const checkpoints = (await api<{ checkpoints: Checkpoint[] }>(`/api/app/spaces/${space}/checkpoints`)).checkpoints;
       let done = false;
       const report = await runVerification({
-        space, mode: deep ? "deep" : "standard", publicKey: info.data?.publicKey, checkpoints,
+        space, mode: deep ? "deep" : "standard", publicKey: info.data?.publicKey, checkpoints, trust: false,
         fetchPage: async () => { if (done) return { entries: [], next: null }; done = true; return { entries, next: null }; },
       });
       const crit = report.findings.filter((f) => f.severity === "critical").map((f) => f.seq);

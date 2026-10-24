@@ -19,8 +19,10 @@ interface FnDef { $id: string; name: string; runtime: string; path: string; entr
 const defs: FnDef[] = JSON.parse(readFileSync("appwrite.json", "utf8")).functions;
 
 // Which variables each Function needs; only those present in the environment are set.
-const SHARED = ["APPWRITE_DB_ID", "APPWRITE_CHECKPOINTS_BUCKET", "CP_KEY_ID", "NEXT_PUBLIC_CP_PUBLIC_KEY", "NEXT_PUBLIC_APP_URL", "CLASSIFIER_MODEL", "MODEL_API_KEY", "ANTHROPIC_WORKSPACE_ID", "ENGRAM_EMBED_PREFIXES", "ENGRAM_VECTOR_FILTERS"];
-const VARS: Record<string, string[]> = { checkpoint: [...SHARED, "CP_PRIVATE_KEY", "GITHUB_ANCHOR_TOKEN", "GITHUB_ANCHOR_REPO"], sentinel: [...SHARED, "ENGRAM_ALERT_EMAILS"], labeler: SHARED, reflect: SHARED };
+// Least privilege: the model key only goes to the Functions that call a model.
+const SHARED = ["APPWRITE_DB_ID", "APPWRITE_CHECKPOINTS_BUCKET", "CP_KEY_ID", "NEXT_PUBLIC_CP_PUBLIC_KEY", "NEXT_PUBLIC_APP_URL", "ENGRAM_EMBED_PREFIXES", "ENGRAM_VECTOR_FILTERS"];
+const MODEL = ["CLASSIFIER_MODEL", "CLASSIFIER_MODELS", "MODEL_API_KEY", "ANTHROPIC_WORKSPACE_ID"];
+const VARS: Record<string, string[]> = { checkpoint: [...SHARED, "CP_PRIVATE_KEY", "GITHUB_ANCHOR_TOKEN", "GITHUB_ANCHOR_REPO"], sentinel: [...SHARED, "ENGRAM_ALERT_EMAILS"], labeler: [...SHARED, ...MODEL], reflect: [...SHARED, ...MODEL] };
 
 execFileSync("npx", ["tsx", "--tsconfig", "tsconfig.json", "scripts/build-functions.ts"], { stdio: "inherit" });
 

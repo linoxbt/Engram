@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getBackend } from "@engram/server";
+import { getBackend, getConfig } from "@engram/server";
 import { readJson, route } from "@/lib/server/api";
 import { appOrigin, requireCookieConsent } from "@/lib/server/consent";
 import { clientIp, HOUR, rateLimit } from "@/lib/server/rate-limit";
@@ -26,5 +26,5 @@ export const POST = route(async (req) => {
     console.warn("[engram] verification email not sent", e instanceof Error ? e.message : e);
     return null;
   });
-  return { user, verificationSent: !!verification, devLink: verification?.devLink };
+  return { user, verificationSent: !!verification, ...(getConfig().devLinks ? { devLink: verification?.devLink } : {}) };
 });

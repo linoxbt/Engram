@@ -107,12 +107,16 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
   const { b, space } = ctx;
   const refs: Refs = { ...emptyRefs(), ...draft.refs };
   const vector = draft.vector ?? tombstoneVector(COLLECTION_DIMS.memories);
-  const evh = await embHash(vector);
+  const salt = randomSalt();
+  const evh = await embHash(vector, draft.vector && draft.text != null ? salt : null);
   const perms = b.teamRead(space.teamId);
 
   for (let attempt = 0; attempt < 8; attempt++) {
     await applyPending(ctx);
     const head = await chainHead(b, space.key);
+    // An entry created after applyPending looked may still be pending; its effects must land before we read
+    // the derived state of the memories we touch.
+    if (head && head.metadata.applied === "false") await updateNeighbours(ctx, head.$id, head.metadata.h).catch(() => false);
     const seq = head ? seqOf(head.$id) + 1 : 0;
     const prevHash = head ? head.metadata.hash : await genesis(space.key);
     const headAt = head?.metadata.createdAt ?? "";
@@ -122,7 +126,6 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
     // createdAt never decreases along the chain, even across serverless instances with clock skew.
     const now = iso();
     const createdAt = draft.createdAt ?? (headAt > now ? headAt : now);
-    const salt = randomSalt();
     const h: Header = {
       v: "1",
       space: space.key,
@@ -200,9 +203,18 @@ export async function updateNeighbours(ctx: Ctx, id: string, h: Header, attempts
         data: erase ? { metadata, embeddings: tombstoneVector(COLLECTION_DIMS.memories) } : { metadata },
       });
     }
+    // The entry's own conflicts were computed when it was created, from neighbours read before the create. If a
+    // later entry retired one of them before this update landed, drop it here: a superseded or forgotten memory
+    // cannot be in conflict, and nothing else would ever clear it.
+    let selfMeta = self?.metadata;
+    if (self && selfMeta) {
+      const mine = selfMeta.d.contradictedBy ?? [];
+      const keep = mine.filter((c) => { const st = state.get(c); return !st || st.status === "active"; });
+      if (keep.length !== mine.length) selfMeta = patchMeta(selfMeta, { contradictedBy: keep });
+    }
     // Mark this entry applied in the same transaction, so a crash leaves it visibly pending.
-    if (self && self.metadata.applied === "false") {
-      ops.push({ action: "update", coll: "memories", id, ifUpdatedAt: self.$updatedAt, data: { metadata: { ...self.metadata, applied: "true" } } });
+    if (self && selfMeta && (self.metadata.applied === "false" || selfMeta !== self.metadata)) {
+      ops.push({ action: "update", coll: "memories", id, ifUpdatedAt: self.$updatedAt, data: { metadata: { ...selfMeta, applied: "true" } } });
     }
     if (!ops.length) return true;
     try {

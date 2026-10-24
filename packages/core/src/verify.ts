@@ -65,11 +65,15 @@ export class ChainVerifier {
   private prevSeq = -1;
   private prevCreated = "";
   private state: StateMap = new Map();
+  /** Targets of forget entries whose erasure has not landed yet (applied: "false"). */
+  private erasing = new Set<string>();
+  private trusted?: TrustedCheckpoint;
 
-  constructor(opts: { space: string; mode?: VerifyMode; publicKeyHex?: string }) {
+  constructor(opts: { space: string; mode?: VerifyMode; publicKeyHex?: string; trusted?: TrustedCheckpoint }) {
     this.space = opts.space;
     this.mode = opts.mode ?? "standard";
     this.publicKeyHex = opts.publicKeyHex;
+    this.trusted = opts.trusted;
   }
 
   private add(f: Finding) { this.findings.push(f); }
@@ -142,6 +146,7 @@ export class ChainVerifier {
 
       if (!isPublic(raw)) {
         const m = raw.metadata;
+        if (h.op === "forget" && r.target && m.applied === "false") this.erasing.add(r.target);
         // Rule 4: content.
         if (m.c?.text != null) {
           if (!m.c.salt || (await contentHash(m.c.salt, m.c.text)) !== h.contentHash) {
@@ -150,7 +155,8 @@ export class ChainVerifier {
         }
         // Rule 6: vector (deep mode).
         if (this.mode === "deep" && raw.vector && !isTombstone(raw.vector)) {
-          if ((await embHash(quantize(raw.vector))) !== h.embHash) {
+          const qv = quantize(raw.vector);
+          if ((await embHash(qv)) !== h.embHash && !(m.c?.salt && (await embHash(qv, m.c.salt)) === h.embHash)) {
             this.add({ seq, rule: "vector", severity: "critical", message: `Memory #${seq}'s vector was replaced. Recall results could be poisoned.` });
           }
         }
@@ -189,7 +195,7 @@ export class ChainVerifier {
     const n = this.kept.length;
     const validThrough = crit.length ? Math.min(n, ...crit.map((f) => f.seq)) - 1 : n - 1;
     this.findings.sort((a, b) => a.seq - b.seq || sev(a.severity) - sev(b.severity));
-    const latest = [...checkpoints].sort((a, b) => cpSize(b) - cpSize(a))[0];
+    const latest = checkpoints.filter((cp) => !checkpointProblem(cp, this.space)).sort((a, b) => cpSize(b) - cpSize(a))[0];
     return {
       space: this.space,
       entries: n,
@@ -217,7 +223,9 @@ export class ChainVerifier {
         this.add({ seq, rule: "content", severity: "critical", message: `Memory #${seq}'s content is missing, but no forget entry erased it.` });
       }
       if (want.status === "forgotten" && m.c?.text != null) {
-        this.add({ seq, rule: "content", severity: "critical", message: `Memory #${seq} was forgotten, but text was written back into it.` });
+        // Between a forget entry and its erasure the text is legitimately still there; the forget entry says so.
+        if (this.erasing.has(k.id)) this.add({ seq, rule: "content", severity: "warning", message: `Memory #${seq} is being forgotten; its erasure has not finished yet.` });
+        else this.add({ seq, rule: "content", severity: "critical", message: `Memory #${seq} was forgotten, but text was written back into it.` });
       }
       // Rule 6 (correction): tombstone vectors only where nothing should be found.
       if (this.mode === "deep" && e.vector) {
@@ -249,8 +257,18 @@ export class ChainVerifier {
     }
   }
 
-  private async checkCheckpoints(checkpoints: Checkpoint[]): Promise<number> {
-    if (!checkpoints.length) return 0;
+  private async checkCheckpoints(all: Checkpoint[]): Promise<number> {
+    // Shape first: a hostile size like "1e12" must become a finding, not a Merkle computation over a trillion leaves.
+    const checkpoints = all.filter((cp) => {
+      const problem = checkpointProblem(cp, this.space);
+      if (problem) this.add({ seq: Math.max(0, this.kept.length - 1), rule: "checkpoint", severity: "critical", message: `A checkpoint file is malformed (${problem}). It was altered outside Engram.` });
+      return !problem;
+    });
+    if (checkpoints.length && !this.publicKeyHex) {
+      this.add({ seq: Math.max(0, this.kept.length - 1), rule: "signature", severity: "warning", message: "Checkpoint signatures were not checked: no public key was given to the verifier." });
+    }
+    const t = this.trusted;
+    if (!checkpoints.length && !t) return 0;
     const sorted = [...checkpoints].sort((a, b) => cpSize(a) - cpSize(b));
     const leaves = await Promise.all(this.kept.map((k) => leafHash(fromHex(k.hash))));
     const memo = new Map<string, Uint8Array>();
@@ -310,8 +328,34 @@ export class ChainVerifier {
       if (ok) { valid++; lastGoodSize = size; }
       prev = cp;
     }
+
+    // Rollback: a checkpoint this verifier saw before must still be covered. A server that drops newer entries
+    // and serves only older, validly signed checkpoints passes every other check.
+    if (t && Number.isSafeInteger(t.size) && t.size > 0) {
+      const newest = sorted.length ? cpSize(sorted[sorted.length - 1]) : 0;
+      if (t.size > this.kept.length || newest < t.size) {
+        this.add({ seq: Math.min(this.kept.length, t.size - 1), rule: "rollback", severity: "critical", message: `This space previously had a signed checkpoint over ${t.size} entries; it now ${newest ? `only covers ${newest}` : "has none"} and the chain has ${this.kept.length}. History was rolled back.` });
+      } else if (toHex(await rootOf(0, t.size)) !== t.root) {
+        this.add({ seq: 0, rule: "rollback", severity: "critical", message: `The first ${t.size} entries no longer match a checkpoint this verifier saw before. History was rewritten.` });
+      }
+    }
     return valid;
   }
+}
+
+export interface TrustedCheckpoint { size: number; root: string }
+
+/** Every field a verifier relies on, checked before use. */
+export function checkpointProblem(cp: unknown, space?: string): string | null {
+  if (!cp || typeof cp !== "object") return "not an object";
+  const c = cp as Record<string, unknown>;
+  if (c.v !== "1") return "unknown format version";
+  if (typeof c.size !== "string" || !/^\d{8}$/.test(c.size) || Number(c.size) < 1) return "size is not a positive 8-digit count";
+  if (typeof c.seq !== "string" || c.seq !== seqStr(Number(c.size) - 1)) return "seq does not match size";
+  for (const k of ["head", "root"]) if (typeof c[k] !== "string" || !/^[0-9a-f]{64}$/.test(c[k] as string)) return `${k} is not a hash`;
+  if (typeof c.sig !== "string" || typeof c.createdAt !== "string" || typeof c.keyId !== "string") return "signature fields are missing";
+  if (space !== undefined && c.space !== space) return "it belongs to another space";
+  return null;
 }
 
 const sev = (s: Finding["severity"]) => (s === "critical" ? 0 : s === "warning" ? 1 : 2);
@@ -325,8 +369,9 @@ export async function verifySpace(args: {
   checkpoints?: Checkpoint[];
   publicKeyHex?: string;
   mode?: VerifyMode;
+  trusted?: TrustedCheckpoint;
 }): Promise<Report> {
-  const v = new ChainVerifier({ space: args.space, mode: args.mode, publicKeyHex: args.publicKeyHex });
+  const v = new ChainVerifier({ space: args.space, mode: args.mode, publicKeyHex: args.publicKeyHex, trusted: args.trusted });
   await v.push(args.entries);
   return v.finish(args.checkpoints ?? []);
 }

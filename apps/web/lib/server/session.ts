@@ -1,7 +1,7 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { EngramError, getBackend, membership, requireSpace, type SpaceInfo, type User } from "@engram/server";
+import { EngramError, getBackend, isOwnerRole, membership, requireSpace, type SpaceInfo, type User } from "@engram/server";
 
 export const SESSION_COOKIE = "engram_session";
 
@@ -41,7 +41,7 @@ export async function requireSpaceAccess(key: string): Promise<SpaceAccess> {
   const m = await membership(b, key, user.id);
   if (!m) throw new EngramError("not_found", "Space not found.");
   const space = await requireSpace(b, key);
-  return { user, space, roles: m.roles, owner: m.roles.includes("owner") };
+  return { user, space, roles: m.roles, owner: isOwnerRole(m.roles) };
 }
 
 export async function setSession(secret: string, expire: string) {

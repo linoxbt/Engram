@@ -30,6 +30,7 @@ export default function CookiesPage() {
         <thead><tr><th>Key</th><th>Purpose</th><th>When</th></tr></thead>
         <tbody>
           <tr><td><code>engram.sidebar.mini</code>, <code>engram.spacebar.mini</code></td><td>Remember whether you folded the app&rsquo;s sidebars.</td><td>Only after you accept cookies</td></tr>
+          <tr><td><code>engram.trusted.&lt;space&gt;</code></td><td>The size and Merkle root of the newest checkpoint your browser verified for a space, so a later check can tell if history was rolled back. Contains no memory content.</td><td>Only after you accept cookies</td></tr>
         </tbody>
       </table>
 

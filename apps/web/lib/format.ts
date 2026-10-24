@@ -23,5 +23,4 @@ export function ago(iso: string | null | undefined, now = Date.now()) {
   if (s < 86_400 * 30) return `${Math.round(s / 86_400)}d ago`;
   return day(iso);
 }
-export const seqOfId = (id: string) => Number(id.slice(-12));
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;

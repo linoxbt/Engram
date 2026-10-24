@@ -1,6 +1,6 @@
 "use client";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
 import { useSpaceInfo } from "@/lib/client/hooks";
@@ -32,12 +32,15 @@ export default function SettingsPage() {
   const [retention, setRetention] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [typed, setTyped] = useState("");
+  // Fill the form once per space: a background refetch (window refocus) must not overwrite unsaved edits.
+  const filledFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!s) return;
+    if (!s || filledFor.current === space) return;
+    filledFor.current = space;
     setName(s.name); setDescription(s.description);
     setNums({ neighbourDistance: s.neighbourDistance, duplicateDistance: s.duplicateDistance, conceptDistance: s.conceptDistance, checkpointEvery: s.checkpointEvery });
     setClassifier(s.classifierModel ?? ""); setRetention(s.retentionDays);
-  }, [s]);
+  }, [s, space]);
   const save = useMutation({
     mutationFn: (patch: Record<string, unknown>) => api(`/api/app/spaces/${space}/settings`, { method: "PATCH", json: patch }),
     onSuccess: () => { toast("Settings saved.", "ok"); qc.invalidateQueries({ queryKey: ["space", space] }); qc.invalidateQueries({ queryKey: ["spaces"] }); },

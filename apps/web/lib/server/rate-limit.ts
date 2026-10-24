@@ -8,9 +8,12 @@ import { EngramError } from "@engram/server";
 const windows = new Map<string, { count: number; resetAt: number }>();
 let sweptAt = 0;
 
+const MAX_KEYS = 50_000;
+
+/** Netlify's own client-IP header first: it cannot be set by the client, unlike X-Forwarded-For. */
 export function clientIp(req: NextRequest | Request): string {
   const h = req.headers;
-  return h.get("x-nf-client-connection-ip") ?? h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? h.get("x-real-ip") ?? "unknown";
+  return h.get("x-nf-client-connection-ip") ?? h.get("x-real-ip") ?? h.get("x-forwarded-for")?.split(",").pop()?.trim() ?? "unknown";
 }
 
 /** Throws rate_limited once `key` has been seen `max` times in the current window for `bucket`. */
@@ -20,6 +23,9 @@ export function rateLimit(bucket: string, key: string, max: number, windowMs: nu
     for (const [k, w] of windows) if (w.resetAt <= now) windows.delete(k);
     sweptAt = now;
   }
+  // Requests without a known address would otherwise all share one counter and lock each other out.
+  if (key === "unknown") return;
+  if (windows.size > MAX_KEYS) windows.clear();
   const id = `${bucket}:${key.toLowerCase()}`;
   const w = windows.get(id);
   if (!w || w.resetAt <= now) {

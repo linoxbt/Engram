@@ -22,7 +22,22 @@ describe("engram-sdk", () => {
   it("maps errors and refuses oversized memories locally", async () => {
     const mem = new Engram({ url: "https://e.test", key: "k", fetch: (async () => res(403, { error: { code: "forbidden", message: "no scope" } })) as typeof fetch, retries: 0 });
     await expect(mem.recall({ query: "x" })).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    expect(() => mem.remember({ text: "x".repeat(2001) })).toThrow(EngramError);
+    await expect(mem.remember({ text: "x".repeat(2001) })).rejects.toBeInstanceOf(EngramError);
+  });
+
+  it("does not blindly retry writes, and survives non-JSON gateways", async () => {
+    let n = 0;
+    const gateway = (async () => { n++; return new Response("<html>Bad gateway</html>", { status: 503 }); }) as typeof fetch;
+    const mem = new Engram({ url: "https://e.test", key: "k", fetch: gateway });
+    await expect(mem.resolve({ winnerId: "a", loserId: "b" })).rejects.toMatchObject({ status: 503 });
+    expect(n).toBe(1);
+    n = 0;
+    await expect(mem.recall({ query: "x" })).rejects.toMatchObject({ status: 503 });
+    expect(n).toBe(4);
+    let body: { idempotencyKey?: string } = {};
+    const ok = (async (_u: string, init: RequestInit) => { body = JSON.parse(String(init.body)); return res(200, { id: "x" }); }) as typeof fetch;
+    await new Engram({ url: "https://e.test", key: "k", fetch: ok }).remember({ text: "hi" });
+    expect(body.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("checks inclusion proofs and signatures locally", async () => {
@@ -31,8 +46,14 @@ describe("engram-sdk", () => {
     const cp = await signCheckpoint(await buildCheckpoint({ space: "k7m2q9xa", hashes: leaves, prev: null, keyId: "t" }), privateKey);
     const proof = { id: "m_k7m2q9xa_000000000003", seq: 3, leaf: leaves[3], index: 3, path: await proofHex(leaves, 3), checkpoint: { ...cp, file: "cp" }, publicKey, howToVerify: "" };
     const mem = new Engram({ url: "https://e.test", key: "k", fetch: (async () => res(200, {})) as typeof fetch });
-    expect(await mem.verifyProof(proof)).toEqual({ ok: true, rootOk: true, signatureOk: true });
-    expect((await mem.verifyProof({ ...proof, leaf: leaves[4] })).rootOk).toBe(false);
+    // The key inside the proof comes from the server being checked, so it is never enough on its own.
+    expect(await mem.verifyProof(proof)).toMatchObject({ ok: false, rootOk: true, signatureOk: null });
+    expect(await mem.verifyProof(proof, publicKey)).toEqual({ ok: true, rootOk: true, signatureOk: true });
+    const pinned = new Engram({ url: "https://e.test", key: "k", publicKey, fetch: (async () => res(200, {})) as typeof fetch });
+    expect((await pinned.verifyProof(proof)).ok).toBe(true);
+    expect((await pinned.verifyProof({ ...proof, leaf: leaves[4] })).rootOk).toBe(false);
+    expect((await pinned.verifyProof(proof, undefined, leaves[5])).ok).toBe(false);
+    expect((await pinned.verifyProof({ ...proof, checkpoint: { ...proof.checkpoint, size: "1e12" } })).problem).toMatch(/size/);
     const other = await generateKeyPair();
     expect((await mem.verifyProof(proof, other.publicKey)).signatureOk).toBe(false);
   });
