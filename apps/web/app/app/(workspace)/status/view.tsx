@@ -47,7 +47,7 @@ export function View() {
           <Card title="Services">
             <ul className="divide-y divide-line">
               <Row name="Memory storage" what="Appwrite VectorsDB: memories, concepts, agents and recall logs, searchable by meaning." ok={d.database?.ok ?? null} detail={ms(d.database)}
-                fix={d.database && !d.database.ok ? <>Enable dedicated databases on your Appwrite plan (Starter s-1vcpu-1gb), then run <code>pnpm setup:appwrite</code> to create the collections.</> : undefined} />
+                fix={d.database && !d.database.ok ? <>VectorsDB runs on a dedicated database, which needs the Appwrite Pro plan (organization → Billing → upgrade). Then run <code>pnpm setup:appwrite</code> to create the database and collections.</> : undefined} />
               <Row name="Embeddings" what="Appwrite Embeddings turn text into vectors for storage and recall." ok={d.embeddings?.ok ?? null} detail={ms(d.embeddings)}
                 fix={d.embeddings && !d.embeddings.ok ? d.embeddings.error : undefined} />
               <Row name="Checkpoint storage" what="Appwrite Storage keeps signed checkpoint files and exports." ok={d.storage?.ok ?? null} detail={ms(d.storage)}

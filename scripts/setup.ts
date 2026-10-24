@@ -42,15 +42,21 @@ try {
   const specs = await vdb.listSpecifications().catch(() => null);
   const enabled = specs?.specifications.filter((x) => x.enabled).map((x) => x.slug) ?? [];
   console.error(`\nVectorsDB database not created. Enabled specifications on this organization: ${enabled.length ? enabled.join(", ") : "none"}.`);
-  console.error("Enable dedicated databases on your Appwrite plan (Console → Organization → Billing), then run this again. Continuing with buckets.\n");
+  console.error("VectorsDB needs a dedicated database, which needs the Pro plan: Console → your organization → Billing → upgrade to Pro. Then run this again. Continuing with buckets.\n");
 }
 for (const c of dbReady ? COLLECTIONS : []) {
   await ensure(`collection ${c.id} (${c.dimension})`, () => vdb.createCollection({ databaseId: DB, collectionId: c.id, name: c.name, dimension: c.dimension, permissions: [], documentSecurity: c.documentSecurity, description: c.description }));
   await ensure(`index ${c.id}.embeddings hnsw_cosine`, () => vdb.createIndex({ databaseId: DB, collectionId: c.id, key: "emb_cosine", type: VectorsDBIndexType.HnswCosine, attributes: ["embeddings"] }));
 }
-await ensure("bucket checkpoints", () => storage.createBucket({ bucketId: process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints", name: "Signed checkpoints", permissions: [], fileSecurity: true, maximumFileSize: 1_000_000, allowedFileExtensions: ["json"], encryption: false, antivirus: false }));
+// Look before creating: on a plan at its bucket limit, Appwrite reports the limit before it reports a duplicate.
+async function ensureBucket(label: string, bucketId: string, create: () => Promise<unknown>) {
+  try { await storage.getBucket({ bucketId }); console.log(`· ${label} already exists`); return; }
+  catch (e) { if (!(e instanceof AppwriteException && e.code === 404)) throw e; }
+  await ensure(label, create);
+}
+await ensureBucket("bucket checkpoints", process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints", () => storage.createBucket({ bucketId: process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints", name: "Signed checkpoints", permissions: [], fileSecurity: true, maximumFileSize: 1_000_000, allowedFileExtensions: ["json"], encryption: false, antivirus: false }));
 // Exports share the checkpoints bucket unless a separate one is configured (the Free plan allows one bucket).
-if (process.env.APPWRITE_EXPORTS_BUCKET && process.env.APPWRITE_EXPORTS_BUCKET !== (process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints")) await ensure("bucket exports", () => storage.createBucket({ bucketId: process.env.APPWRITE_EXPORTS_BUCKET!, name: "Space exports", permissions: [], fileSecurity: true, maximumFileSize: 100_000_000, allowedFileExtensions: ["json"] }));
+if (process.env.APPWRITE_EXPORTS_BUCKET && process.env.APPWRITE_EXPORTS_BUCKET !== (process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints")) await ensureBucket("bucket exports", process.env.APPWRITE_EXPORTS_BUCKET!, () => storage.createBucket({ bucketId: process.env.APPWRITE_EXPORTS_BUCKET!, name: "Space exports", permissions: [], fileSecurity: true, maximumFileSize: 100_000_000, allowedFileExtensions: ["json"] }));
 
 // The HNSW index builds in the background; wait until it is available before benchmarking.
 for (const c of dbReady ? COLLECTIONS : []) {
