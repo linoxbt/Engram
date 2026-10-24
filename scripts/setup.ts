@@ -31,16 +31,29 @@ const COLLECTIONS = [
   { id: "recalls", name: "Recalls", dimension: 768, documentSecurity: true, description: "Logged recall queries with best distance" },
 ];
 
-await ensure(`database ${DB}`, () => vdb.create({ databaseId: DB, name: "engram", description: "Engram: verifiable memory for AI agents" }));
-for (const c of COLLECTIONS) {
+// Appwrite Cloud runs VectorsDB on dedicated compute: pass a specification (default Starter, s-1vcpu-1gb,
+// $10/month billed hourly). The organization must have dedicated databases enabled on its plan.
+const SPEC = process.env.APPWRITE_VECTORSDB_SPEC ?? "s-1vcpu-1gb";
+let dbReady = true;
+try {
+  await ensure(`database ${DB} (${SPEC})`, () => vdb.create({ databaseId: DB, name: "engram", description: "Engram: verifiable memory for AI agents", specification: SPEC }));
+} catch (e) {
+  dbReady = false;
+  const specs = await vdb.listSpecifications().catch(() => null);
+  const enabled = specs?.specifications.filter((x) => x.enabled).map((x) => x.slug) ?? [];
+  console.error(`\nVectorsDB database not created. Enabled specifications on this organization: ${enabled.length ? enabled.join(", ") : "none"}.`);
+  console.error("Enable dedicated databases on your Appwrite plan (Console → Organization → Billing), then run this again. Continuing with buckets.\n");
+}
+for (const c of dbReady ? COLLECTIONS : []) {
   await ensure(`collection ${c.id} (${c.dimension})`, () => vdb.createCollection({ databaseId: DB, collectionId: c.id, name: c.name, dimension: c.dimension, permissions: [], documentSecurity: c.documentSecurity, description: c.description }));
   await ensure(`index ${c.id}.embeddings hnsw_cosine`, () => vdb.createIndex({ databaseId: DB, collectionId: c.id, key: "emb_cosine", type: VectorsDBIndexType.HnswCosine, attributes: ["embeddings"] }));
 }
 await ensure("bucket checkpoints", () => storage.createBucket({ bucketId: process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints", name: "Signed checkpoints", permissions: [], fileSecurity: true, maximumFileSize: 1_000_000, allowedFileExtensions: ["json"], encryption: false, antivirus: false }));
-await ensure("bucket exports", () => storage.createBucket({ bucketId: process.env.APPWRITE_EXPORTS_BUCKET ?? "exports", name: "Space exports", permissions: [], fileSecurity: true, maximumFileSize: 100_000_000, allowedFileExtensions: ["json"] }));
+// Exports share the checkpoints bucket unless a separate one is configured (the Free plan allows one bucket).
+if (process.env.APPWRITE_EXPORTS_BUCKET && process.env.APPWRITE_EXPORTS_BUCKET !== (process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints")) await ensure("bucket exports", () => storage.createBucket({ bucketId: process.env.APPWRITE_EXPORTS_BUCKET!, name: "Space exports", permissions: [], fileSecurity: true, maximumFileSize: 100_000_000, allowedFileExtensions: ["json"] }));
 
 // The HNSW index builds in the background; wait until it is available before benchmarking.
-for (const c of COLLECTIONS) {
+for (const c of dbReady ? COLLECTIONS : []) {
   for (let i = 0; i < 60; i++) {
     const idx = await vdb.getIndex({ databaseId: DB, collectionId: c.id, key: "emb_cosine" });
     if (idx.status === "available") { console.log(`✓ index ${c.id} available`); break; }
@@ -48,4 +61,5 @@ for (const c of COLLECTIONS) {
     await new Promise((r) => setTimeout(r, 2000));
   }
 }
-console.log("\nDone. Next: add your hostnames as web platforms, set a daily backup policy on the database, and deploy the Functions.");
+if (!dbReady) process.exitCode = 2;
+console.log(dbReady ? "\nDone. Next:" : "\nPartially done (no VectorsDB yet). Next: add your hostnames as web platforms, set a daily backup policy on the database, and deploy the Functions.");

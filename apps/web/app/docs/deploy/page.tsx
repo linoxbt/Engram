@@ -10,20 +10,20 @@ export default function DeployDocs() {
         <li>Build and deploy the Functions with <code>pnpm functions:build</code> and the Appwrite CLI. Schedules: checkpoint every 5 minutes, sentinel every 15 minutes.</li>
         <li>Add your production and preview hostnames as web platforms, configure a daily backup policy on the database, and set a budget cap.</li>
       </ol>
-      <h2>Vercel</h2>
-      <p>Deploy <code>apps/web</code>. Set the environment variables below; the cron routes in <code>vercel.json</code> act as a fallback scheduler when the Functions are not deployed (they need <code>CRON_SECRET</code>, and checkpoints there need <code>CP_PRIVATE_KEY</code>).</p>
+      <h2>Netlify</h2>
+      <p><code>netlify.toml</code> at the repository root builds <code>apps/web</code> on Netlify's Next.js runtime. Set the environment variables below with the Functions and Builds scopes, and redeploy after any change. Two Netlify Scheduled Functions call the sentinel (every 15 minutes) and checkpoint (every 5 minutes) routes; they need <code>CRON_SECRET</code>, and inline checkpoints need <code>CP_PRIVATE_KEY</code>. Keep the combined variables under Netlify's 4 KB function limit.</p>
       <table><thead><tr><th>Variable</th><th>Where</th><th>Purpose</th></tr></thead><tbody>
-        <tr><td>APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID</td><td>Vercel, Functions</td><td>Regional endpoint and project</td></tr>
-        <tr><td>APPWRITE_API_KEY</td><td>Vercel, Functions (server only)</td><td>Server key</td></tr>
-        <tr><td>APPWRITE_DB_ID</td><td>Vercel, Functions</td><td>Default <code>engram</code></td></tr>
-        <tr><td>NEXT_PUBLIC_APPWRITE_ENDPOINT, NEXT_PUBLIC_APPWRITE_PROJECT_ID, NEXT_PUBLIC_DB_ID</td><td>Vercel</td><td>Browser SDK and Realtime</td></tr>
+        <tr><td>APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID</td><td>Netlify, Functions</td><td>Regional endpoint and project</td></tr>
+        <tr><td>APPWRITE_API_KEY</td><td>Netlify (secret), Functions</td><td>Server key</td></tr>
+        <tr><td>APPWRITE_DB_ID</td><td>Netlify, Functions</td><td>Default <code>engram</code></td></tr>
+        <tr><td>NEXT_PUBLIC_APPWRITE_ENDPOINT, NEXT_PUBLIC_APPWRITE_PROJECT_ID, NEXT_PUBLIC_DB_ID</td><td>Netlify</td><td>Browser SDK and Realtime</td></tr>
         <tr><td>CP_PRIVATE_KEY</td><td>checkpoint Function only</td><td>Ed25519 signing key</td></tr>
-        <tr><td>NEXT_PUBLIC_CP_PUBLIC_KEY, CP_KEY_ID</td><td>Vercel, Functions</td><td>Shown to and used by verifiers</td></tr>
-        <tr><td>CHECKPOINT_FUNCTION_ID</td><td>Vercel</td><td>Lets the write path trigger a checkpoint</td></tr>
-        <tr><td>CLASSIFIER_MODEL, MODEL_API_KEY</td><td>Vercel, Functions</td><td>For example <code>anthropic:claude-haiku-5-5</code></td></tr>
+        <tr><td>NEXT_PUBLIC_CP_PUBLIC_KEY, CP_KEY_ID</td><td>Netlify, Functions</td><td>Shown to and used by verifiers</td></tr>
+        <tr><td>CHECKPOINT_FUNCTION_ID</td><td>Netlify</td><td>Lets the write path trigger a checkpoint</td></tr>
+        <tr><td>CLASSIFIER_MODEL, MODEL_API_KEY</td><td>Netlify, Functions</td><td>For example <code>anthropic:claude-haiku-5-5</code></td></tr>
         <tr><td>GITHUB_ANCHOR_TOKEN, GITHUB_ANCHOR_REPO</td><td>checkpoint Function</td><td>Optional anchoring</td></tr>
-        <tr><td>NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_DEMO_SPACE</td><td>Vercel</td><td>Public URL; the demo space linked from the landing page</td></tr>
-        <tr><td>CRON_SECRET, SEED_ADMIN_TOKEN</td><td>Vercel</td><td>Cron routes; the seed route (delete after seeding)</td></tr>
+        <tr><td>NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_DEMO_SPACE</td><td>Netlify</td><td>Public URL; the demo space linked from the landing page</td></tr>
+        <tr><td>CRON_SECRET, SEED_ADMIN_TOKEN</td><td>Netlify</td><td>Cron routes; the seed route (delete after seeding)</td></tr>
       </tbody></table>
       <h2>Local development</h2>
       <p>With no Appwrite variables, Engram runs on a local file-backed backend with a deterministic hashing embedder and a rule-based classifier, so every screen works offline: <code>ENGRAM_BACKEND=local pnpm dev</code>.</p>

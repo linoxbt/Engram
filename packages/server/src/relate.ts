@@ -9,6 +9,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import type { Ctx } from "./context";
+import { getConfig } from "./config";
 
 export type RelationKind = "duplicate" | "supersedes" | "contradicts" | "refines" | "unrelated";
 export interface Neighbour {
@@ -65,7 +66,8 @@ export function resolveModel(spec: string | null, apiKey: string | null) {
   const id = rest.join("/") || spec;
   if (provider === "anthropic") {
     const key = apiKey ?? process.env.ANTHROPIC_API_KEY;
-    return key ? createAnthropic({ apiKey: key })(id) : null;
+    const workspace = getConfig().anthropicWorkspaceId;
+    return key ? createAnthropic({ apiKey: key, ...(workspace ? { headers: { "anthropic-workspace-id": workspace } } : {}) })(id) : null;
   }
   if (provider === "openai") {
     const key = apiKey ?? process.env.OPENAI_API_KEY;
@@ -108,9 +110,14 @@ export async function relate(ctx: Ctx, m: NewMemory, neighbours: Neighbour[], op
       return { relations: [...fast, ...rels], status: "done", via: "model" };
     } catch (e) {
       const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
-      if (timedOut || attempt === 1) {
-        console.warn("[engram] classifier unavailable, write proceeds as pending:", e instanceof Error ? e.message : e);
+      if (timedOut) {
+        console.warn("[engram] classifier timed out; write proceeds as pending and is re-checked in the background");
         return { relations: fast, status: "pending", via: "model" };
+      }
+      if (attempt === 1) {
+        // A misconfigured model (bad key, missing workspace) must not leave every write pending forever.
+        console.warn("[engram] classifier failed, using the rule-based classifier:", e instanceof Error ? e.message : e);
+        return { relations: [...fast, ...heuristicRelate(m, rest)], status: "done", via: "heuristic" };
       }
     }
   }
