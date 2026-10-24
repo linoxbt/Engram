@@ -10,7 +10,14 @@ const EVENTS = [
   { at: "2026-10-21T10:00:00Z", who: "support-agent", text: "Delivery address: 14 Palm Close, Lekki.", kind: "addr" as const, erased: "2026-10-24T09:30:00Z" },
   { at: "2026-10-22T11:15:00Z", who: "support-agent", text: "Ada downgraded from Pro to Basic.", kind: "plan" as const },
 ];
-const fmt = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+// Formatted by hand: toLocaleString differs between Node's ICU and the browser's, which breaks hydration.
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const fmt = (t: number) => {
+  const d = new Date(t);
+  const hm = `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+  return `${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}, ${hm}`;
+};
 
 /** "What did the agent know on Tuesday?" A miniature Time Machine over the demo story. */
 export function TimeScrubber() {
