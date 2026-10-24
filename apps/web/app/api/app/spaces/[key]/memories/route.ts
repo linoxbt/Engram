@@ -1,0 +1,22 @@
+import { type EntryMeta } from "@engram/core";
+import { remember, type Filter } from "@engram/server";
+import { readJson, spaceRoute } from "@/lib/server/api";
+import { toFeedItem, agentNames } from "@engram/server";
+
+export const runtime = "nodejs";
+
+/** Browse entries newest first with filters (the explorer's list mode). */
+export const GET = spaceRoute(async (ctx, _a, req) => {
+  const sp = req.nextUrl.searchParams;
+  const filters: Filter[] = [{ op: "eq", path: "metadata.space", values: [ctx.space.key] }];
+  const status = sp.get("status"); if (status) filters.push({ op: "eq", path: "metadata.status", values: status.split(",") });
+  const kind = sp.get("kind"); if (kind) filters.push({ op: "eq", path: "metadata.kind", values: kind.split(",") });
+  const subject = sp.get("subject"); if (subject) filters.push({ op: "eq", path: "metadata.subject", values: [subject] });
+  const agent = sp.get("agent"); if (agent) filters.push({ op: "eq", path: "metadata.agent", values: [agent] });
+  const op = sp.get("op"); if (op) filters.push({ op: "eq", path: "metadata.op", values: op.split(",") });
+  const docs = await ctx.b.vectors.query<EntryMeta>("memories", { filters, order: { field: "$id", dir: "desc" }, limit: Math.min(200, Number(sp.get("limit") ?? 50)), cursorAfter: sp.get("cursor") ?? undefined, withVectors: false });
+  const names = await agentNames(ctx.b, docs.map((d) => d.metadata.agent), ctx.space);
+  return { items: docs.map((d) => toFeedItem(d, names)), next: docs.length ? docs[docs.length - 1].$id : null };
+});
+
+export const POST = spaceRoute(async (ctx, _a, req) => remember(ctx, await readJson(req)));
