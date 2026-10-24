@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      ENGRAM_BACKEND: local
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit and integration tests
+        run: pnpm test
+      - name: Build Functions
+        run: pnpm functions:build
+      - name: Build web app
+        run: pnpm build
+      - name: End-to-end (Playwright, local backend)
+        run: |
+          pnpm --filter @engram/web exec playwright install --with-deps chromium
+          pnpm e2e

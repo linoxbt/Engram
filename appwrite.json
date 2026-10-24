@@ -1,0 +1,58 @@
+{
+  "projectId": "<your-project-id>",
+  "projectName": "Engram",
+  "functions": [
+    {
+      "$id": "checkpoint",
+      "name": "checkpoint",
+      "runtime": "node-22",
+      "path": "functions/checkpoint",
+      "entrypoint": "dist/main.js",
+      "commands": "",
+      "schedule": "*/5 * * * *",
+      "timeout": 300,
+      "execute": [],
+      "events": [],
+      "scopes": ["databases.read", "databases.write", "documents.read", "files.read", "files.write", "teams.read", "teams.write"]
+    },
+    {
+      "$id": "sentinel",
+      "name": "sentinel",
+      "runtime": "node-22",
+      "path": "functions/sentinel",
+      "entrypoint": "dist/main.js",
+      "commands": "",
+      "schedule": "*/15 * * * *",
+      "timeout": 300,
+      "execute": [],
+      "events": [],
+      "scopes": ["databases.read", "databases.write", "documents.read", "documents.write", "files.read", "teams.read", "teams.write", "embeddings.write", "messages.write"]
+    },
+    {
+      "$id": "labeler",
+      "name": "labeler",
+      "runtime": "node-22",
+      "path": "functions/labeler",
+      "entrypoint": "dist/main.js",
+      "commands": "",
+      "schedule": "",
+      "timeout": 60,
+      "execute": [],
+      "events": ["databases.engram.collections.concepts.documents.*.create"],
+      "scopes": ["databases.read", "documents.read", "documents.write", "teams.read"]
+    },
+    {
+      "$id": "reflect",
+      "name": "reflect",
+      "runtime": "node-22",
+      "path": "functions/reflect",
+      "entrypoint": "dist/main.js",
+      "commands": "",
+      "schedule": "0 3 * * *",
+      "timeout": 300,
+      "execute": [],
+      "events": [],
+      "scopes": ["databases.read", "databases.write", "documents.read", "documents.write", "teams.read", "embeddings.write"]
+    }
+  ]
+}

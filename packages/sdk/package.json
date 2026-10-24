@@ -2,7 +2,7 @@
   "name": "engram-sdk",
   "version": "1.0.0",
   "description": "TypeScript client for Engram: verifiable, time-travelling memory for AI agents.",
-  "license": "MIT",
+  "license": "BSD-2-Clause",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",

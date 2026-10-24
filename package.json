@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "description": "Verifiable, time-travelling memory for AI agents. Built on Appwrite VectorsDB.",
-  "license": "MIT",
+  "license": "BSD-2-Clause",
   "packageManager": "pnpm@10.28.0",
   "engines": {
     "node": ">=22.12"
@@ -14,7 +14,7 @@
     "start": "pnpm --filter @engram/web start",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "pnpm -r --parallel typecheck",
+    "typecheck": "tsc -p tsconfig.json && pnpm -r --parallel typecheck",
     "setup:appwrite": "tsx scripts/setup.ts",
     "seed": "tsx scripts/seed.ts",
     "keygen": "tsx scripts/keygen.ts",
@@ -27,6 +27,7 @@
     "@modelcontextprotocol/client": "^2.4.0",
     "@types/node": "^22.19.0",
     "esbuild": "^0.28.2",
+    "node-appwrite": "^31.0.0",
     "tsx": "^4.23.15",
     "typescript": "~5.9.3",
     "vitest": "^5.0.5"

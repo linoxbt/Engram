@@ -1,6 +1,6 @@
 /** Seeding: the demo story through the real write path, in chain order, with past timestamps. */
 import { createAgent, listAgents } from "./agents";
-import { runCheckpoint } from "./checkpoints";
+import { loadCheckpoints, runCheckpoint } from "./checkpoints";
 import type { Ctx } from "./context";
 import { embedDocuments } from "./embed";
 import { EngramError } from "./errors";
@@ -36,7 +36,7 @@ export async function seedStory(ctx: Ctx, opts: { variant: "demo" | "sandbox"; b
   const queue: (() => Promise<unknown>)[] = [];
   const seedCtx: Ctx = { ...ctx, defer: (t) => queue.push(t) };
   const byKey = new Map<string, string>();
-  let entries = 0, duplicates = 0, checkpoints = 0;
+  let entries = 0, duplicates = 0;
   const every = Math.max(1, space.settings.checkpointEvery);
   const key = ctx.cfg.checkpoint.privateKey;
 
@@ -61,19 +61,10 @@ export async function seedStory(ctx: Ctx, opts: { variant: "demo" | "sandbox"; b
     }
     while (queue.length) {
       const task = queue.shift()!;
-      // Checkpoints are signed explicitly below; skip the per-write trigger during seeding.
       await task().catch((e) => console.error("[engram] seed post-commit task failed", e));
     }
-    if (key && entries % every === 0) {
-      const fresh = (await getSpace(b, space.key)) ?? space;
-      const run = await runCheckpoint(b, fresh, { privateKey: key });
-      if (run.created) checkpoints++;
-    }
+    if (key && entries % every === 0) await runCheckpoint(b, (await getSpace(b, space.key)) ?? space, { privateKey: key });
   }
-  if (key) {
-    const fresh = (await getSpace(b, space.key)) ?? space;
-    const run = await runCheckpoint(b, fresh, { privateKey: key });
-    if (run.created) checkpoints++;
-  }
-  return { entries, duplicates, keys, checkpoints };
+  if (key) await runCheckpoint(b, (await getSpace(b, space.key)) ?? space, { privateKey: key });
+  return { entries, duplicates, keys, checkpoints: (await loadCheckpoints(b, space.key)).length };
 }
