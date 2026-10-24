@@ -110,7 +110,7 @@ export function ChainStrip({
             className={clsx("flex w-full items-center gap-2 border-b border-line px-3 py-2 text-left text-xs", active === b.seq && "bg-panel-2")}>
             <Block b={b} state={states?.get(b.seq)} flag={flags.has(b.seq)} small />
             <span className="w-12 shrink-0 tabular text-muted">#{b.seq}</span>
-            <span className="truncate">{b.op === "forget" ? "forget entry" : b.op === "link" ? "link entry" : b.text ?? "content erased"}</span>
+            <span className="truncate">{b.text === undefined ? <span className="text-muted">{b.op} · {shortHash(b.hash)}</span> : b.op === "forget" ? "forget entry" : b.op === "link" ? "link entry" : b.text ?? "content erased"}</span>
           </button>
         ))}
       </div>
@@ -147,7 +147,7 @@ export function ChainStrip({
       {hover && (
         <div className="pointer-events-none absolute -top-2 z-20 w-64 -translate-y-full rounded-[2px] border border-line-2 bg-panel-2 px-2.5 py-2 text-2xs shadow-lg" style={{ left: Math.min(Math.max(0, hover.x - 100), width - 260) }}>
           <div className="flex justify-between"><span className="text-cyan">#{hover.b.seq} · {hover.b.op}</span><span className="text-muted">{shortHash(hover.b.hash)}</span></div>
-          <div className="mt-1 line-clamp-2 text-text">{hover.b.op === "forget" ? "Forget entry" : hover.b.op === "link" ? "Link entry (resolution)" : hover.b.text ?? "Content erased. Receipt kept."}</div>
+          <div className="mt-1 line-clamp-2 text-text">{hover.b.text === undefined ? "Header only: text is never shared publicly." : hover.b.op === "forget" ? "Forget entry" : hover.b.op === "link" ? "Link entry (resolution)" : hover.b.text ?? "Content erased. Receipt kept."}</div>
           {hover.b.agentName && <div className="mt-0.5 text-muted">{hover.b.agentName}</div>}
         </div>
       )}

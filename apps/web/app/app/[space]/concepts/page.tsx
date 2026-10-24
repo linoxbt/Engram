@@ -67,6 +67,7 @@ export default function ConceptsPage() {
 function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]; edges: GEdge[]; selected: string | null; onSelect: (id: string) => void; highlight: string }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const view = useRef({ x: 0, y: 0, k: 1 });
+  const touched = useRef(false);
   const sim = useRef<{ nodes: SimNode[]; links: SimLink[] } | null>(null);
   const draw = useRef<() => void>(() => {});
   const H = 480;
@@ -124,7 +125,17 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
       .force("collide", forceCollide<SimNode>((n) => n.r + 8))
       .force("center", forceCenter(0, 0))
       .alpha(0.6).alphaDecay(0.04)
-      .on("tick", () => draw.current());
+      .on("tick", () => draw.current())
+      .on("end", () => {
+        if (touched.current || !seeded.length) return;
+        // Fit every node in view once the layout settles.
+        const pad = 40, w = c.clientWidth;
+        const xs = seeded.flatMap((n) => [n.x! - n.r, n.x! + n.r]), ys = seeded.flatMap((n) => [n.y! - n.r, n.y! + n.r + 16]);
+        const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
+        const k = Math.min(2, Math.max(0.3, Math.min((w - pad * 2) / bw, (H - pad * 2) / bh)));
+        view.current = { k, x: -((Math.max(...xs) + Math.min(...xs)) / 2) * k, y: -((Math.max(...ys) + Math.min(...ys)) / 2) * k };
+        draw.current();
+      });
     resize();
     window.addEventListener("resize", resize);
     return () => { s.stop(); window.removeEventListener("resize", resize); };
@@ -138,7 +149,7 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
       const r = c.getBoundingClientRect(); const { x, y, k } = view.current;
       return [(ex - r.left - r.width / 2 - x) / k, (ey - r.top - H / 2 - y) / k];
     };
-    const down = (e: PointerEvent) => { dragging = true; moved = false; lx = e.clientX; ly = e.clientY; };
+    const down = (e: PointerEvent) => { dragging = true; moved = false; touched.current = true; lx = e.clientX; ly = e.clientY; };
     const move = (e: PointerEvent) => { if (!dragging) return; const dx = e.clientX - lx, dy = e.clientY - ly; if (Math.abs(dx) + Math.abs(dy) > 2) moved = true; view.current.x += dx; view.current.y += dy; lx = e.clientX; ly = e.clientY; draw.current(); };
     const up = (e: PointerEvent) => {
       dragging = false;
@@ -147,7 +158,7 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
       const hit = sim.current?.nodes.find((n) => Math.hypot(n.x! - wx, n.y! - wy) <= n.r + 4);
       if (hit) onSelect(hit.id);
     };
-    const wheel = (e: WheelEvent) => { e.preventDefault(); const k = Math.min(4, Math.max(0.3, view.current.k * (e.deltaY < 0 ? 1.1 : 0.9))); view.current.k = k; draw.current(); };
+    const wheel = (e: WheelEvent) => { e.preventDefault(); touched.current = true; const k = Math.min(4, Math.max(0.3, view.current.k * (e.deltaY < 0 ? 1.1 : 0.9))); view.current.k = k; draw.current(); };
     c.addEventListener("pointerdown", down); window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); c.addEventListener("wheel", wheel, { passive: false });
     return () => { c.removeEventListener("pointerdown", down); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); c.removeEventListener("wheel", wheel); };
   }, [onSelect]);

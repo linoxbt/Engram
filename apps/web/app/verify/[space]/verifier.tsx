@@ -71,7 +71,7 @@ export function PublicVerifier({ space }: { space: string }) {
   useEffect(() => { void run(); }, [run]);
 
   const crit = report?.findings.filter((f) => f.severity === "critical") ?? [];
-  const blocks = entries.map((e) => ({ seq: Number(e.h.seq), op: e.h.op, hash: e.hash, text: null }));
+  const blocks = entries.map((e) => ({ seq: Number(e.h.seq), op: e.h.op, hash: e.hash, text: undefined }));
   return (
     <div className="flex min-h-screen flex-col">
       <SiteHeader />

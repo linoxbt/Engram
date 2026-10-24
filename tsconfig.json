@@ -1,14 +1,28 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "baseUrl": ".",
     "paths": {
-      "@engram/core": ["packages/core/src/index.ts"],
-      "@engram/server": ["packages/server/src/index.ts"],
-      "@engram/server/*": ["packages/server/src/*"],
-      "engram-sdk": ["packages/sdk/src/index.ts"]
+      "@engram/core": [
+        "packages/core/src/index.ts"
+      ],
+      "@engram/server": [
+        "packages/server/src/index.ts"
+      ],
+      "@engram/server/*": [
+        "packages/server/src/*"
+      ],
+      "engram-sdk": [
+        "packages/sdk/src/index.ts"
+      ]
     }
   },
-  "include": ["scripts/**/*.ts", "functions/**/*.ts", "vitest.config.ts"]
+  "include": [
+    "scripts/**/*.ts",
+    "functions/**/*.ts",
+    "vitest.config.ts"
+  ]
 }
