@@ -34,7 +34,7 @@ export interface Proof {
   seq: number;
   leaf: string;
   index: number;
-  checkpoint: Pick<Checkpoint, "space" | "seq" | "size" | "root" | "head" | "sig" | "createdAt" | "keyId"> & { file: string };
+  checkpoint: Checkpoint & { file: string };
   path: string[];
   publicKey: string | null;
   howToVerify: string;
@@ -53,7 +53,7 @@ export async function proofFor(b: Backend, space: SpaceInfo, id: string): Promis
   const file = `cp_${space.key}_${cp.seq}`;
   return {
     id, seq, leaf: hashes[seq], index: seq,
-    checkpoint: { space: cp.space, seq: cp.seq, size: cp.size, root: cp.root, head: cp.head, sig: cp.sig, createdAt: cp.createdAt, keyId: cp.keyId, file },
+    checkpoint: { ...cp, file },
     path: await proofHex(hashes, seq),
     publicKey: cfg.checkpoint.publicKey,
     howToVerify: `${cfg.appUrl}/verify/${space.key}?proof=${encodeURIComponent(id)}`,
