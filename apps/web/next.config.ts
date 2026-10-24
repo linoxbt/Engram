@@ -19,6 +19,7 @@ const config: NextConfig = {
     ];
     return [
       { source: "/:path*", headers: security },
+      { source: "/api/v1/spaces/:key", headers: cors },
       { source: "/api/v1/spaces/:key/:rest*", headers: cors },
     ];
   },

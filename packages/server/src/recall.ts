@@ -132,7 +132,7 @@ export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {
       erased = (await b.vectors.query<EntryMeta>("memories", {
         filters: [spaceF(space.key), { op: "eq", path: "metadata.status", values: ["forgotten"] }, { op: "eq", path: "metadata.subject", values: subjects }, { op: "lte", path: "metadata.createdAt", value: asOf }, { op: "gt", path: "metadata.forgottenAt", value: asOf }],
         limit: 5, withVectors: false,
-      })).filter((d) => !d.metadata.validTo || d.metadata.validTo > asOf);
+      })).filter((d) => (!d.metadata.validTo || d.metadata.validTo > asOf) && !picked.some((p) => p.id === d.$id));
     }
   }
 
