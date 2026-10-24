@@ -88,7 +88,7 @@ pnpm dev                          # http://localhost:3000
 
 With no Appwrite variables, Engram runs on a local file-backed backend with a deterministic embedder and a rule-based classifier, so every screen works offline.
 
-**On Appwrite:** `pnpm setup:appwrite`, then `pnpm experiments` (writes `docs/verified.md`), `pnpm functions:build` and deploy with the Appwrite CLI (`appwrite.json`), then `pnpm seed -- --owner you@example.com --public`. Deploy to Netlify (`netlify.toml` at the root builds `apps/web`) with the variables in `.env.example`; Netlify Scheduled Functions run the sentinel and checkpoint routes.
+**On Appwrite:** `pnpm setup:appwrite`, then `pnpm experiments` (writes `docs/verified.md`), `pnpm functions:deploy` (builds and deploys the Functions from `appwrite.json`, with the signing key as a Function secret), then `pnpm seed -- --owner you@example.com --public`. Deploy to Netlify (`netlify.toml` at the root builds `apps/web`) with the variables in `.env.example`; `pnpm functions:deploy` deploys the Appwrite Functions that sign checkpoints and run the sentinel.
 
 | Command | What it does |
 |---------|--------------|

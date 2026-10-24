@@ -1,5 +1,5 @@
 {
-  "projectId": "<your-project-id>",
+  "projectId": "6adc6a5c0014c832052f",
   "projectName": "Engram",
   "functions": [
     {
@@ -9,11 +9,24 @@
       "path": "functions/checkpoint",
       "entrypoint": "dist/main.js",
       "commands": "",
-      "schedule": "*/5 * * * *",
       "timeout": 300,
       "execute": [],
       "events": [],
-      "scopes": ["databases.read", "databases.write", "documents.read", "files.read", "files.write", "teams.read", "teams.write"]
+      "scopes": [
+        "databases.read",
+        "databases.write",
+        "documents.read",
+        "files.read",
+        "files.write",
+        "teams.read",
+        "teams.write",
+        "vectorsdb.collections.read",
+        "vectorsdb.documents.read",
+        "vectorsdb.documents.write",
+        "vectorsdb.read",
+        "vectorsdb.write"
+      ],
+      "interval": 5
     },
     {
       "$id": "sentinel",
@@ -22,11 +35,26 @@
       "path": "functions/sentinel",
       "entrypoint": "dist/main.js",
       "commands": "",
-      "schedule": "*/15 * * * *",
       "timeout": 300,
       "execute": [],
       "events": [],
-      "scopes": ["databases.read", "databases.write", "documents.read", "documents.write", "files.read", "teams.read", "teams.write", "embeddings.write", "messages.write"]
+      "scopes": [
+        "databases.read",
+        "databases.write",
+        "documents.read",
+        "documents.write",
+        "embeddings.write",
+        "files.read",
+        "messages.write",
+        "teams.read",
+        "teams.write",
+        "vectorsdb.collections.read",
+        "vectorsdb.documents.read",
+        "vectorsdb.documents.write",
+        "vectorsdb.read",
+        "vectorsdb.write"
+      ],
+      "interval": 15
     },
     {
       "$id": "labeler",
@@ -35,11 +63,23 @@
       "path": "functions/labeler",
       "entrypoint": "dist/main.js",
       "commands": "",
-      "schedule": "",
       "timeout": 60,
       "execute": [],
-      "events": ["databases.engram.collections.concepts.documents.*.create"],
-      "scopes": ["databases.read", "documents.read", "documents.write", "teams.read"]
+      "events": [
+        "databases.engram.collections.concepts.documents.*.create"
+      ],
+      "scopes": [
+        "databases.read",
+        "documents.read",
+        "documents.write",
+        "teams.read",
+        "vectorsdb.collections.read",
+        "vectorsdb.documents.read",
+        "vectorsdb.documents.write",
+        "vectorsdb.read",
+        "vectorsdb.write"
+      ],
+      "interval": 0
     },
     {
       "$id": "reflect",
@@ -48,11 +88,23 @@
       "path": "functions/reflect",
       "entrypoint": "dist/main.js",
       "commands": "",
-      "schedule": "0 3 * * *",
       "timeout": 300,
       "execute": [],
       "events": [],
-      "scopes": ["databases.read", "databases.write", "documents.read", "documents.write", "teams.read", "embeddings.write"]
+      "scopes": [
+        "databases.read",
+        "databases.write",
+        "documents.read",
+        "documents.write",
+        "embeddings.write",
+        "teams.read",
+        "vectorsdb.collections.read",
+        "vectorsdb.documents.read",
+        "vectorsdb.documents.write",
+        "vectorsdb.read",
+        "vectorsdb.write"
+      ],
+      "interval": 1440
     }
   ]
 }

@@ -4,14 +4,14 @@ export default function DeployDocs() {
       <h1>Deploy &amp; operate</h1>
       <h2>Appwrite</h2>
       <ol>
-        <li>Create a project and an API key with the scopes: databases (read, write), documents (read, write), collections, indexes, embeddings.write, files (read, write), buckets, teams (read, write), users.read, sessions.write, functions.read, executions.write and, for alerts, messages.write.</li>
+        <li>Create a project and an API key with the scopes: databases (read, write), vectorsdb (read, write, collections, documents, indexes), embeddings.write, files (read, write), buckets, teams (read, write), users.read, sessions.write, functions.read, executions.write and, for alerts, messages.write.</li>
         <li>Run <code>pnpm setup:appwrite</code>. It creates the VectorsDB database <code>engram</code>, the collections <code>memories</code> (768), <code>concepts</code> (768), <code>agents</code> (384) and <code>recalls</code> (768) with HNSW cosine indexes, and the <code>checkpoints</code> and <code>exports</code> buckets.</li>
         <li>Generate the checkpoint key pair with <code>pnpm keygen</code>. Put the private key only in the checkpoint Function; publish the public key.</li>
         <li>Build and deploy the Functions with <code>pnpm functions:build</code> and the Appwrite CLI. Schedules: checkpoint every 5 minutes, sentinel every 15 minutes.</li>
         <li>Add your production and preview hostnames as web platforms, configure a daily backup policy on the database, and set a budget cap.</li>
       </ol>
       <h2>Netlify</h2>
-      <p><code>netlify.toml</code> at the repository root builds <code>apps/web</code> on Netlify's Next.js runtime. Set the environment variables below with the Functions and Builds scopes, and redeploy after any change. Two Netlify Scheduled Functions call the sentinel (every 15 minutes) and checkpoint (every 5 minutes) routes; they need <code>CRON_SECRET</code>, and inline checkpoints need <code>CP_PRIVATE_KEY</code>. Keep the combined variables under Netlify's 4 KB function limit.</p>
+      <p><code>netlify.toml</code> at the repository root builds <code>apps/web</code> on Netlify's Next.js runtime. Set the environment variables below with the Functions and Builds scopes, and redeploy after any change. Scheduling and signing run in Appwrite Functions (<code>pnpm functions:deploy</code>), so the signing key never reaches Netlify. The <code>/api/cron/*</code> routes remain for any external scheduler (they need <code>CRON_SECRET</code>). Keep the combined variables under Netlify's 4 KB function limit.</p>
       <table><thead><tr><th>Variable</th><th>Where</th><th>Purpose</th></tr></thead><tbody>
         <tr><td>APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID</td><td>Netlify, Functions</td><td>Regional endpoint and project</td></tr>
         <tr><td>APPWRITE_API_KEY</td><td>Netlify (secret), Functions</td><td>Server key</td></tr>

@@ -72,9 +72,6 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
-      '@netlify/functions':
-        specifier: ^6.0.3
-        version: 6.0.3
       '@playwright/test':
         specifier: ^1.64.1
         version: 1.64.1
@@ -507,14 +504,6 @@ packages:
   '@modelcontextprotocol/server@2.4.0':
     resolution: {integrity: sha512-rgR9yxSaAJ+bcsi/XroT/S2AfPiIWloXAnrdfYSCms9ivVju0ishu/wW0J21Ho6+ZOR1r7RyeRbjiRuF87ix5Q==}
     engines: {node: '>=20'}
-
-  '@netlify/functions@6.0.3':
-    resolution: {integrity: sha512-6KHpsR2L4VQL2gMm3VvG46xBNTga/SbOziluInR0++gkvOuQ/T2pxsxf2Rys5wOikpNY3Zv1IoE52/pWBJjZ9Q==}
-    engines: {node: '>=22.12.0'}
-
-  '@netlify/types@3.3.0':
-    resolution: {integrity: sha512-u/uh0vOFslJsTcG8nnynAKnTpVIakXbv3mkBG9DTqKZrDEzmfLKDZ3I7evHA3/CYUmNB24pNrzlHj2nIsqEwzg==}
-    engines: {node: '>=22.12.0'}
 
   '@next/env@16.4.3':
     resolution: {integrity: sha512-a7tz1QCcWWkwC/rPJcPMJk/UNRu9CFhDd3OHYE5hddbJrs8BqRTalxI6GlKCWEGzRLHN+S/B7a4PAHCtm25aBQ==}
@@ -1798,12 +1787,6 @@ snapshots:
     dependencies:
       '@modelcontextprotocol/core': 2.4.0
       zod: 4.6.7
-
-  '@netlify/functions@6.0.3':
-    dependencies:
-      '@netlify/types': 3.3.0
-
-  '@netlify/types@3.3.0': {}
 
   '@next/env@16.4.3': {}
 
