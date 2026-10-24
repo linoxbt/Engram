@@ -2,7 +2,7 @@ import Link from "next/link";
 import { currentUser } from "@/lib/server/session";
 import { IconLogo, Wordmark } from "@/components/icons";
 import { CopyCommand } from "@/components/landing/copy-command";
-import { CellField } from "@/components/landing/cells";
+import { WaveMesh } from "@/components/landing/wave-mesh";
 import { ProofPlayground } from "@/components/landing/proof-playground";
 import { Reveal } from "@/components/landing/reveal";
 import { TimeScrubber } from "@/components/landing/time-scrubber";
@@ -60,8 +60,8 @@ export default async function Landing() {
       {/* Hero */}
       <section className="relative flex min-h-[100svh] items-center overflow-hidden">
         <div className="l-aurora" />
-        {/* Desktop: the cells fill the right half and fade out toward the headline. */}
-        <CellField className="absolute right-0 top-24 hidden h-[calc(100%-6rem)] w-[46%] [mask-image:linear-gradient(to_right,transparent,black_32%)] md:block" />
+        {/* Desktop: the memory network rolls through the right of the hero and fades out toward the headline. */}
+        <WaveMesh className="absolute right-0 top-24 hidden h-[calc(100%-6rem)] w-[52%] [mask-image:linear-gradient(to_right,transparent,black_40%)] md:block" />
         <div className="l-grain" />
         <div className="relative mx-auto w-full max-w-6xl px-5 pb-20 pt-32 sm:px-8">
           <p className="l-eyebrow">Verifiable memory for artificial minds</p>
@@ -76,9 +76,9 @@ export default async function Landing() {
             <a href="#proof" className="l-btn l-btn-ghost">Try to break it</a>
             {demo && <Link href={`/verify/${demo}`} className="l-btn l-btn-ghost">Verify the live chain</Link>}
           </div>
-          {/* Phones: the cells get their own stage, clear of any text. */}
+          {/* Phones: the network gets its own stage, clear of any text. */}
           <div className="relative -mx-5 mt-10 h-[440px] [mask-image:linear-gradient(to_bottom,transparent,black_12%,black_88%,transparent)] md:hidden">
-            <CellField className="absolute inset-0 h-full w-full" />
+            <WaveMesh className="absolute inset-0 h-full w-full" />
           </div>
           <dl className="mt-8 grid max-w-2xl md:mt-16 grid-cols-3 gap-6 border-t l-hairline pt-6 font-mono text-[11px] text-muted">
             <div><dt className="tracking-[0.2em]">INTEGRITY</dt><dd className="mt-1 text-sm text-valid">SHA-256 · Ed25519</dd></div>
