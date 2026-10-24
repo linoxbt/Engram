@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { IconLogo } from "./icons";
+import { Wordmark } from "./icons";
 
 export function SiteHeader({ signedIn }: { signedIn?: boolean }) {
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-bg/85 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
-        <Link href="/" className="flex items-center gap-2"><IconLogo size={20} /><span className="font-semibold tracking-[0.2em]">ENGRAM</span></Link>
+        <Link href="/" aria-label="Engram home"><Wordmark /></Link>
         <nav className="flex items-center gap-4 text-xs text-muted sm:gap-6">
           <Link href="/docs" className="hover:text-text">Docs</Link>
           <Link href="/verify" className="hidden hover:text-text sm:inline">Verify</Link>

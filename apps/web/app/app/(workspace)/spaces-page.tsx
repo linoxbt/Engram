@@ -2,20 +2,19 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
+import { useHealth, useSpaces } from "@/lib/client/workspace";
 import { ago } from "@/lib/format";
-import { IconLab, IconLogo, IconPlus, IconShield } from "@/components/icons";
-import { IntegrityBadge, type Integrity } from "@/components/integrity-badge";
+import { IconLab, IconPlus, IconShield } from "@/components/icons";
+import { IntegrityBadge } from "@/components/integrity-badge";
 import { Button, Card, Empty, ErrorNote, Field, Input, Modal, Pill, Skeleton, Textarea, Toggle, CopyButton } from "@/components/ui";
 
-interface SpaceRow { key: string; name: string; description: string; sandbox: boolean; publicVerify: boolean; integrity: Integrity | null; latestCheckpoint: { size: number; createdAt: string } | null; createdAt: string; owner: boolean }
-
-export function SpacesPage({ userName }: { userName: string }) {
+export function SpacesPage() {
   const router = useRouter();
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ["spaces"], queryFn: () => api<{ spaces: SpaceRow[] }>("/api/app/spaces") });
-  const health = useQuery({ queryKey: ["health"], queryFn: () => fetch("/api/v1/health").then((r) => r.json() as Promise<{ ok: boolean; backend: string; database?: { ok: boolean; error?: string } }>) });
+  const q = useSpaces();
+  const health = useHealth();
   const [mode, setMode] = useState<null | "space" | "sandbox">(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -38,16 +37,8 @@ export function SpacesPage({ userName }: { userName: string }) {
     setDemo(false);
   };
   return (
-    <div className="min-h-screen">
-      <header className="flex items-center justify-between border-b border-line px-6 py-3.5">
-        <Link href="/" className="flex items-center gap-2"><IconLogo /> <span className="font-semibold tracking-wide">ENGRAM</span></Link>
-        <div className="flex items-center gap-3 text-xs text-muted">
-          <Link href="/docs" className="hover:text-text">Docs</Link>
-          <span>{userName}</span>
-          <button className="hover:text-text" onClick={async () => { await api("/api/auth/logout", { method: "POST" }); router.push("/"); }}>Sign out</button>
-        </div>
-      </header>
-      <main className="mx-auto max-w-5xl p-6">
+    <>
+      <div>
         <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-lg">Spaces</h1>
@@ -94,7 +85,7 @@ export function SpacesPage({ userName }: { userName: string }) {
             </Link>
           ))}
         </div>
-      </main>
+      </div>
 
       <Modal open={mode != null} onClose={() => setMode(null)} title={mode === "sandbox" ? "New sandbox" : "New space"}>
         <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); create.mutate(); }}>
@@ -128,6 +119,6 @@ export function SpacesPage({ userName }: { userName: string }) {
         </ul>
         <div className="mt-4 flex justify-end"><Button variant="primary" onClick={() => keys && router.push(`/app/${keys.key}`)}>Open the space</Button></div>
       </Modal>
-    </div>
+    </>
   );
 }

@@ -220,3 +220,15 @@ export function Stat({ label, value, tone, hint }: { label: string; value: React
 export function useStableId(prefix: string) {
   return `${prefix}-${useId().replace(/:/g, "")}`;
 }
+
+export function PageHeader({ title, children, actions }: { title: string; children?: ReactNode; actions?: ReactNode }) {
+  return (
+    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <h1 className="text-lg tracking-wide">{title}</h1>
+        {children && <p className="mt-1 max-w-3xl text-xs text-muted">{children}</p>}
+      </div>
+      {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+    </div>
+  );
+}

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/client/api";
-import { IconLogo } from "./icons";
+import { Wordmark } from "./icons";
 import { Button, ErrorNote, Field, Input } from "./ui";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
@@ -26,7 +26,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   return (
     <div className="grid-bg flex min-h-screen items-center justify-center p-4">
       <div className="card w-full max-w-sm p-6">
-        <Link href="/" className="mb-6 flex items-center gap-2"><IconLogo size={20} /><span className="font-semibold tracking-[0.2em]">ENGRAM</span></Link>
+        <Link href="/" className="mb-6 inline-flex" aria-label="Engram home"><Wordmark /></Link>
         <h1 className="text-base">{mode === "login" ? "Sign in" : "Create your account"}</h1>
         <p className="mt-1 text-xs text-muted">{mode === "login" ? "Welcome back." : "Spaces, agent keys and the Tamper Lab are one step away."}</p>
         <form className="mt-5 space-y-3" onSubmit={(e) => { e.preventDefault(); void submit(); }}>

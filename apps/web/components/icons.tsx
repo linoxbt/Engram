@@ -30,14 +30,35 @@ export const IconExternal = (p: P) => <svg {...base(p)}><path d="M9 3h4v4M13 3L7
 export const IconMenu = (p: P) => <svg {...base(p)}><path d="M2.5 4h11M2.5 8h11M2.5 12h11" /></svg>;
 export const IconBolt = (p: P) => <svg {...base(p)}><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z" /></svg>;
 export const IconKey = (p: P) => <svg {...base(p)}><circle cx="5" cy="10.5" r="3" /><path d="M7.2 8.4L13.5 2M11 4.5l1.8 1.8M9.5 6l1.3 1.3" /></svg>;
-export const IconLogo = ({ size = 18, ...p }: P) => (
+export const IconGrid = (p: P) => <svg {...base(p)}><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" /><rect x="9" y="2.5" width="4.5" height="4.5" rx="1" /><rect x="2.5" y="9" width="4.5" height="4.5" rx="1" /><rect x="9" y="9" width="4.5" height="4.5" rx="1" /></svg>;
+export const IconPulse = (p: P) => <svg {...base(p)}><path d="M1.5 8.5h3l1.8-4 3 7.5 1.9-3.5h3.3" /></svg>;
+export const IconUser = (p: P) => <svg {...base(p)}><circle cx="8" cy="5.5" r="3" /><path d="M2.5 14c.8-2.8 2.9-4.2 5.5-4.2s4.7 1.4 5.5 4.2" /></svg>;
+export const IconBook = (p: P) => <svg {...base(p)}><path d="M2.5 3.5c2-.8 3.8-.6 5.5.7 1.7-1.3 3.5-1.5 5.5-.7v9c-2-.8-3.8-.6-5.5.7-1.7-1.3-3.5-1.5-5.5-.7z" /><path d="M8 4.2v9" /></svg>;
+export const IconPlug = (p: P) => <svg {...base(p)}><path d="M6 1.8v3M10 1.8v3M4 4.8h8v2.7a4 4 0 01-8 0z" /><path d="M8 11.5v2.7" /></svg>;
+export const IconSidebar = (p: P) => <svg {...base(p)}><rect x="2" y="2.5" width="12" height="11" rx="1.5" /><path d="M6 2.5v11" /></svg>;
+export const IconChevron = (p: P) => <svg {...base(p)}><path d="M10 3.5L5.5 8l4.5 4.5" /></svg>;
+
+/**
+ * The Engram mark: an E drawn as three entries on one spine (the hash chain). The middle entry
+ * ends in a gold seal, the signed head. Black tile, so it reads the same at 16px as in a header.
+ */
+export const IconLogo = ({ size = 22, ...p }: P) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden {...p}>
-    <rect x="2" y="7" width="6" height="10" rx="1" stroke="#0a0a0a" strokeWidth="1.6" />
-    <rect x="9" y="7" width="6" height="10" rx="1" stroke="#0a0a0a" strokeWidth="1.6" />
-    <rect x="16" y="7" width="6" height="10" rx="1" stroke="#9a7200" strokeWidth="1.6" />
-    <path d="M8 12h1M15 12h1" stroke="#0a0a0a" strokeWidth="1.6" />
+    <rect width="24" height="24" rx="6.5" fill="#0a0a0a" />
+    <path d="M8.25 6.75v10.5M8.25 6.75h8M8.25 12h4.75M8.25 17.25h8" stroke="#ffffff" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="16.6" cy="12" r="1.85" fill="#d9b44a" />
   </svg>
 );
+
+/** Mark plus wordmark, used in headers. */
+export function Wordmark({ size = 22, className = "" }: { size?: number; className?: string }) {
+  return (
+    <span className={`inline-flex items-center gap-2.5 ${className}`}>
+      <IconLogo size={size} />
+      <span className={`font-sans font-semibold tracking-[-0.02em] text-text ${size >= 22 ? "text-[17px]" : "text-[15px]"}`}>engram</span>
+    </span>
+  );
+}
 
 export function OpIcon({ op, ...p }: P & { op: string }) {
   if (op === "forget") return <IconForget {...p} />;

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { currentUser } from "@/lib/server/session";
-import { IconLogo } from "@/components/icons";
+import { IconLogo, Wordmark } from "@/components/icons";
 import { CopyCommand } from "@/components/landing/copy-command";
 import { Lattice } from "@/components/landing/lattice";
 import { ProofPlayground } from "@/components/landing/proof-playground";
@@ -46,7 +46,7 @@ export default async function Landing() {
       {/* Floating navigation */}
       <header className="fixed inset-x-0 top-4 z-40 flex justify-center px-4">
         <nav className="l-glass flex h-14 w-full max-w-5xl items-center justify-between !rounded-full !bg-bg/90 px-4 sm:px-6" aria-label="Main">
-          <Link href="/" className="flex items-center gap-2.5"><IconLogo size={20} /><span className="font-mono text-[13px] tracking-[0.32em]">ENGRAM</span></Link>
+          <Link href="/" aria-label="Engram home"><Wordmark /></Link>
           <div className="flex items-center gap-1 text-[13px] sm:gap-2">
             <a href="#proof" className="hidden rounded-full px-3 py-1.5 text-muted hover:text-text md:inline">Proof</a>
             <a href="#time" className="hidden rounded-full px-3 py-1.5 text-muted hover:text-text md:inline">Time</a>
@@ -217,7 +217,7 @@ export default async function Landing() {
 
       <footer className="border-t l-hairline">
         <div className="mx-auto flex max-w-6xl flex-col gap-3 px-5 py-8 font-mono text-[11px] text-muted sm:flex-row sm:items-center sm:justify-between sm:px-8">
-          <span className="flex items-center gap-2"><IconLogo size={14} /> ENGRAM · memory you can prove</span>
+          <span className="flex items-center gap-2"><IconLogo size={16} /> engram · memory you can prove</span>
           <span>Built solo for the Appwrite Databases Hackathon · October 2026</span>
           <span className="flex gap-4"><Link href="/docs" className="hover:text-text">Docs</Link><Link href="/verify" className="hover:text-text">Verify</Link><a href="https://github.com/linoxbt/Engram" className="hover:text-text">GitHub</a></span>
         </div>

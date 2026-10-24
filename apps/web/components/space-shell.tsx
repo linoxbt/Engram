@@ -8,7 +8,7 @@ import { api } from "@/lib/client/api";
 import { useSpaceInfo } from "@/lib/client/hooks";
 import { useLive, type LiveMode } from "@/lib/client/live";
 import {
-  IconAgents, IconAudit, IconChain, IconClock, IconGraph, IconHome, IconInbox, IconLab, IconList, IconLogo, IconMenu, IconSettings,
+  IconAgents, IconAudit, IconChain, IconClock, IconGraph, IconHome, IconInbox, IconLab, IconList, IconMenu, Wordmark, IconSettings,
 } from "./icons";
 import { IntegrityBadge } from "./integrity-badge";
 import { MemoryDrawer } from "./memory-drawer";
@@ -52,11 +52,14 @@ export function SpaceShell({ spaceKey, children }: { spaceKey: string; children:
       <LiveCtx.Provider value={live}>
         <div className="flex min-h-screen">
           <aside className={clsx("fixed inset-y-0 left-0 z-30 flex w-60 flex-col border-r border-line bg-panel transition-transform lg:translate-x-0", menu ? "translate-x-0" : "-translate-x-full")}>
-            <Link href="/app" className="flex items-center gap-2 border-b border-line px-4 py-3.5">
-              <IconLogo /> <span className="font-semibold tracking-wide">ENGRAM</span>
+            <Link href="/app" className="flex items-center border-b border-line px-4 py-3" aria-label="All spaces">
+              <Wordmark size={20} />
             </Link>
             <div className="border-b border-line px-3 py-3">
-              <label className="label mb-1 block" htmlFor="space-switch">Space</label>
+              <div className="mb-1 flex items-center justify-between">
+                <label className="label" htmlFor="space-switch">Space</label>
+                <Link href="/app" className="text-2xs text-muted hover:text-text">← Workspace</Link>
+              </div>
               <select id="space-switch" value={spaceKey} onChange={(e) => router.push(`/app/${e.target.value}`)} className="h-8 w-full rounded-[2px] border border-line-2 bg-bg px-2 text-xs">
                 {(spaces.data?.spaces ?? [{ key: spaceKey, name: s?.name ?? spaceKey, sandbox: false }]).map((x) => <option key={x.key} value={x.key}>{x.name}{x.sandbox ? " (sandbox)" : ""}</option>)}
               </select>
@@ -105,14 +108,4 @@ export function SpaceShell({ spaceKey, children }: { spaceKey: string; children:
   );
 }
 
-export function PageHeader({ title, children, actions }: { title: string; children?: ReactNode; actions?: ReactNode }) {
-  return (
-    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <h1 className="text-lg tracking-wide">{title}</h1>
-        {children && <p className="mt-1 max-w-3xl text-xs text-muted">{children}</p>}
-      </div>
-      {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
-    </div>
-  );
-}
+export { PageHeader } from "./ui";
