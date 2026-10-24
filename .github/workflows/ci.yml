@@ -30,3 +30,6 @@ jobs:
         run: |
           pnpm --filter @engram/web exec playwright install --with-deps chromium
           pnpm e2e
+      - name: Show end-to-end failure context
+        if: failure()
+        run: find apps/web/test-results -name error-context.md -print -exec cat {} \; || true
