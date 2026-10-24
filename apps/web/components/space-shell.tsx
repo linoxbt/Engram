@@ -8,7 +8,7 @@ import { api } from "@/lib/client/api";
 import { useSpaceInfo } from "@/lib/client/hooks";
 import { useLive, type LiveMode } from "@/lib/client/live";
 import {
-  IconAgents, IconAudit, IconChain, IconClock, IconGraph, IconHome, IconInbox, IconLab, IconList, IconMenu, Wordmark, IconSettings,
+  IconAgents, IconAudit, IconChain, IconClock, IconGraph, IconHome, IconInbox, IconLab, IconCross, IconList, IconMenu, Wordmark, IconSettings,
 } from "./icons";
 import { IntegrityBadge } from "./integrity-badge";
 import { MemoryDrawer } from "./memory-drawer";
@@ -51,8 +51,8 @@ export function SpaceShell({ spaceKey, children }: { spaceKey: string; children:
     <OpenCtx.Provider value={openMemory}>
       <LiveCtx.Provider value={live}>
         <div className="flex min-h-screen">
-          <aside className={clsx("fixed inset-y-0 left-0 z-30 flex w-60 flex-col border-r border-line bg-panel transition-transform lg:translate-x-0", menu ? "translate-x-0" : "-translate-x-full")}>
-            <Link href="/app" className="flex items-center border-b border-line px-4 py-3" aria-label="All spaces">
+          <aside className={clsx("fixed bottom-0 left-0 top-14 z-30 flex w-72 max-w-[85vw] flex-col border-r border-line bg-panel transition-transform lg:top-0 lg:w-60 lg:max-w-none lg:translate-x-0", menu ? "translate-x-0" : "-translate-x-full")}>
+            <Link href="/app" className="hidden items-center border-b border-line px-4 py-3 lg:flex" aria-label="All spaces">
               <Wordmark size={20} />
             </Link>
             <div className="border-b border-line px-3 py-3">
@@ -87,10 +87,17 @@ export function SpaceShell({ spaceKey, children }: { spaceKey: string; children:
               </div>
             </div>
           </aside>
-          {menu && <div className="fixed inset-0 z-20 bg-black/50 lg:hidden" onClick={() => setMenu(false)} />}
+          {menu && <div className="fixed inset-x-0 bottom-0 top-14 z-20 bg-black/30 lg:hidden" onClick={() => setMenu(false)} />}
           <div className="flex min-w-0 flex-1 flex-col lg:pl-60">
-            <header className="sticky top-0 z-10 flex h-12 items-center gap-3 border-b border-line bg-bg/90 px-4 backdrop-blur">
-              <button className="text-muted lg:hidden" onClick={() => setMenu(true)} aria-label="Open navigation"><IconMenu size={18} /></button>
+            {/* Phones: the app bar comes first, logo and name on the left, menu on the right; the drawer opens beneath it. */}
+            <div className="sticky top-0 z-40 flex h-14 items-center justify-between gap-3 border-b border-line bg-bg px-4 lg:hidden">
+              <Link href="/app" aria-label="All spaces"><Wordmark size={22} /></Link>
+              <button className="grid size-9 place-items-center rounded-[2px] border border-line text-text" onClick={() => setMenu((m) => !m)}
+                aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>
+                {menu ? <IconCross size={16} /> : <IconMenu size={16} />}
+              </button>
+            </div>
+            <header className="sticky top-14 z-10 flex h-12 items-center gap-3 border-b border-line bg-bg/90 px-4 backdrop-blur lg:top-0">
               <div className="min-w-0 flex-1 truncate text-sm">
                 <span className="text-text">{s?.name ?? "…"}</span>
                 <span className="ml-2 text-2xs text-muted tabular">{spaceKey}</span>

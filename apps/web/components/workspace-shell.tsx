@@ -7,7 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
 import { storageDown, useEachSpace, useHealth, useSpaces } from "@/lib/client/workspace";
 import {
-  IconBolt, IconBook, IconChevron, IconGrid, IconInbox, IconKey, IconLogo, IconMenu, IconPlug, IconPulse, IconSeal, IconShield, IconUser, Wordmark,
+  IconBolt, IconBook, IconChevron, IconCross, IconGrid, IconInbox, IconKey, IconLogo, IconMenu, IconPlug, IconPulse, IconSeal, IconShield, IconUser, Wordmark,
 } from "./icons";
 
 type NavItem = { href: string; label: string; icon: ComponentType<{ size?: number }>; exact?: boolean; badge?: number };
@@ -58,13 +58,13 @@ export function WorkspaceShell({ user, children }: { user: { name: string; email
     <div className="flex min-h-screen">
       <aside
         className={clsx(
-          "fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:translate-x-0",
+          "fixed bottom-0 left-0 top-14 z-30 flex w-72 max-w-[85vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:top-0 lg:max-w-none lg:translate-x-0",
           menu ? "translate-x-0" : "-translate-x-full",
           mini ? "lg:w-[60px]" : "lg:w-60",
         )}
         aria-label="Workspace navigation"
       >
-        <div className={clsx("flex h-14 items-center border-b border-line", rail ? "lg:justify-center lg:px-0" : "", "justify-between px-4")}>
+        <div className={clsx("hidden h-14 items-center justify-between border-b border-line px-4 lg:flex", rail && "lg:justify-center lg:px-0")}>
           <Link href="/app" aria-label="All spaces" className={clsx(rail && "lg:hidden")}><Wordmark size={22} /></Link>
           {rail && <Link href="/app" aria-label="All spaces" className="hidden lg:block"><IconLogo size={26} /></Link>}
           <button onClick={toggleMini} className={clsx("hidden size-7 place-items-center rounded-[2px] text-muted hover:bg-panel-2 hover:text-text lg:grid", rail && "lg:hidden")} aria-label="Collapse sidebar" title="Collapse sidebar">
@@ -112,11 +112,14 @@ export function WorkspaceShell({ user, children }: { user: { name: string; email
           )}
         </div>
       </aside>
-      {menu && <div className="fixed inset-0 z-20 bg-black/40 lg:hidden" onClick={() => setMenu(false)} />}
+      {menu && <div className="fixed inset-x-0 bottom-0 top-14 z-20 bg-black/30 lg:hidden" onClick={() => setMenu(false)} />}
       <div className={clsx("flex min-w-0 flex-1 flex-col transition-[padding] duration-200", mini ? "lg:pl-[60px]" : "lg:pl-60")}>
-        <header className="sticky top-0 z-10 flex h-14 items-center gap-3 border-b border-line bg-bg/90 px-4 backdrop-blur lg:hidden">
-          <button className="grid size-9 place-items-center rounded-[2px] border border-line text-text" onClick={() => setMenu(true)} aria-label="Open navigation"><IconMenu size={16} /></button>
+        <header className="sticky top-0 z-40 flex h-14 items-center justify-between gap-3 border-b border-line bg-bg px-4 lg:hidden">
           <Link href="/app" aria-label="All spaces"><Wordmark size={22} /></Link>
+          <button className="grid size-9 place-items-center rounded-[2px] border border-line text-text" onClick={() => setMenu((m) => !m)}
+            aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>
+            {menu ? <IconCross size={16} /> : <IconMenu size={16} />}
+          </button>
         </header>
         <main className="mx-auto w-full max-w-6xl flex-1 p-4 md:p-8">{children}</main>
       </div>
