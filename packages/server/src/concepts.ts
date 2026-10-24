@@ -31,7 +31,7 @@ export async function assignConcept(ctx: Ctx, memoryId: string, vector: number[]
       const c = quantize(normalize(near.embeddings.map((x, i) => (x * n + vector[i]) / (n + 1))));
       const meta: ConceptMeta = { ...near.metadata, members: count8(n + 1), membersN: n + 1, lastMemberAt: iso() };
       try {
-        await b.vectors.update("concepts", near.$id, { embeddings: c, metadata: meta });
+        await b.vectors.update("concepts", near.$id, { embeddings: c, metadata: meta }, undefined, { ifUpdatedAt: near.$updatedAt });
       } catch (e) {
         if (isConflict(e) && attempt < 2) continue;
         throw e;

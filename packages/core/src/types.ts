@@ -94,6 +94,11 @@ export interface EntryMeta {
   conflict: "true" | "false";
   text: string | null;
   idem: string | null;
+  /**
+   * Operational: "false" until this entry's effect on its neighbours' derived
+   * fields has committed. Writers apply pending entries before reading state.
+   */
+  applied?: "true" | "false";
 }
 
 /** An entry as the verifier sees it. `vector` is present only in deep mode. */

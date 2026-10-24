@@ -33,16 +33,20 @@ export interface QuerySpec {
 
 export type TxOp =
   | { action: "create"; coll: Collection; id: string; data: { embeddings: number[]; metadata: unknown }; perms?: string[] }
-  | { action: "update"; coll: Collection; id: string; data: { embeddings?: number[]; metadata?: unknown }; perms?: string[] }
+  | { action: "update"; coll: Collection; id: string; data: { embeddings?: number[]; metadata?: unknown }; perms?: string[]; ifUpdatedAt?: string }
   | { action: "delete"; coll: Collection; id: string };
 
 export interface VectorStore {
   create<M>(coll: Collection, id: string, data: { embeddings: number[]; metadata: M }, perms?: string[]): Promise<VDoc<M>>;
   get<M>(coll: Collection, id: string): Promise<VDoc<M> | null>;
-  update<M>(coll: Collection, id: string, data: { embeddings?: number[]; metadata?: M }, perms?: string[]): Promise<VDoc<M>>;
+  /** With `ifUpdatedAt`, the write only lands if the document is unchanged since that read (else ConflictError). */
+  update<M>(coll: Collection, id: string, data: { embeddings?: number[]; metadata?: M }, perms?: string[], opts?: { ifUpdatedAt?: string }): Promise<VDoc<M>>;
   delete(coll: Collection, id: string): Promise<void>;
   query<M>(coll: Collection, q: QuerySpec): Promise<VDoc<M>[]>;
-  /** Atomic batch. Throws ConflictError when a staged document changed meanwhile. */
+  /**
+   * Atomic batch. Throws ConflictError when an update's `ifUpdatedAt` no longer
+   * matches, or when a staged document changed before commit.
+   */
   transact(ops: TxOp[]): Promise<void>;
 }
 

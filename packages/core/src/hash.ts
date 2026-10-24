@@ -37,6 +37,7 @@ export function randomSalt(): string {
 /** Agent keys: `eng_<4 chars>_<secret>`. Only the SHA-256 and the prefix are stored. */
 export const keyHash = (key: string) => sha256Hex("engram:agentkey:v1:" + key);
 
+/** Constant-time comparison for equal-length strings (hashes, tokens). */
 export function timingSafeEqualHex(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let r = 0;

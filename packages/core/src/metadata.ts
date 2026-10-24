@@ -19,7 +19,7 @@ export function initialDerived(op: Op): Derived {
 }
 
 /** Build the full metadata object; top-level copies always come from h, c and d. */
-export function buildMeta(args: { h: Header; hash: string; c: Content; d: Derived; idem?: string | null; sig?: string | null }): EntryMeta {
+export function buildMeta(args: { h: Header; hash: string; c: Content; d: Derived; idem?: string | null; sig?: string | null; applied?: "true" | "false" }): EntryMeta {
   const { h, hash, c, d } = args;
   return {
     space: h.space,
@@ -40,12 +40,13 @@ export function buildMeta(args: { h: Header; hash: string; c: Content; d: Derive
     conflict: d.contradictedBy.length ? "true" : "false",
     text: c.text,
     idem: args.idem ?? null,
+    applied: args.applied ?? "true",
   };
 }
 
 /** Patch derived (and optionally content) fields and keep the top-level copies in step. */
 export function patchMeta(meta: EntryMeta, d: Partial<Derived>, c?: Content): EntryMeta {
-  return buildMeta({ h: meta.h, hash: meta.hash, sig: meta.sig, idem: meta.idem, c: c ?? meta.c, d: { ...meta.d, ...d } });
+  return buildMeta({ h: meta.h, hash: meta.hash, sig: meta.sig, idem: meta.idem, applied: meta.applied, c: c ?? meta.c, d: { ...meta.d, ...d } });
 }
 
 export const isLive = (s: Status) => s === "active";

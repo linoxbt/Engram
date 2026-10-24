@@ -111,6 +111,7 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
   const perms = b.teamRead(space.teamId);
 
   for (let attempt = 0; attempt < 8; attempt++) {
+    await applyPending(ctx);
     const head = await chainHead(b, space.key);
     const seq = head ? seqOf(head.$id) + 1 : 0;
     const prevHash = head ? head.metadata.hash : await genesis(space.key);
@@ -150,7 +151,7 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
     applyEntry(state, id, h);
     const mine = state.get(id)!;
     const d = { ...initialDerived(draft.op), ...mine, contradictedBy: [...mine.contradictedBy], relateStatus: draft.relateStatus ?? "done" };
-    const meta = buildMeta({ h, hash, c: { text: draft.text, salt: draft.text == null ? null : salt }, d, idem: draft.idem ?? null });
+    const meta = buildMeta({ h, hash, c: { text: draft.text, salt: draft.text == null ? null : salt }, d, idem: draft.idem ?? null, applied: involvedIds(refs).length ? "false" : "true" });
 
     try {
       await b.vectors.create<EntryMeta>("memories", id, { embeddings: vector, metadata: meta }, perms);
@@ -160,7 +161,13 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
       const existing = await b.vectors.get<EntryMeta>("memories", id);
       if (existing?.metadata.hash !== hash) { await jitter(); continue; }
     }
-    const ok = await updateNeighbours(ctx, id, h);
+    let ok = false;
+    try {
+      ok = await updateNeighbours(ctx, id, h);
+    } catch (e) {
+      // The entry is committed; its effects stay pending and the next writer applies them.
+      console.error(`[engram] neighbour update for ${id} failed; left pending`, e);
+    }
     return { id, seq, hash, meta, derivedPending: !ok };
   }
   throw new EngramError("chain_busy", "The chain is busy with other writers. Retry with the same idempotency key.");
@@ -172,9 +179,9 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
  */
 export async function updateNeighbours(ctx: Ctx, id: string, h: Header, attempts = 5): Promise<boolean> {
   const { b } = ctx;
-  if (!involvedIds(h.refs).length) return true;
   for (let attempt = 0; attempt < attempts; attempt++) {
     const docs = await loadInvolved(b, h.refs);
+    const self = await b.vectors.get<EntryMeta>("memories", id);
     const state = new Map<string, DerivedState>();
     for (const [k, d] of docs) state.set(k, toState(d.metadata));
     const changed = applyEntry(state, id, h);
@@ -189,9 +196,13 @@ export async function updateNeighbours(ctx: Ctx, id: string, h: Header, attempts
       const erase = st.status === "forgotten";
       const metadata = patchMeta(doc.metadata, { ...st, contradictedBy: [...st.contradictedBy] }, erase ? { text: null, salt: null } : undefined);
       ops.push({
-        action: "update", coll: "memories", id: cid,
+        action: "update", coll: "memories", id: cid, ifUpdatedAt: doc.$updatedAt,
         data: erase ? { metadata, embeddings: tombstoneVector(COLLECTION_DIMS.memories) } : { metadata },
       });
+    }
+    // Mark this entry applied in the same transaction, so a crash leaves it visibly pending.
+    if (self && self.metadata.applied === "false") {
+      ops.push({ action: "update", coll: "memories", id, ifUpdatedAt: self.$updatedAt, data: { metadata: { ...self.metadata, applied: "true" } } });
     }
     if (!ops.length) return true;
     try {
@@ -206,16 +217,38 @@ export async function updateNeighbours(ctx: Ctx, id: string, h: Header, attempts
   return false;
 }
 
+/**
+ * Helping: apply the effects of earlier entries whose neighbour updates never
+ * committed (a crashed instance, a lost race), oldest first, before this writer
+ * reads any derived state. Idempotent, so concurrent helpers are safe.
+ */
+export async function applyPending(ctx: Ctx): Promise<number> {
+  const pending = await ctx.b.vectors.query<EntryMeta>("memories", {
+    filters: [{ op: "eq", path: "metadata.space", values: [ctx.space.key] }, { op: "eq", path: "metadata.applied", values: ["false"] }],
+    order: { field: "$id", dir: "asc" },
+    limit: 25,
+    withVectors: false,
+  });
+  let n = 0;
+  for (const p of pending) {
+    try { if (await updateNeighbours(ctx, p.$id, p.metadata.h)) n++; }
+    catch (e) { console.error(`[engram] could not apply pending entry ${p.$id}`, e); break; }
+  }
+  return n;
+}
+
 /** Patch derived fields of one entry without touching the chain (access counts, concept, relate status). */
 export async function patchDerived(b: Backend, id: string, patch: Partial<EntryMeta["d"]>): Promise<void> {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     const doc = await b.vectors.get<EntryMeta>("memories", id);
     if (!doc) return;
     try {
-      await b.vectors.update("memories", id, { metadata: patchMeta(doc.metadata, patch) });
+      // Conditional on the read: a stale copy must never write back erased content.
+      await b.vectors.update("memories", id, { metadata: patchMeta(doc.metadata, patch) }, undefined, { ifUpdatedAt: doc.$updatedAt });
       return;
     } catch (e) {
       if (!isConflict(e)) throw e;
+      await jitter();
     }
   }
 }
@@ -235,11 +268,13 @@ export async function repairSpace(ctx: Ctx): Promise<{ fixed: number; erased: nu
     if (!st) continue;
     const m = e.metadata;
     const erase = st.status === "forgotten" && m.c.text != null;
-    if (JSON.stringify(toState(m)) === JSON.stringify(st) && !erase && m.status === m.d.status) continue;
+    if (JSON.stringify(toState(m)) === JSON.stringify(st) && !erase && m.status === m.d.status && m.applied !== "false") continue;
+    const cur = await b.vectors.get<EntryMeta>("memories", e.$id);
+    if (!cur) continue;
     await b.vectors.update("memories", e.$id, {
-      metadata: patchMeta(m, { ...st }, erase ? { text: null, salt: null } : undefined),
+      metadata: { ...patchMeta(cur.metadata, { ...st }, erase ? { text: null, salt: null } : undefined), applied: "true" },
       ...(erase ? { embeddings: tombstoneVector(COLLECTION_DIMS.memories) } : {}),
-    });
+    }, undefined, { ifUpdatedAt: cur.$updatedAt });
     fixed++;
     if (erase) erased++;
   }

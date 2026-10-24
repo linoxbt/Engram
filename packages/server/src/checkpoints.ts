@@ -48,6 +48,13 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
   const prev = await latestCheckpoint(b, space.key);
   if (prev && cpSize(prev) >= size && !opts.force) return { created: false, reason: "no new entries" };
 
+  // One successor per checkpoint: a create-first lock keyed on the previous
+  // checkpoint (the same pattern as entry IDs). Overlapping runs would otherwise
+  // all link to the same predecessor and fork the checkpoint chain.
+  const bucket = cfg.appwrite.checkpointsBucket;
+  const lockId = `cpl_${space.key}_${prev ? prev.seq : "genesis"}`;
+  if (!(await takeLock(b, bucket, lockId, space, prev))) return { created: false, reason: "another checkpoint run is extending the latest checkpoint" };
+
   const entries = await loadChain(b, space.key);
   const hashes = entries.slice(0, size).map((e) => e.metadata.hash);
   let anchor: Anchor | null = null;
@@ -59,8 +66,9 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
   const cp = await signCheckpoint(unsigned, opts.privateKey);
   const fileId = checkpointFileId(cp);
   try {
-    await b.files.put(cfg.appwrite.checkpointsBucket, fileId, `${fileId}.json`, new TextEncoder().encode(JSON.stringify(cp, null, 2)), b.teamRead(space.teamId));
+    await b.files.put(bucket, fileId, `${fileId}.json`, new TextEncoder().encode(JSON.stringify(cp, null, 2)), b.teamRead(space.teamId));
   } catch (e) {
+    await b.files.delete(bucket, lockId).catch(() => undefined); // let a later run extend prev
     if (e instanceof ConflictError) return { created: false, reason: "checkpoint already exists" };
     throw e;
   }
@@ -71,6 +79,29 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
     ...(anchor ? { lastAnchorAt: iso() } : { lastAnchorAt: fresh?.settings.lastAnchorAt ?? null }),
   });
   return { created: true, checkpoint: cp };
+}
+
+const LOCK_STALE_MS = 5 * 60_000;
+
+async function takeLock(b: Backend, bucket: string, lockId: string, space: SpaceInfo, prev: Checkpoint | null): Promise<boolean> {
+  const body = new TextEncoder().encode(JSON.stringify({ at: iso(), prev: prev?.seq ?? null }));
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await b.files.put(bucket, lockId, `${lockId}.json`, body, b.teamRead(space.teamId));
+      return true;
+    } catch (e) {
+      if (!(e instanceof ConflictError)) throw e;
+      // A run that took the lock and died must not block checkpoints forever.
+      const raw = await b.files.get(bucket, lockId);
+      let at = 0;
+      try { at = raw ? Date.parse(JSON.parse(dec.decode(raw)).at) : 0; } catch { at = 0; }
+      const latest = await latestCheckpoint(b, space.key);
+      const stillPrev = (latest?.seq ?? null) === (prev?.seq ?? null);
+      if (!stillPrev || Date.now() - at < LOCK_STALE_MS) return false;
+      await b.files.delete(bucket, lockId);
+    }
+  }
+  return false;
 }
 
 /** Ask the checkpoint Function to run; sign inline only if this process holds the key. */
