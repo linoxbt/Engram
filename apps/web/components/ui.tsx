@@ -130,10 +130,10 @@ export function Hash({ value, full = false, className }: { value: string | null 
 
 export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: T; label: string }[]; value: T; onChange: (t: T) => void }) {
   return (
-    <div role="tablist" className="flex gap-1 border-b border-line">
+    <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-line">
       {tabs.map((t) => (
         <button key={t.id} role="tab" aria-selected={value === t.id} onClick={() => onChange(t.id)}
-          className={clsx("-mb-px border-b-2 px-3 py-2 text-xs uppercase tracking-wider", value === t.id ? "border-cyan text-cyan" : "border-transparent text-muted hover:text-text")}>
+          className={clsx("-mb-px shrink-0 border-b-2 px-3 py-2 text-xs uppercase tracking-wider", value === t.id ? "border-cyan text-cyan" : "border-transparent text-muted hover:text-text")}>
           {t.label}
         </button>
       ))}
