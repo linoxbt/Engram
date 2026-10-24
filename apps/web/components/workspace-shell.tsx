@@ -147,7 +147,10 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
             </button>
           </div>
           <div className={clsx("border-b border-line px-3 py-3", rightRail && "lg:hidden")}>
-            <div className="label mb-1.5 lg:hidden">This space</div>
+            <div className="mb-1.5 flex items-center justify-between lg:hidden">
+              <span className="label">This space</span>
+              <button onClick={() => setSpaceMenu(false)} className="grid size-7 place-items-center rounded-[2px] text-muted hover:bg-panel-2 hover:text-text" aria-label="Close space menu"><IconCross size={14} /></button>
+            </div>
             <select value={space.key} onChange={(e) => router.push(`/app/${e.target.value}`)} aria-label="Switch space" className="h-8 w-full rounded-[2px] border border-line-2 bg-bg px-2 text-xs">
               {space.spaces.map((x) => <option key={x.key} value={x.key}>{x.name}{x.sandbox ? " (sandbox)" : ""}</option>)}
             </select>
@@ -178,18 +181,18 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
           </button>
         </header>
         {header && (
-          <div className="sticky top-14 z-10 flex items-center border-b border-line bg-bg/90 backdrop-blur lg:top-0">
-            {/* Phones: the space's pages open from this button, at the start of the space row. */}
-            {space && (
-              <button className={clsx("ml-4 grid size-8 shrink-0 place-items-center rounded-[2px] border lg:hidden", spaceMenu ? "border-accent bg-accent text-bg" : "border-line text-text")}
-                onClick={() => { setMenu(false); setSpaceMenu((m) => !m); }} aria-label={spaceMenu ? "Close space menu" : "Open space menu"} aria-expanded={spaceMenu}>
-                {spaceMenu ? <IconCross size={14} /> : <IconSidebar size={14} />}
-              </button>
-            )}
-            <div className="min-w-0 flex-1">{header}</div>
-          </div>
+          <div className="sticky top-14 z-10 border-b border-line bg-bg/90 backdrop-blur lg:top-0">{header}</div>
         )}
-        <main className={clsx("mx-auto w-full flex-1 p-4", wide ? "max-w-[1400px] md:p-6" : "max-w-6xl md:p-8")}>{children}</main>
+        <main className={clsx("mx-auto w-full flex-1 p-4", wide ? "max-w-[1400px] md:p-6" : "max-w-6xl md:p-8")}>
+          {/* Phones: the space's pages open from this button, just below the space row. */}
+          {space && (
+            <button className={clsx("mb-4 grid size-9 place-items-center rounded-[2px] border lg:hidden", spaceMenu ? "border-accent bg-accent text-bg" : "border-line text-text")}
+              onClick={() => { setMenu(false); setSpaceMenu((m) => !m); }} aria-label={spaceMenu ? "Close space menu" : "Open space menu"} aria-expanded={spaceMenu}>
+              {spaceMenu ? <IconCross size={16} /> : <IconSidebar size={16} />}
+            </button>
+          )}
+          {children}
+        </main>
       </div>
     </div>
   );
