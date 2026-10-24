@@ -1,7 +1,7 @@
 /** remember: embed, find neighbours, relate, append to the chain, then post-commit work. */
 import { count8, iso, seqOf, type EntryMeta } from "@engram/core";
 import { agentNames, bumpAgentStats, requireScope } from "./agents";
-import { append, patchDerived, type MemDoc } from "./chain";
+import { append, applyPending, patchDerived, type MemDoc } from "./chain";
 import { assignConcept } from "./concepts";
 import { requestCheckpoint } from "./checkpoints";
 import type { Ctx } from "./context";
@@ -68,6 +68,8 @@ export async function remember(ctx: Ctx, raw: unknown, opts: RememberOptions = {
   if (!opts.createdAt) await enforceRate(ctx);
 
   const vector = opts.vector ?? (await embedDocument(ctx, input.text));
+  // Earlier entries' effects must be in place before we look at neighbours' status.
+  await applyPending(ctx);
   const createdAt = opts.createdAt ?? iso();
   let relations: Relation[] = [];
   let relateStatus: RememberResult["relateStatus"] = "skipped";

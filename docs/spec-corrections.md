@@ -21,3 +21,14 @@ The five build documents (Product and Architecture, Data Model and VectorsDB, Ba
 | 15 | Concurrency: stage the create inside the transaction | Whether a staged create fails at commit when its ID was taken meanwhile is unverified | The entry is created first with `createDocument` (a duplicate ID fails: the lock), then neighbour updates commit in one transaction. Derived updates are idempotent and recomputable, so a retry is always safe |
 | 16 | Forgotten memories are returned by as-of recall | Their vectors are erased too, so they cannot be found by meaning | As-of recall surfaces them as erasure receipts by subject; the timeline and chain always show them |
 | 17 | Recall returns the top k | An agent told to "mention conflicts" may receive only one side | Open-conflict partners of returned memories are always included, placed together |
+
+## Found in review (after the first end-to-end run)
+
+| # | Problem | Implementation |
+|---|---------|----------------|
+| 18 | Derived writes read the whole document and wrote it back unconditionally. A stale copy (an access-count bump, a supersede racing a forget) could restore erased text and salt, and the verifier would then report tampering on a legitimate chain | Every derived write is conditional on the document's `$updatedAt` at read time (`ifUpdatedAt`). In Appwrite the operations are staged, re-read and compared, and the commit-time conflict check covers the rest. Conflicts retry |
+| 19 | A new entry's own derived state was computed from neighbours read before the create; if an earlier entry's neighbour updates had not landed (crashed instance), the new entry recorded a stale conflict forever | Entries carry `applied: "false"` until their neighbour updates commit (marked in the same transaction). Every writer first applies pending entries, oldest first ("helping"). This also guarantees a forget's erasure eventually lands |
+| 20 | Overlapping checkpoint runs (async Function executions, cron plus post-commit triggers) could both link to the same predecessor, forking the checkpoint chain | A create-first lock file `cpl_<space>_<prevSeq>` allows one successor per checkpoint; a lock older than 5 minutes with no successor is reclaimed |
+| 21 | Removing `d` from a document skipped the erasure and resurrection checks; a non-string header field crashed the verifier, leaving the sentinel's badge at its last value | Erasure rules run regardless of `d`; a missing `d` is its own finding. Headers are shape-checked before hashing and malformed ones become critical findings |
+| 22 | `$distance` on VectorsDB results is unverified; without it neighbour detection would silently stop | If a vector result lacks `$distance`, the adapter computes cosine distance from the returned embedding |
+| 23 | Checkpoint files were listed with full-text search | Listed with a `startsWith("name")` filter, falling back to search |

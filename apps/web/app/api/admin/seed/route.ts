@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { timingSafeEqualHex } from "@engram/core";
 import { createSpace, getBackend, getConfig, getSpace, personCtx, seedStory, EngramError, updateSettings } from "@engram/server";
 import { defer, readJson, route } from "@/lib/server/api";
 
@@ -16,7 +17,7 @@ const Body = z.object({
 /** Seeds the demo story with past timestamps. Protected by SEED_ADMIN_TOKEN; delete the token after seeding. */
 export const POST = route(async (req) => {
   const token = getConfig().seedAdminToken;
-  if (!token || req.headers.get("authorization") !== `Bearer ${token}`) throw new EngramError("unauthorized", "Seed route disabled or bad token.");
+  if (!token || !timingSafeEqualHex(req.headers.get("authorization") ?? "", `Bearer ${token}`)) throw new EngramError("unauthorized", "Seed route disabled or bad token.");
   const body = Body.parse(await readJson(req));
   const b = getBackend();
   const password = req.headers.get("x-owner-password");

@@ -6,6 +6,7 @@ import { InputFile } from "node-appwrite/file";
 import type { EngramConfig } from "../config";
 import { ConflictError, EngramError } from "../errors";
 import { evaluate } from "./query";
+import { cosine } from "@engram/core";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Filter, Jobs, QuerySpec, TeamInfo, TeamStore, TxOp, User, VDoc, VectorStore,
 } from "./types";
@@ -59,7 +60,11 @@ class AppwriteVectors implements VectorStore {
       throw mapError(e);
     }
   }
-  async update<M>(coll: Collection, id: string, data: { embeddings?: number[]; metadata?: M }, perms?: string[]) {
+  async update<M>(coll: Collection, id: string, data: { embeddings?: number[]; metadata?: M }, perms?: string[], opts: { ifUpdatedAt?: string } = {}) {
+    if (opts.ifUpdatedAt) {
+      await this.transact([{ action: "update", coll, id, data, perms, ifUpdatedAt: opts.ifUpdatedAt }]);
+      return (await this.get<M>(coll, id))!;
+    }
     return call(() => this.vdb.updateDocument({ databaseId: this.db, collectionId: coll, documentId: id, data: data as any, permissions: perms })) as unknown as Promise<VDoc<M>>;
   }
   async delete(coll: Collection, id: string) {
@@ -84,18 +89,24 @@ class AppwriteVectors implements VectorStore {
     if (q.order && !q.vector) qs.push(q.order.dir === "asc" ? Query.orderAsc(q.order.field) : Query.orderDesc(q.order.field));
     if (q.cursorAfter) qs.push(Query.cursorAfter(q.cursorAfter));
     qs.push(Query.limit(q.limit ?? 25));
-    const withSelect = q.withVectors === false && this.selectOk ? [...qs, Query.select(["$id", "$createdAt", "$updatedAt", "metadata"])] : qs;
+    // Vector queries always fetch embeddings so a missing $distance can be computed locally.
+    const withSelect = q.withVectors === false && this.selectOk && !q.vector ? [...qs, Query.select(["$id", "$createdAt", "$updatedAt", "metadata"])] : qs;
+    let docs: VDoc<M>[];
     try {
-      const res = await this.vdb.createQuery({ databaseId: this.db, collectionId: coll, queries: withSelect, total: false });
-      return res.documents as unknown as VDoc<M>[];
+      docs = (await this.vdb.createQuery({ databaseId: this.db, collectionId: coll, queries: withSelect, total: false })).documents as unknown as VDoc<M>[];
     } catch (e) {
       if (withSelect !== qs && e instanceof AppwriteException && e.code === 400) {
         this.selectOk = false; // select unsupported on this collection type; fetch whole documents
-        const res = await call(() => this.vdb.createQuery({ databaseId: this.db, collectionId: coll, queries: qs, total: false }));
-        return res.documents as unknown as VDoc<M>[];
-      }
-      throw mapError(e);
+        docs = (await call(() => this.vdb.createQuery({ databaseId: this.db, collectionId: coll, queries: qs, total: false }))).documents as unknown as VDoc<M>[];
+      } else throw mapError(e);
     }
+    if (q.vector) {
+      for (const d of docs) {
+        if (typeof d.$distance !== "number") d.$distance = d.embeddings ? 1 - cosine(q.vector, d.embeddings) : undefined;
+        if (q.withVectors === false) delete d.embeddings;
+      }
+    }
+    return docs;
   }
 
   async transact(ops: TxOp[]) {
@@ -112,6 +123,13 @@ class AppwriteVectors implements VectorStore {
           ...(op.action === "delete" ? {} : { data: op.data }),
         })),
       });
+      // Conditional updates: once staged, Appwrite's commit fails if a staged document changes.
+      // Re-reading now closes the window between our read and the staging.
+      for (const op of ops) {
+        if (op.action !== "update" || !op.ifUpdatedAt) continue;
+        const cur = await this.vdb.getDocument({ databaseId: this.db, collectionId: op.coll, documentId: op.id });
+        if (cur.$updatedAt !== op.ifUpdatedAt) throw new ConflictError(`Document ${op.id} changed since it was read`);
+      }
       await this.vdb.updateTransaction({ transactionId: tx.$id, commit: true });
     } catch (e) {
       try { await this.vdb.updateTransaction({ transactionId: tx.$id, rollback: true }); } catch { /* already closed */ }
@@ -175,6 +193,7 @@ class AppwriteTeams implements TeamStore {
 }
 
 class AppwriteFiles implements FileStore {
+  private prefixOk = true;
   constructor(private storage: Storage) {}
   async put(bucket: string, fileId: string, name: string, bytes: Uint8Array, perms: string[]) {
     await call(() => this.storage.createFile({ bucketId: bucket, fileId, file: InputFile.fromBuffer(bytes, name), permissions: perms }));
@@ -188,7 +207,13 @@ class AppwriteFiles implements FileStore {
     let cursor: string | undefined;
     for (;;) {
       const qs = [Query.limit(100), Query.orderAsc("$id"), ...(cursor ? [Query.cursorAfter(cursor)] : [])];
-      const res = await call(() => this.storage.listFiles({ bucketId: bucket, queries: qs, search: namePrefix }));
+      let res;
+      if (this.prefixOk) {
+        try { res = await this.storage.listFiles({ bucketId: bucket, queries: [Query.startsWith("name", namePrefix), ...qs] }); }
+        catch (e) { if (e instanceof AppwriteException && e.code === 400) this.prefixOk = false; else throw mapError(e); }
+      }
+      // Fallback: full-text search, then filter by prefix below.
+      if (!res) res = await call(() => this.storage.listFiles({ bucketId: bucket, queries: qs, search: namePrefix }));
       for (const f of res.files) if (f.name.startsWith(namePrefix)) out.push({ fileId: f.$id, name: f.name, createdAt: f.$createdAt, size: f.sizeOriginal });
       if (res.files.length < 100) break;
       cursor = res.files[res.files.length - 1].$id;

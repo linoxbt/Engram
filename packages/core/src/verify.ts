@@ -14,6 +14,7 @@
  *  7. Every ref points to an earlier entry of the same space.
  *  8. createdAt never decreases (2 s tolerance for clock skew).
  */
+import { canonical } from "./canonical";
 import { verifyCheckpointSig, checkpointHash, checkpointFileId, cpSize } from "./checkpoint";
 import { entryId, iso, isEntryId, seqOf, seqStr, spaceOfId } from "./encode";
 import { contentHash, embHash, genesis, headerHash, quantize } from "./hash";
@@ -31,7 +32,28 @@ export interface EntryResult { seq: number; ok: boolean }
 type Input = ChainEntry | PublicEntry;
 const isPublic = (e: Input): e is PublicEntry => (e as PublicEntry).h !== undefined && (e as ChainEntry).metadata === undefined;
 
-interface Kept { id: string; h: Header; hash: string; full?: ChainEntry }
+interface Kept { id: string; h: Header; hash: string; full?: ChainEntry; malformed?: boolean }
+
+const ZERO = "0".repeat(64);
+const STRING_FIELDS = ["space", "seq", "prevHash", "op", "kind", "agent", "contentHash", "embHash", "model", "importance", "confidence", "validFrom", "createdAt"];
+
+/** Shape check before hashing: a tampered header must yield a finding, never an exception. */
+export function headerProblem(h: unknown): string | null {
+  if (!h || typeof h !== "object") return "missing";
+  const o = h as Record<string, unknown>;
+  if (o.v !== "1") return "unknown format version";
+  for (const k of STRING_FIELDS) if (typeof o[k] !== "string") return `${k} is not a string`;
+  for (const k of ["subject", "source"]) if (o[k] !== null && typeof o[k] !== "string") return `${k} is not a string`;
+  if (!["remember", "reflect", "forget", "link"].includes(o.op as string)) return "unknown op";
+  const r = o.refs as Record<string, unknown> | undefined;
+  if (!r || typeof r !== "object") return "refs are missing";
+  for (const k of ["supersedes", "contradicts", "related", "derivedFrom"]) {
+    if (!Array.isArray(r[k]) || !(r[k] as unknown[]).every((x) => typeof x === "string")) return `refs.${k} is malformed`;
+  }
+  if (r.target !== null && typeof r.target !== "string") return "refs.target is malformed";
+  try { canonical(h); } catch { return "contains non-string values"; }
+  return null;
+}
 
 export class ChainVerifier {
   readonly space: string;
@@ -78,7 +100,17 @@ export class ChainVerifier {
       if (!h || h.seq !== seqStr(seq) || h.space !== this.space) {
         this.add({ seq, rule: "structure", severity: "critical", message: `Entry #${seq} carries the header of ${h ? `#${Number(h.seq)}` : "nothing"}. Entries were moved or swapped.` });
       }
-      if (!h) { out.push({ seq, ok: false }); this.prevSeq = seq; continue; }
+      const shape = headerProblem(h);
+      const hashOk = typeof hash === "string" && /^[0-9a-f]{64}$/.test(hash);
+      if (shape || !hashOk) {
+        this.add({ seq, rule: "header", severity: "critical", message: `Entry #${seq} has a malformed ${shape ? `header (${shape})` : "hash"}. It was altered outside Engram.` });
+        this.kept.push({ id, h: h as Header, hash: hashOk ? hash : ZERO, malformed: true });
+        this.prevHash = hashOk ? hash : ZERO;
+        this.prevSeq = seq;
+        out.push({ seq, ok: false });
+        continue;
+      }
+      try {
 
       // Rule 2: link.
       const expectPrev = seq === 0 ? await genesis(this.space) : this.prevHash;
@@ -133,6 +165,9 @@ export class ChainVerifier {
         }
       }
 
+      } catch (e) {
+        this.add({ seq, rule: "structure", severity: "critical", message: `Entry #${seq} could not be checked: ${e instanceof Error ? e.message : String(e)}.` });
+      }
       applyEntry(this.state, id, h);
       this.kept.push({ id, h, hash, full: isPublic(raw) ? undefined : raw });
       this.prevHash = hash;
@@ -172,11 +207,11 @@ export class ChainVerifier {
   private checkDerived() {
     for (const k of this.kept) {
       const e = k.full;
-      if (!e) continue;
+      if (!e || k.malformed) continue;
       const m = e.metadata;
       const seq = seqOf(k.id);
       const want = this.state.get(k.id);
-      if (!want || !m.d) continue;
+      if (!want) continue;
       // Rule 5: missing content needs a forget entry; forgotten content must stay gone.
       if (isMemoryOp(k.h.op) && m.c?.text == null && want.status !== "forgotten") {
         this.add({ seq, rule: "content", severity: "critical", message: `Memory #${seq}'s content is missing, but no forget entry erased it.` });
@@ -195,13 +230,17 @@ export class ChainVerifier {
         }
       }
       const d = m.d;
+      if (!d || typeof d !== "object") {
+        this.add({ seq, rule: "derived", severity: "warning", message: `Entry #${seq} has no derived state; replay says ${want.status}.` });
+        continue;
+      }
       const diffs: string[] = [];
       if (d.status !== want.status) diffs.push(`status says ${d.status}; replay says ${want.status}${want.supersededBy ? ` by #${seqOf(want.supersededBy)}` : ""}`);
       if (d.validTo !== want.validTo) diffs.push("validity end differs");
       if (d.supersededBy !== want.supersededBy) diffs.push("superseded-by differs");
       if (!sameSet(d.contradictedBy ?? [], want.contradictedBy)) diffs.push("conflicts differ");
       if (d.forgottenAt !== want.forgottenAt || d.forgottenBy !== want.forgottenBy) diffs.push("forget record differs");
-      if (m.status !== d.status || m.validTo !== d.validTo || m.forgottenAt !== d.forgottenAt || m.conflict !== (d.contradictedBy.length ? "true" : "false")) {
+      if (m.status !== d.status || m.validTo !== d.validTo || m.forgottenAt !== d.forgottenAt || m.conflict !== ((d.contradictedBy ?? []).length ? "true" : "false")) {
         diffs.push("searchable copies disagree with derived state");
       }
       if (diffs.length) {

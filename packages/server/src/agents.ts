@@ -104,7 +104,8 @@ export async function authAgent(b: Backend, bearer: string | null | undefined, d
   const m = KEY_RE.exec(key);
   if (!m) throw new EngramError("unauthorized", "Missing or malformed agent key. Send Authorization: Bearer eng_...");
   const hit = authCache.get(key);
-  if (hit && Date.now() - hit.at < 30_000) return { ...hit.ctx, defer };
+  // Short TTL: a revoked key stops working on every instance within 10 seconds.
+  if (hit && Date.now() - hit.at < 10_000) return { ...hit.ctx, defer };
   const h = await keyHash(key);
   const docs = await b.vectors.query<AgentMeta>("agents", { filters: [{ op: "eq", path: "metadata.keyPrefix", values: [m[1]] }], limit: 10, withVectors: false });
   const doc = docs.find((d) => timingSafeEqualHex(d.metadata.keyHash, h));

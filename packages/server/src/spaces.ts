@@ -79,8 +79,10 @@ export async function purgeSpaceData(b: Backend, key: string) {
     }
   }
   const cfg = getConfig();
-  const files = await b.files.list(cfg.appwrite.checkpointsBucket, `cp_${key}_`);
-  await Promise.all(files.map((f) => b.files.delete(cfg.appwrite.checkpointsBucket, f.fileId)));
+  for (const prefix of [`cp_${key}_`, `cpl_${key}_`]) {
+    const files = await b.files.list(cfg.appwrite.checkpointsBucket, prefix);
+    await Promise.all(files.map((f) => b.files.delete(cfg.appwrite.checkpointsBucket, f.fileId)));
+  }
 }
 
 export const personName = (settings: SpaceSettings, actor: string) =>

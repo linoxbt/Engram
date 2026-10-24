@@ -41,6 +41,12 @@ export class LocalState {
 }
 
 const now = () => new Date().toISOString();
+/** Strictly increasing per document, so `ifUpdatedAt` detects every intervening write. */
+const nextStamp = (prev?: string) => {
+  const t = Date.now();
+  const p = prev ? Date.parse(prev) : 0;
+  return new Date(Math.max(t, p + 1)).toISOString();
+};
 const clone = <T>(x: T): T => structuredClone(x);
 
 class LocalVectors implements VectorStore {
@@ -55,12 +61,13 @@ class LocalVectors implements VectorStore {
     return clone(doc);
   }
   async get<M>(c: Collection, id: string) { const d = this.coll(c)[id]; return d ? (clone(d) as VDoc<M>) : null; }
-  async update<M>(c: Collection, id: string, data: { embeddings?: number[]; metadata?: M }): Promise<VDoc<M>> {
+  async update<M>(c: Collection, id: string, data: { embeddings?: number[]; metadata?: M }, _perms?: string[], opts: { ifUpdatedAt?: string } = {}): Promise<VDoc<M>> {
     const d = this.coll(c)[id];
     if (!d) throw new EngramError("not_found", `Document not found: ${id}`);
+    if (opts.ifUpdatedAt && d.$updatedAt !== opts.ifUpdatedAt) throw new ConflictError(`Document ${id} changed since it was read`);
     if (data.embeddings) d.embeddings = [...data.embeddings];
     if (data.metadata !== undefined) d.metadata = clone(data.metadata);
-    d.$updatedAt = now();
+    d.$updatedAt = nextStamp(d.$updatedAt);
     this.s.save();
     return clone(d) as VDoc<M>;
   }
@@ -72,6 +79,7 @@ class LocalVectors implements VectorStore {
     for (const op of ops) {
       if (op.action === "create" && this.coll(op.coll)[op.id]) throw new ConflictError(`Document with the requested ID already exists: ${op.id}`);
       if (op.action === "update" && !this.coll(op.coll)[op.id]) throw new EngramError("not_found", `Document not found: ${op.id}`);
+      if (op.action === "update" && op.ifUpdatedAt && this.coll(op.coll)[op.id].$updatedAt !== op.ifUpdatedAt) throw new ConflictError(`Document ${op.id} changed since it was read`);
     }
     const t = now();
     for (const op of ops) {
@@ -81,7 +89,7 @@ class LocalVectors implements VectorStore {
         const d = coll[op.id];
         if (op.data.embeddings) d.embeddings = [...op.data.embeddings];
         if (op.data.metadata !== undefined) d.metadata = clone(op.data.metadata);
-        d.$updatedAt = t;
+        d.$updatedAt = nextStamp(d.$updatedAt);
       } else delete coll[op.id];
     }
     this.s.save();
