@@ -232,8 +232,15 @@ class AppwriteAuth implements AuthStore {
   constructor(private cfg: EngramConfig, private admin: Client) {}
   private anon() { return new Client().setEndpoint(this.cfg.appwrite.endpoint).setProject(this.cfg.appwrite.projectId); }
   async signUp(email: string, password: string, name: string): Promise<User> {
-    const u = await call(() => new Account(this.anon()).create({ userId: ID.unique(), email, password, name }));
-    return { id: u.$id, email: u.email, name: u.name };
+    try {
+      const u = await new Account(this.anon()).create({ userId: ID.unique(), email, password, name });
+      return { id: u.$id, email: u.email, name: u.name };
+    } catch (e) {
+      // Same messages as the local backend; a bare 409 would otherwise read as a chain conflict.
+      if (e instanceof AppwriteException && e.code === 409) throw new EngramError("conflict", "An account with this email already exists.");
+      if (e instanceof AppwriteException && e.code === 400) throw new EngramError("bad_request", e.message);
+      throw mapError(e);
+    }
   }
   async signIn(email: string, password: string) {
     try {
