@@ -20,7 +20,18 @@ export function toFeedItem(e: ChainEntry | { $id: string; metadata: EntryMeta },
   };
 }
 
+const overviewCache = new Map<string, { at: number; data: Awaited<ReturnType<typeof computeOverview>> }>();
+
+/** Cached for a few seconds so several open dashboards don't each page through the whole chain. */
 export async function overview(ctx: Ctx) {
+  const hit = overviewCache.get(ctx.space.key);
+  if (hit && Date.now() - hit.at < 4000) return { ...hit.data, integrity: ctx.space.settings.integrity, latestCheckpoint: ctx.space.settings.latestCheckpoint };
+  const data = await computeOverview(ctx);
+  overviewCache.set(ctx.space.key, { at: Date.now(), data });
+  return data;
+}
+
+async function computeOverview(ctx: Ctx) {
   const { b, space } = ctx;
   const [chain, agents, concepts] = await Promise.all([
     loadChain(b, space.key),

@@ -178,3 +178,17 @@ describe("demo story and Tamper Lab", () => {
     expect(seqOf("m_aaaaaaaa_000000000007")).toBe(7);
   });
 });
+
+describe("recall regressions", () => {
+  it("never returns the same memory twice in an as-of answer", async () => {
+    const { ctx } = await setup();
+    const a = await remember(ctx, { text: "Ada shared a delivery address: 14 Palm Close, Lekki.", subject: "customer:ada" });
+    const mid = new Date().toISOString();
+    await new Promise((r) => setTimeout(r, 5));
+    await forget(ctx, { id: a.id, reason: "erasure requested" });
+    const res = await recall(ctx, { query: "delivery address", asOf: mid, subject: "customer:ada", k: 5 });
+    const ids = res.memories.map((m) => m.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain(a.id);
+  });
+});

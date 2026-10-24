@@ -27,7 +27,9 @@ export default function OverviewPage() {
   const live = useLiveMode();
   const open = useOpenMemory();
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ["space", space, "overview"], queryFn: () => api<Overview>(`/api/app/spaces/${space}/overview`), refetchInterval: pollInterval(live) });
+  // Stats and the strip refresh slowly; the cheap feed endpoint carries the live updates.
+  const q = useQuery({ queryKey: ["space", space, "overview"], queryFn: () => api<Overview>(`/api/app/spaces/${space}/overview`), refetchInterval: live === "polling" ? 15_000 : false });
+  const feedQ = useQuery({ queryKey: ["space", space, "feed"], queryFn: () => api<{ items: FeedItem[] }>(`/api/app/spaces/${space}/feed?limit=30`), refetchInterval: pollInterval(live) });
   const agents = useQuery({ queryKey: ["space", space, "agents"], queryFn: () => api<{ agents: { lastSeenAt: string | null; status: string }[] }>(`/api/app/spaces/${space}/agents`) });
   const recalls = useQuery({ queryKey: ["space", space, "recalls"], queryFn: () => api<{ recalls: unknown[] }>(`/api/app/spaces/${space}/recalls`) });
   const verify = useMutation({
@@ -38,12 +40,13 @@ export default function OverviewPage() {
   // New entries slide in.
   const seen = useRef<Set<string> | null>(null);
   const [fresh, setFresh] = useState<Set<string>>(new Set());
+  const feedItems = feedQ.data?.items ?? q.data?.feed ?? [];
   useEffect(() => {
-    if (!q.data) return;
-    const ids = q.data.feed.map((f) => f.id);
+    if (!feedItems.length) return;
+    const ids = feedItems.map((f) => f.id);
     if (seen.current) setFresh(new Set(ids.filter((id) => !seen.current!.has(id))));
     seen.current = new Set(ids);
-  }, [q.data]);
+  }, [feedItems]);
 
   const o = q.data;
   const checklist = o && [
@@ -114,7 +117,7 @@ export default function OverviewPage() {
 
           <div className="grid gap-4 lg:grid-cols-3">
             <Card title="Live feed" className="lg:col-span-2" action={<span className="text-2xs text-muted">{live === "realtime" ? "realtime" : "updates every 3s"}</span>}>
-              {o.feed.length ? <Feed items={o.feed} onOpen={open} fresh={fresh} /> : (
+              {feedItems.length ? <Feed items={feedItems} onOpen={open} fresh={fresh} /> : (
                 <Empty title="Waiting for the first memory">Connect an agent over MCP and ask it to remember something. It will appear here the moment it is written.</Empty>
               )}
             </Card>
