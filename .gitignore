@@ -5,6 +5,7 @@ dist/
 coverage/
 *.tsbuildinfo
 .env
+.env.production
 .env.local
 .env.*.local
 .engram-local/
