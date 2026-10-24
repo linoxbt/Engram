@@ -80,6 +80,8 @@ export interface AuthStore {
   signOut(secret: string): Promise<void>;
   /** A short-lived JWT the browser SDK can use for Realtime. Null when unsupported. */
   createJwt(secret: string): Promise<string | null>;
+  /** Admin lookup for scripts (seeding). */
+  findUserByEmail(email: string): Promise<User | null>;
 }
 
 export interface Jobs {

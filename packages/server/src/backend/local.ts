@@ -209,6 +209,10 @@ class LocalAuth implements AuthStore {
   }
   async signOut(secret: string) { delete this.s.db.sessions[secret]; this.s.save(); }
   async createJwt() { return null; }
+  async findUserByEmail(email: string): Promise<User | null> {
+    const e = Object.entries(this.s.db.users).find(([, u]) => u.email === email.toLowerCase());
+    return e ? { id: e[0], email: e[1].email, name: e[1].name } : null;
+  }
 }
 
 class LocalJobs implements Jobs {

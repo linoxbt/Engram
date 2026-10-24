@@ -1,0 +1,152 @@
+/**
+ * Day 1 verification experiments (Document 5, section 3) against your Appwrite project.
+ *   pnpm experiments
+ * Creates a temporary collection, runs every check, deletes it, and writes docs/verified.md.
+ * The engine already has a fallback for each item; this tells you which path you are on.
+ */
+import "./env";
+import { writeFileSync } from "node:fs";
+import { AppwriteException, Client, Embeddings, EmbeddingModel, ID, Query, Teams, VectorsDB, VectorsDBIndexType } from "node-appwrite";
+import { cosine, embHash, quantize } from "@engram/core";
+
+const endpoint = process.env.APPWRITE_ENDPOINT, project = process.env.APPWRITE_PROJECT_ID, key = process.env.APPWRITE_API_KEY;
+if (!endpoint || !project || !key) { console.error("Set APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID and APPWRITE_API_KEY."); process.exit(1); }
+const DB = process.env.APPWRITE_DB_ID ?? "engram";
+const client = new Client().setEndpoint(endpoint).setProject(project).setKey(key);
+const vdb = new VectorsDB(client);
+const emb = new Embeddings(client);
+const COLL = `exp_${Date.now().toString(36)}`;
+const rows: { n: number; item: string; result: string; ok: boolean | null; action: string }[] = [];
+const rec = (n: number, item: string, ok: boolean | null, result: string, action: string) => { rows.push({ n, item, result, ok, action }); console.log(`${ok === null ? "·" : ok ? "✓" : "✗"} ${n}. ${item}: ${result}`); };
+const err = (e: unknown) => e instanceof AppwriteException ? `${e.code} ${e.type}: ${e.message}` : String(e);
+const ms = async <T>(fn: () => Promise<T>) => { const t = performance.now(); const r = await fn(); return [r, Math.round(performance.now() - t)] as const; };
+
+const embed = async (texts: string[], prefix = "") => (await emb.createTextEmbeddings({ texts: texts.map((t) => prefix + t), model: EmbeddingModel.Nomicembedtext })).embeddings.map((e) => quantize(e.embedding));
+
+try {
+  await vdb.createCollection({ databaseId: DB, collectionId: COLL, name: COLL, dimension: 768, documentSecurity: true });
+  await vdb.createIndex({ databaseId: DB, collectionId: COLL, key: "emb_cosine", type: VectorsDBIndexType.HnswCosine, attributes: ["embeddings"] });
+  for (let i = 0; i < 30; i++) { const idx = await vdb.getIndex({ databaseId: DB, collectionId: COLL, key: "emb_cosine" }); if (idx.status === "available") break; await new Promise((r) => setTimeout(r, 1500)); }
+
+  const texts = ["Ada is on the Pro plan, billed monthly.", "Ada prefers email over phone calls.", "Kestrel Foods paid invoice INV-204 on time.", "Ada reported that CSV exports drop the last row.", "Apollo staging runs in the Frankfurt region."];
+  const vecs = await embed(texts, "search_document: ");
+  for (let i = 0; i < texts.length; i++) {
+    await vdb.createDocument({ databaseId: DB, collectionId: COLL, documentId: `m_testtest_${String(i).padStart(12, "0")}`, data: { embeddings: vecs[i], metadata: { space: i < 4 ? "testtest" : "othersp1", seq: String(i).padStart(12, "0"), text: texts[i], h: { kind: i === 1 ? "preference" : "fact" }, d: { contradictedBy: [] } } } });
+  }
+  const [qv] = await embed(["What plan is Ada on?"], "search_query: ");
+
+  // 1. Vector query with and without metadata filters.
+  try {
+    const [plain, t1] = await ms(() => vdb.createQuery({ databaseId: DB, collectionId: COLL, queries: [Query.vectorCosine("embeddings", qv), Query.limit(3)] }));
+    const [filtered, t2] = await ms(() => vdb.createQuery({ databaseId: DB, collectionId: COLL, queries: [Query.vectorCosine("embeddings", qv), Query.equal("metadata.space", ["othersp1"]), Query.limit(3)] }));
+    const ok = filtered.documents.every((d) => (d as any).metadata.space === "othersp1");
+    const dist = (plain.documents[0] as any).$distance;
+    rec(1, "Vector query combined with metadata filters", ok, `plain ${t1} ms, filtered ${t2} ms; filter respected: ${ok}; $distance present: ${dist !== undefined} (top ${dist})`, ok ? "Keep ENGRAM_VECTOR_FILTERS=true" : "Set ENGRAM_VECTOR_FILTERS=false (over-fetch and filter in code)");
+  } catch (e) { rec(1, "Vector query combined with metadata filters", false, err(e), "Set ENGRAM_VECTOR_FILTERS=false"); }
+
+  // 2. createDocument with an existing ID.
+  try {
+    await vdb.createDocument({ databaseId: DB, collectionId: COLL, documentId: "m_testtest_000000000000", data: { embeddings: vecs[0], metadata: { space: "x" } } });
+    rec(2, "createDocument with an existing ID", false, "second create SUCCEEDED (overwrote or duplicated)", "Chain lock is unsafe: switch to the head-document fallback (Document 3, section 2)");
+  } catch (e) { rec(2, "createDocument with an existing ID", e instanceof AppwriteException && e.code === 409, err(e), "Engine maps 409 to ConflictError: lock-free chain is safe"); }
+
+  // 3. Transaction staging a create whose ID is taken meanwhile.
+  try {
+    const tx = await vdb.createTransaction({ ttl: 60 });
+    await vdb.createOperations({ transactionId: tx.$id, operations: [{ action: "create", databaseId: DB, collectionId: COLL, documentId: "m_testtest_000000000099", data: { embeddings: vecs[0], metadata: { space: "testtest", who: "tx" } } }] });
+    await vdb.createDocument({ databaseId: DB, collectionId: COLL, documentId: "m_testtest_000000000099", data: { embeddings: vecs[0], metadata: { space: "testtest", who: "direct" } } });
+    try { await vdb.updateTransaction({ transactionId: tx.$id, commit: true }); rec(3, "Transaction create with an ID taken meanwhile", false, "commit SUCCEEDED", "Engine already creates the entry first (outside the transaction): no change needed"); }
+    catch (e) { rec(3, "Transaction create with an ID taken meanwhile", true, `commit failed: ${err(e)}`, "Either strategy is safe; engine uses create-first"); }
+  } catch (e) { rec(3, "Transaction create with an ID taken meanwhile", null, `could not run: ${err(e)}`, "Engine uses create-first, so this does not block"); }
+
+  // 4. Vector round trip and embHash.
+  {
+    const d = await vdb.getDocument({ databaseId: DB, collectionId: COLL, documentId: "m_testtest_000000000001" }) as any;
+    const same = (await embHash(quantize(d.embeddings))) === (await embHash(vecs[1]));
+    rec(4, "Vector round trip keeps embHash", same, same ? "identical after quantizing to 5 decimals" : "values changed beyond 5-decimal rounding", same ? "Deep mode is safe" : "Use coarser quantization (4 decimals) or skip deep mode in the demo");
+  }
+
+  // 5. Metadata size and ID length.
+  {
+    const out: string[] = [];
+    for (const kb of [4, 32, 128]) {
+      try { await vdb.createDocument({ databaseId: DB, collectionId: COLL, documentId: ID.unique(), data: { embeddings: vecs[2], metadata: { space: "size", blob: "x".repeat(kb * 1024) } } }); out.push(`${kb} KB ok`); }
+      catch (e) { out.push(`${kb} KB failed (${err(e)})`); }
+    }
+    for (const len of [23, 36]) {
+      try { await vdb.createDocument({ databaseId: DB, collectionId: COLL, documentId: "m_" + "a".repeat(len - 2), data: { embeddings: vecs[2], metadata: { space: "id" } } }); out.push(`ID ${len} chars ok`); }
+      catch (e) { out.push(`ID ${len} chars failed (${err(e)})`); }
+    }
+    rec(5, "Metadata size and ID length", out.some((o) => o.startsWith("4 KB ok")) && out.includes("ID 23 chars ok"), out.join("; "), "Entries are ~2 KB with 23-character IDs");
+  }
+
+  // 6. Does an update replace the whole metadata object?
+  {
+    const id = ID.unique();
+    await vdb.createDocument({ databaseId: DB, collectionId: COLL, documentId: id, data: { embeddings: vecs[3], metadata: { space: "upd", a: "1", b: "2" } } });
+    await vdb.updateDocument({ databaseId: DB, collectionId: COLL, documentId: id, data: { metadata: { space: "upd", a: "3" } } });
+    const d = await vdb.getDocument({ databaseId: DB, collectionId: COLL, documentId: id }) as any;
+    rec(6, "Update replaces or merges metadata", null, d.metadata.b === undefined ? "replaces the whole object" : "merges keys", "Engine always writes the full metadata object, so either is safe");
+  }
+
+  // 7. Nested path filters and string comparisons; numbers rejected.
+  {
+    const out: string[] = [];
+    try { const r = await vdb.createQuery({ databaseId: DB, collectionId: COLL, queries: [Query.equal("metadata.h.kind", ["preference"]), Query.limit(5)] }); out.push(`metadata.h.kind filter: ${r.documents.length === 1 ? "works" : `${r.documents.length} hits`}`); } catch (e) { out.push(`nested filter failed (${err(e)})`); }
+    try { const r = await vdb.createQuery({ databaseId: DB, collectionId: COLL, queries: [Query.equal("metadata.space", ["testtest"]), Query.lessThan("metadata.seq", "000000000002"), Query.limit(10)] }); out.push(`zero-padded lessThan: ${r.documents.length === 2 ? "works" : `${r.documents.length} hits`}`); } catch (e) { out.push(`lessThan failed (${err(e)})`); }
+    try { await vdb.createQuery({ databaseId: DB, collectionId: COLL, queries: [Query.equal("metadata.seq", [1 as unknown as string])] }); out.push("numeric filter accepted"); } catch (e) { out.push(`numeric filter rejected (${e instanceof AppwriteException ? e.code : "?"})`); }
+    try { const r = await vdb.createQuery({ databaseId: DB, collectionId: COLL, queries: [Query.equal("metadata.space", ["testtest"]), Query.orderDesc("$id"), Query.limit(1)] }); out.push(`orderDesc($id) head: ${(r.documents[0] as any)?.$id}`); } catch (e) { out.push(`order by $id failed (${err(e)})`); }
+    rec(7, "Nested filters, string comparison, ordering", !out.some((o) => o.includes("failed")), out.join("; "), "Engine filters on metadata.d.concept for concept members; top-level copies cover the rest");
+  }
+
+  // 8. Query.select on metadata.
+  try { const r = await vdb.createQuery({ databaseId: DB, collectionId: COLL, queries: [Query.select(["$id", "metadata"]), Query.limit(1)] }); rec(8, "Query.select(['$id','metadata'])", true, `works; embeddings returned: ${(r.documents[0] as any).embeddings !== undefined}`, "Engine skips vectors when not needed"); }
+  catch (e) { rec(8, "Query.select(['$id','metadata'])", false, err(e), "Engine detects this and falls back to whole documents automatically"); }
+
+  // 9. Team preferences.
+  try {
+    const teams = new Teams(client);
+    const tid = `exp_${Date.now().toString(36)}`;
+    await teams.create({ teamId: tid, name: "engram experiment" });
+    await teams.updatePrefs({ teamId: tid, prefs: { spaceKey: "testtest", neighbourDistance: 0.35, nested: { a: [1, 2] } } });
+    const p = await teams.getPrefs({ teamId: tid }) as any;
+    await teams.delete({ teamId: tid });
+    rec(9, "Team preferences read and write", p.spaceKey === "testtest" && p.nested?.a?.length === 2, "nested JSON round-trips", "Space settings live in team preferences");
+  } catch (e) { rec(9, "Team preferences read and write", false, err(e), "Needs teams.read/teams.write scopes on the key"); }
+
+  // 10. Recall quality with and without nomic task prefixes.
+  {
+    const docs = texts.slice(0, 4);
+    const queries: [string, number][] = [["What plan is Ada on?", 0], ["How should we contact Ada?", 1], ["Did Kestrel pay?", 2], ["Which export bug did Ada hit?", 3]];
+    const score = async (dp: string, qp: string) => {
+      const dv = await embed(docs, dp);
+      let hits = 0;
+      for (const [q, want] of queries) {
+        const [v] = await embed([q], qp);
+        const best = dv.map((d, i) => [cosine(v, d), i] as const).sort((a, b) => b[0] - a[0])[0][1];
+        if (best === want) hits++;
+      }
+      return hits;
+    };
+    const withP = await score("search_document: ", "search_query: ");
+    const without = await score("", "");
+    rec(10, "Recall quality with and without nomic task prefixes", null, `top-1 hits: with prefixes ${withP}/4, without ${without}/4`, withP >= without ? "Keep ENGRAM_EMBED_PREFIXES=true" : "Set ENGRAM_EMBED_PREFIXES=false");
+  }
+
+  rec(11, "Realtime channel for VectorsDB documents", null, "manual: open the dashboard; the sidebar shows Realtime or polling", "Engine subscribes to databases.<db>.collections.memories.documents with a JWT, else polls every 3 s");
+  rec(12, "Function trigger on a VectorsDB document event", null, "manual: create a concept and check the labeler's executions", "The app labels inline when events do not fire");
+} finally {
+  try { await vdb.deleteCollection({ databaseId: DB, collectionId: COLL }); } catch { /* ignore */ }
+}
+
+const md = `# Day 1 verification results
+
+Generated by \`pnpm experiments\` on ${new Date().toISOString()} against \`${endpoint}\`, database \`${DB}\`.
+Each item matches a VERIFY note in the build series. The engine has a fallback for every one.
+
+| # | Item | Result | OK | What Engram does |
+|---|------|--------|----|------------------|
+${rows.map((r) => `| ${r.n} | ${r.item} | ${r.result.replace(/\|/g, "\\|")} | ${r.ok === null ? "info" : r.ok ? "yes" : "**no**"} | ${r.action} |`).join("\n")}
+`;
+writeFileSync("docs/verified.md", md);
+console.log("\nWrote docs/verified.md");

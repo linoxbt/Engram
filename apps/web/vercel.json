@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
+  "buildCommand": "next build",
+  "crons": [
+    { "path": "/api/cron/sentinel", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/checkpoint", "schedule": "*/5 * * * *" }
+  ]
+}

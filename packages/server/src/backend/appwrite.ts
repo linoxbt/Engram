@@ -225,6 +225,11 @@ class AppwriteAuth implements AuthStore {
   async signOut(secret: string) {
     try { await new Account(this.anon().setSession(secret)).deleteSession({ sessionId: "current" }); } catch { /* already gone */ }
   }
+  async findUserByEmail(email: string): Promise<User | null> {
+    const res = await call(() => new Users(this.admin).list({ queries: [Query.equal("email", [email]), Query.limit(1)] }));
+    const u = res.users[0];
+    return u ? { id: u.$id, email: u.email, name: u.name } : null;
+  }
   async createJwt(secret: string) {
     const u = await this.getUser(secret);
     if (!u) return null;
