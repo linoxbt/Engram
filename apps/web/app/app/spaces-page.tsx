@@ -15,6 +15,7 @@ export function SpacesPage({ userName }: { userName: string }) {
   const router = useRouter();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["spaces"], queryFn: () => api<{ spaces: SpaceRow[] }>("/api/app/spaces") });
+  const health = useQuery({ queryKey: ["health"], queryFn: () => fetch("/api/v1/health").then((r) => r.json() as Promise<{ ok: boolean; backend: string; database?: { ok: boolean; error?: string } }>) });
   const [mode, setMode] = useState<null | "space" | "sandbox">(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -57,6 +58,15 @@ export function SpacesPage({ userName }: { userName: string }) {
             <Button variant="primary" onClick={() => openModal("space")}><IconPlus /> New space</Button>
           </div>
         </div>
+        {health.data && health.data.database && !health.data.database.ok && (
+          <div role="alert" className="mb-4 rounded-[2px] border border-warn/50 bg-warn/5 px-4 py-3 text-xs text-warn">
+            <div className="font-medium">Memory storage is not available yet</div>
+            <div className="mt-1 text-muted">{health.data.database.error}</div>
+          </div>
+        )}
+        {health.data?.backend === "local" && (
+          <div className="mb-4 rounded-[2px] border border-line-2 px-4 py-2 text-2xs text-muted">Running on the local demo backend. Data on serverless hosts is temporary until Appwrite is configured.</div>
+        )}
         {q.isLoading && <div className="grid gap-3 md:grid-cols-2">{[0, 1].map((i) => <Skeleton key={i} className="h-32" />)}</div>}
         <ErrorNote error={q.error} />
         {q.data && !q.data.spaces.length && (

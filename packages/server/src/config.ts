@@ -19,6 +19,8 @@ export interface EngramConfig {
   localDataDir: string;
   classifierModel: string | null;
   modelApiKey: string | null;
+  /** Required by Anthropic for keys that are not scoped to a workspace. */
+  anthropicWorkspaceId: string | null;
   checkpoint: { privateKey: string | null; publicKey: string | null; keyId: string };
   anchor: { token: string | null; repo: string | null };
   seedAdminToken: string | null;
@@ -43,14 +45,16 @@ export function getConfig(): EngramConfig {
   const endpoint = env("APPWRITE_ENDPOINT") ?? "";
   const backendEnv = env("ENGRAM_BACKEND");
   cached = {
-    backend: backendEnv === "local" || backendEnv === "appwrite" ? backendEnv : endpoint ? "appwrite" : "local",
+    // Appwrite only when it is fully configured; otherwise the local backend keeps every screen working.
+    backend: backendEnv === "local" || backendEnv === "appwrite" ? backendEnv : endpoint && env("APPWRITE_PROJECT_ID") && env("APPWRITE_API_KEY") ? "appwrite" : "local",
     appwrite: {
       endpoint,
       projectId: env("APPWRITE_PROJECT_ID") ?? "",
       apiKey: env("APPWRITE_API_KEY") ?? "",
       databaseId: env("APPWRITE_DB_ID") ?? "engram",
       checkpointsBucket: env("APPWRITE_CHECKPOINTS_BUCKET") ?? "checkpoints",
-      exportsBucket: env("APPWRITE_EXPORTS_BUCKET") ?? "exports",
+      // One bucket by default (the Free plan allows one); exports are stored as ex_* files beside checkpoints.
+      exportsBucket: env("APPWRITE_EXPORTS_BUCKET") ?? env("APPWRITE_CHECKPOINTS_BUCKET") ?? "checkpoints",
       checkpointFunctionId: env("CHECKPOINT_FUNCTION_ID"),
       labelerFunctionId: env("LABELER_FUNCTION_ID"),
     },
@@ -59,6 +63,7 @@ export function getConfig(): EngramConfig {
     localDataDir: env("ENGRAM_LOCAL_DIR") ?? ".engram-local",
     classifierModel: env("CLASSIFIER_MODEL"),
     modelApiKey: env("MODEL_API_KEY"),
+    anthropicWorkspaceId: env("ANTHROPIC_WORKSPACE_ID"),
     checkpoint: {
       privateKey: env("CP_PRIVATE_KEY"),
       publicKey: env("NEXT_PUBLIC_CP_PUBLIC_KEY") ?? env("CP_PUBLIC_KEY"),

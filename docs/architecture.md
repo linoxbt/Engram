@@ -1,7 +1,7 @@
 # Architecture
 
 ```
- Agents                               Engram (Next.js on Vercel)                 Appwrite Cloud
+ Agents                               Engram (Next.js on Netlify)                Appwrite Cloud
  ┌────────────────────────┐  HTTPS    ┌───────────────────────────────┐        ┌──────────────────────────────────┐
  │ Claude Code / Desktop  │──────────▶│ /api/mcp   MCP, Streamable HTTP│        │ Auth      users; teams = spaces  │
  │ Scripted demo agent    │  bearer   │ /api/v1/*  REST + public verify│        │ Embeddings nomic-embed-text (768)│

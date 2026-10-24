@@ -1,0 +1,9 @@
+# Netlify: Next.js on the OpenNext runtime (installed automatically), pnpm workspace.
+[build]
+  base = "apps/web"
+  command = "pnpm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+  NEXT_TELEMETRY_DISABLED = "1"

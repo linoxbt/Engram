@@ -13,6 +13,9 @@ import type {
 
 function mapError(e: unknown): unknown {
   if (e instanceof AppwriteException) {
+    if (e.type === "database_not_found" || e.type === "collection_not_found") {
+      return new EngramError("unavailable", "Engram's VectorsDB database is not provisioned yet. Enable dedicated databases on the Appwrite plan, then run `pnpm setup:appwrite`.");
+    }
     if (e.code === 409) return new ConflictError(e.message);
     if (e.code === 404) return new EngramError("not_found", e.message);
     if (e.code === 402) return new EngramError("embeddings_unavailable", "Appwrite embeddings quota reached for this billing period.");
