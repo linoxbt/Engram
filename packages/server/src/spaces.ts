@@ -1,7 +1,7 @@
 import { newSpaceKey, SPACE_KEY_RE, teamIdFor } from "@engram/core";
 import type { Backend } from "./backend/types";
 import { getConfig } from "./config";
-import { ConflictError, EngramError } from "./errors";
+import { EngramError, isConflict } from "./errors";
 import { defaultSettings, type SpaceSettings } from "./settings";
 import type { SpaceInfo } from "./context";
 
@@ -26,7 +26,7 @@ export async function createSpace(b: Backend, args: { name: string; ownerId: str
     try {
       await b.teams.create(teamId, args.name);
     } catch (e) {
-      if (e instanceof ConflictError && !args.key) continue;
+      if (isConflict(e) && !args.key) continue;
       throw e;
     }
     const settings = defaultSettings({ spaceKey: key, name: args.name, ownerId: args.ownerId, sandbox: args.sandbox, publicVerify: args.publicVerify, description: args.description, local: b.kind === "local" });

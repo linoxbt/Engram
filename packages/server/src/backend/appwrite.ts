@@ -4,7 +4,7 @@ import {
 } from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
 import type { EngramConfig } from "../config";
-import { ConflictError, EngramError } from "../errors";
+import { ConflictError, EngramError, isEngramError } from "../errors";
 import { evaluate } from "./query";
 import { cosine } from "@engram/core";
 import type {
@@ -26,7 +26,7 @@ function mapError(e: unknown): unknown {
 async function call<T>(fn: () => Promise<T>): Promise<T> {
   try { return await fn(); } catch (e) { throw mapError(e); }
 }
-const isNotFound = (e: unknown) => (e instanceof AppwriteException && e.code === 404) || (e instanceof EngramError && e.code === "not_found");
+const isNotFound = (e: unknown) => (e instanceof AppwriteException && e.code === 404) || (isEngramError(e) && e.code === "not_found");
 
 function toQueries(f: Filter): string {
   switch (f.op) {

@@ -10,7 +10,7 @@ import type { Backend } from "./backend/types";
 import { chainHead, loadChain } from "./chain";
 import { getConfig, type EngramConfig } from "./config";
 import type { Ctx, SpaceInfo } from "./context";
-import { ConflictError } from "./errors";
+import { isConflict } from "./errors";
 import { getSpace, updateSettings } from "./spaces";
 
 const fileCache = new Map<string, Checkpoint>();
@@ -69,7 +69,7 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
     await b.files.put(bucket, fileId, `${fileId}.json`, new TextEncoder().encode(JSON.stringify(cp, null, 2)), b.teamRead(space.teamId));
   } catch (e) {
     await b.files.delete(bucket, lockId).catch(() => undefined); // let a later run extend prev
-    if (e instanceof ConflictError) return { created: false, reason: "checkpoint already exists" };
+    if (isConflict(e)) return { created: false, reason: "checkpoint already exists" };
     throw e;
   }
   fileCache.set(fileId, cp);
@@ -90,7 +90,7 @@ async function takeLock(b: Backend, bucket: string, lockId: string, space: Space
       await b.files.put(bucket, lockId, `${lockId}.json`, body, b.teamRead(space.teamId));
       return true;
     } catch (e) {
-      if (!(e instanceof ConflictError)) throw e;
+      if (!isConflict(e)) throw e;
       // A run that took the lock and died must not block checkpoints forever.
       const raw = await b.files.get(bucket, lockId);
       let at = 0;

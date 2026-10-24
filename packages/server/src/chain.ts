@@ -14,7 +14,7 @@ import {
 } from "@engram/core";
 import type { Backend, TxOp, VDoc } from "./backend/types";
 import { COLLECTION_DIMS, type Ctx } from "./context";
-import { ConflictError, EngramError, isConflict } from "./errors";
+import { EngramError, isConflict } from "./errors";
 
 export type MemDoc = VDoc<EntryMeta>;
 
@@ -209,7 +209,7 @@ export async function updateNeighbours(ctx: Ctx, id: string, h: Header, attempts
       await b.vectors.transact(ops);
       return true;
     } catch (e) {
-      if (!(e instanceof ConflictError)) throw e;
+      if (!isConflict(e)) throw e;
       await jitter();
     }
   }

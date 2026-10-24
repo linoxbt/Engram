@@ -25,10 +25,14 @@ export class ConflictError extends Error {
   constructor(message = "conflict") { super(message); this.name = "ConflictError"; }
 }
 
-export const isConflict = (e: unknown) => e instanceof ConflictError;
+// Checked by name, not instanceof: the backend is cached on globalThis, and a bundler may load this module
+// more than once, so an error thrown by one copy must still be recognised by another.
+const named = (e: unknown, name: string) => e instanceof Error && e.name === name;
+export const isEngramError = (e: unknown): e is EngramError => e instanceof EngramError || (named(e, "EngramError") && typeof (e as EngramError).code === "string");
+export const isConflict = (e: unknown): e is ConflictError => e instanceof ConflictError || named(e, "ConflictError");
 
 export function toErrorBody(e: unknown): { status: number; body: { error: { code: string; message: string; details?: unknown } } } {
-  if (e instanceof EngramError) return { status: e.status, body: { error: { code: e.code, message: e.message, details: e.details } } };
+  if (isEngramError(e)) return { status: e.status, body: { error: { code: e.code, message: e.message, details: e.details } } };
   if (e && typeof e === "object" && "issues" in e && Array.isArray((e as { issues: unknown[] }).issues)) {
     const issues = (e as { issues: { path: (string | number)[]; message: string }[] }).issues;
     return { status: 400, body: { error: { code: "bad_request", message: issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ") } } };
