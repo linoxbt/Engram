@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "types": [], "baseUrl": ".", "paths": { "@engram/core": ["../core/src/index.ts"] } },
+  "include": ["src/**/*.ts"]
+}
