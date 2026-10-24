@@ -112,6 +112,17 @@ export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {
   }).sort((a, b) => b.score - a.score).slice(0, 20);
   const picked = mmr(scored, input.k, 0.7);
 
+  // Both sides of an open conflict: an agent told to "mention conflicts" must see what the other side says.
+  if (!asOf) {
+    const have = new Set(picked.map((p) => p.id));
+    const partners = [...new Set(picked.flatMap((p) => p.doc.metadata.d.status === "active" ? p.doc.metadata.d.contradictedBy : []))].filter((id) => !have.has(id)).slice(0, 3);
+    const docs = (await Promise.all(partners.map((id) => b.vectors.get<EntryMeta>("memories", id)))).filter((d): d is MemDoc => !!d && d.metadata.d.status === "active");
+    for (const d of docs) {
+      const at = picked.findIndex((p) => p.doc.metadata.d.contradictedBy.includes(d.$id));
+      picked.splice(at + 1, 0, { id: d.$id, score: (picked[at]?.score ?? 0) - 0.001, vector: d.embeddings, doc: d });
+    }
+  }
+
   // Erased since: memories valid at T whose content was forgotten later. Their vectors are erased too,
   // so they cannot be found by meaning; surface them by subject as receipts.
   let erased: MemDoc[] = [];

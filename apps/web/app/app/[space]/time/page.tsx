@@ -104,7 +104,7 @@ export default function TimeMachinePage() {
                 </div>
               )}
               {then.isLoading && <Skeleton className="h-16" />}
-              {then.data?.memories.map((m) => <Row key={m.id} m={m} onOpen={open} label={!nowIds.has(m.id) ? (m.status === "forgotten" ? "forgotten since" : m.status === "superseded" ? `superseded${m.supersededBy ? ` by #${Number(m.supersededBy.slice(-12))}` : ""}` : "not in today's answer") : null} fade={then.isFetching} />)}
+              {then.data?.memories.map((m) => <Row key={m.id} m={m} onOpen={open} label={!nowIds.has(m.id) ? (m.status === "forgotten" ? "forgotten since" : m.status === "superseded" ? `superseded${m.supersededBy ? ` by #${Number(m.supersededBy.slice(-12))}` : ""}` : null) : null} fade={then.isFetching} />)}
               {then.data && !then.data.memories.length && <p className="py-6 text-center text-xs text-muted">Nothing relevant was known yet.</p>}
             </div>
           </Card>

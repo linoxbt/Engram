@@ -42,6 +42,9 @@ export async function assignConcept(ctx: Ctx, memoryId: string, vector: number[]
     }
     const id = conceptId(space.key);
     const meta: ConceptMeta = { space: space.key, label: "", summary: "", members: count8(1), membersN: 1, labeledAtMembers: count8(0), lastMemberAt: iso(), createdAt: iso() };
+    // A new concept gets a cheap rule-based label right away; the model relabels at 3, 10, 30 and 100 members.
+    const mem = await b.vectors.get<EntryMeta>("memories", memoryId);
+    if (mem?.metadata.c.text) Object.assign(meta, heuristicLabel([mem.metadata.c.text]));
     await b.vectors.create("concepts", id, { embeddings: vector, metadata: meta }, b.teamRead(space.teamId));
     await patchDerived(b, memoryId, { concept: id });
     return id;
