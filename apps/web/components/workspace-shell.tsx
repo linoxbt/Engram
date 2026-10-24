@@ -10,12 +10,31 @@ import {
   IconBolt, IconBook, IconChevron, IconCross, IconGrid, IconInbox, IconKey, IconLogo, IconMenu, IconPlug, IconPulse, IconSeal, IconShield, IconUser, Wordmark,
 } from "./icons";
 
-type NavItem = { href: string; label: string; icon: ComponentType<{ size?: number }>; exact?: boolean; badge?: number };
+export type NavItem = { href: string; label: string; icon: ComponentType<{ size?: number }>; exact?: boolean; badge?: number };
+
+/** The space being viewed: its pages join the sidebar beneath the workspace features. */
+export interface SpaceSection {
+  key: string;
+  name: string;
+  nav: NavItem[];
+  spaces: { key: string; name: string; sandbox: boolean }[];
+  live: "realtime" | "polling";
+}
 
 const COLLAPSE_KEY = "engram.sidebar.mini";
 
-/** Account-level pages (everything outside a single space): a sidebar that folds to an icon rail. */
-export function WorkspaceShell({ user, children }: { user: { name: string; email: string }; children: ReactNode }) {
+/**
+ * The app frame for every signed-in page: one left sidebar (workspace features, the current space's
+ * pages when inside one, build and system links) that folds to an icon rail on desktop and opens
+ * beneath the app bar on phones. The logo always leads to the landing page.
+ */
+export function WorkspaceShell({ user, space, header, wide, children }: {
+  user: { name: string; email: string };
+  space?: SpaceSection;
+  header?: ReactNode;
+  wide?: boolean;
+  children: ReactNode;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const qc = useQueryClient();
@@ -30,7 +49,7 @@ export function WorkspaceShell({ user, children }: { user: { name: string; email
   useEffect(() => { try { setMini(localStorage.getItem(COLLAPSE_KEY) === "1"); } catch { /* storage blocked */ } }, []);
   const toggleMini = () => setMini((m) => { try { localStorage.setItem(COLLAPSE_KEY, m ? "0" : "1"); } catch { /* storage blocked */ } return !m; });
 
-  const sections: { title: string; items: NavItem[] }[] = [
+  const sections: { title: string; items: NavItem[]; space?: SpaceSection }[] = [
     { title: "Workspace", items: [
       { href: "/app", label: "Spaces", icon: IconGrid, exact: true },
       { href: "/app/feed", label: "Activity", icon: IconPulse },
@@ -38,6 +57,7 @@ export function WorkspaceShell({ user, children }: { user: { name: string; email
       { href: "/app/integrity", label: "Integrity", icon: IconShield },
       { href: "/app/keys", label: "Agent keys", icon: IconKey },
     ] },
+    ...(space ? [{ title: "This space", items: space.nav, space }] : []),
     { title: "Build", items: [
       { href: "/app/connect", label: "Connect an agent", icon: IconPlug },
       { href: "/docs", label: "Docs", icon: IconBook },
@@ -65,8 +85,8 @@ export function WorkspaceShell({ user, children }: { user: { name: string; email
         aria-label="Workspace navigation"
       >
         <div className={clsx("hidden h-14 items-center justify-between border-b border-line px-4 lg:flex", rail && "lg:justify-center lg:px-0")}>
-          <Link href="/app" aria-label="All spaces" className={clsx(rail && "lg:hidden")}><Wordmark size={22} /></Link>
-          {rail && <Link href="/app" aria-label="All spaces" className="hidden lg:block"><IconLogo size={26} /></Link>}
+          <Link href="/" aria-label="Engram home" className={clsx(rail && "lg:hidden")}><Wordmark size={22} /></Link>
+          {rail && <Link href="/" aria-label="Engram home" className="hidden lg:block"><IconLogo size={26} /></Link>}
           <button onClick={toggleMini} className={clsx("hidden size-7 place-items-center rounded-[2px] text-muted hover:bg-panel-2 hover:text-text lg:grid", rail && "lg:hidden")} aria-label="Collapse sidebar" title="Collapse sidebar">
             <IconChevron />
           </button>
@@ -75,6 +95,12 @@ export function WorkspaceShell({ user, children }: { user: { name: string; email
           {sections.map((sec) => (
             <div key={sec.title} className="mb-4">
               <div className={clsx("label mb-1.5 px-2.5", rail && "lg:sr-only")}>{sec.title}</div>
+              {sec.space && (
+                <select value={sec.space.key} onChange={(e) => router.push(`/app/${e.target.value}`)} aria-label="Switch space"
+                  className={clsx("mx-2.5 mb-2 h-8 w-[calc(100%-1.25rem)] rounded-[2px] border border-line-2 bg-bg px-2 text-xs", rail && "lg:hidden")}>
+                  {sec.space.spaces.map((x) => <option key={x.key} value={x.key}>{x.name}{x.sandbox ? " (sandbox)" : ""}</option>)}
+                </select>
+              )}
               {sec.items.map((n) => {
                 const active = n.exact ? pathname === n.href : pathname.startsWith(n.href);
                 return (
@@ -100,6 +126,12 @@ export function WorkspaceShell({ user, children }: { user: { name: string; email
             <span className={clsx("size-2 shrink-0 rounded-full", statusTone)} />
             <span className={clsx("truncate", rail && "lg:hidden")}>{statusText}</span>
           </Link>
+          {space && (
+            <div className={clsx("flex items-center gap-2 px-1 py-1", rail && "lg:justify-center")} title={space.live === "realtime" ? "Appwrite Realtime connected" : "Polling every 3 seconds"}>
+              <span className={clsx("size-2 shrink-0 rounded-full", space.live === "realtime" ? "bg-valid" : "bg-warn")} />
+              <span className={clsx("truncate", rail && "lg:hidden")}>{space.live === "realtime" ? "Realtime" : "Live (polling)"}</span>
+            </div>
+          )}
           <div className={clsx("mt-2 flex items-center gap-2 px-1", rail && "lg:flex-col")}>
             <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent text-[10px] font-semibold uppercase text-bg" title={user.email}>{user.name.slice(0, 1) || "?"}</span>
             <span className={clsx("min-w-0 flex-1 truncate text-text", rail && "lg:hidden")}>{user.name}</span>
@@ -115,13 +147,14 @@ export function WorkspaceShell({ user, children }: { user: { name: string; email
       {menu && <div className="fixed inset-x-0 bottom-0 top-14 z-20 bg-black/30 lg:hidden" onClick={() => setMenu(false)} />}
       <div className={clsx("flex min-w-0 flex-1 flex-col transition-[padding] duration-200", mini ? "lg:pl-[60px]" : "lg:pl-60")}>
         <header className="sticky top-0 z-40 flex h-14 items-center justify-between gap-3 border-b border-line bg-bg px-4 lg:hidden">
-          <Link href="/app" aria-label="All spaces"><Wordmark size={22} /></Link>
+          <Link href="/" aria-label="Engram home"><Wordmark size={22} /></Link>
           <button className="grid size-9 place-items-center rounded-[2px] border border-line text-text" onClick={() => setMenu((m) => !m)}
             aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>
             {menu ? <IconCross size={16} /> : <IconMenu size={16} />}
           </button>
         </header>
-        <main className="mx-auto w-full max-w-6xl flex-1 p-4 md:p-8">{children}</main>
+        {header && <div className="sticky top-14 z-10 border-b border-line bg-bg/90 backdrop-blur lg:top-0">{header}</div>}
+        <main className={clsx("mx-auto w-full flex-1 p-4", wide ? "max-w-[1400px] md:p-6" : "max-w-6xl md:p-8")}>{children}</main>
       </div>
     </div>
   );
