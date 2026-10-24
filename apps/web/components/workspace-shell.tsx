@@ -132,8 +132,9 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
       {space && (
         <aside
           className={clsx(
-            "fixed bottom-0 right-0 top-14 z-30 flex w-72 max-w-[85vw] flex-col border-l border-line bg-panel transition-[transform,width] duration-200 lg:top-0 lg:max-w-none lg:translate-x-0",
-            spaceMenu ? "translate-x-0" : "translate-x-full",
+            // Phones: a drawer from the left, beneath the space header row. Desktop: the right-hand sidebar.
+            "fixed bottom-0 left-0 top-[6.5rem] z-30 flex w-72 max-w-[85vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:left-auto lg:right-0 lg:top-0 lg:max-w-none lg:translate-x-0 lg:border-l lg:border-r-0",
+            spaceMenu ? "translate-x-0" : "-translate-x-full",
             rightMini ? "lg:w-[60px]" : "lg:w-56",
           )}
           aria-label="Space navigation"
@@ -163,7 +164,7 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
         </aside>
       )}
 
-      {(menu || spaceMenu) && <div className="fixed inset-x-0 bottom-0 top-14 z-20 bg-black/30 lg:hidden" onClick={() => { setMenu(false); setSpaceMenu(false); }} />}
+      {(menu || spaceMenu) && <div className={clsx("fixed inset-x-0 bottom-0 z-20 bg-black/30 lg:hidden", spaceMenu ? "top-[6.5rem]" : "top-14")} onClick={() => { setMenu(false); setSpaceMenu(false); }} />}
       <div className={clsx(
         "flex min-w-0 flex-1 flex-col transition-[padding] duration-200",
         mini ? "lg:pl-[60px]" : "lg:pl-60",
@@ -171,20 +172,23 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
       )}>
         <header className="sticky top-0 z-40 flex h-14 items-center justify-between gap-3 border-b border-line bg-bg px-4 lg:hidden">
           <Link href="/" aria-label="Engram home"><Wordmark size={22} /></Link>
-          <div className="flex items-center gap-2">
-            <button className="grid size-9 place-items-center rounded-[2px] border border-line text-text" onClick={() => { setSpaceMenu(false); setMenu((m) => !m); }}
-              aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>
-              {menu ? <IconCross size={16} /> : <IconMenu size={16} />}
-            </button>
+          <button className="grid size-9 place-items-center rounded-[2px] border border-line text-text" onClick={() => { setSpaceMenu(false); setMenu((m) => !m); }}
+            aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>
+            {menu ? <IconCross size={16} /> : <IconMenu size={16} />}
+          </button>
+        </header>
+        {header && (
+          <div className="sticky top-14 z-10 flex items-center border-b border-line bg-bg/90 backdrop-blur lg:top-0">
+            {/* Phones: the space's pages open from this button, at the start of the space row. */}
             {space && (
-              <button className={clsx("grid size-9 place-items-center rounded-[2px] border", spaceMenu ? "border-accent bg-accent text-bg" : "border-line text-text")}
+              <button className={clsx("ml-4 grid size-8 shrink-0 place-items-center rounded-[2px] border lg:hidden", spaceMenu ? "border-accent bg-accent text-bg" : "border-line text-text")}
                 onClick={() => { setMenu(false); setSpaceMenu((m) => !m); }} aria-label={spaceMenu ? "Close space menu" : "Open space menu"} aria-expanded={spaceMenu}>
-                {spaceMenu ? <IconCross size={16} /> : <IconSidebar size={16} className="-scale-x-100" />}
+                {spaceMenu ? <IconCross size={14} /> : <IconSidebar size={14} />}
               </button>
             )}
+            <div className="min-w-0 flex-1">{header}</div>
           </div>
-        </header>
-        {header && <div className="sticky top-14 z-10 border-b border-line bg-bg/90 backdrop-blur lg:top-0">{header}</div>}
+        )}
         <main className={clsx("mx-auto w-full flex-1 p-4", wide ? "max-w-[1400px] md:p-6" : "max-w-6xl md:p-8")}>{children}</main>
       </div>
     </div>

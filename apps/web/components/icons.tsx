@@ -39,18 +39,21 @@ export const IconSidebar = (p: P) => <svg {...base(p)}><rect x="2" y="2.5" width
 export const IconChevron = (p: P) => <svg {...base(p)}><path d="M10 3.5L5.5 8l4.5 4.5" /></svg>;
 
 /**
- * The Engram mark: two rings of memory around a gold seal. Each ring is open at a different angle,
- * so the mark reads as a vault dial and as layers of time closing in on a sealed core (the signed
- * Merkle root). `tile` is the app-icon form: white rings on a black tile.
+ * The Engram mark, "Trace": one unbroken line winding inward to a gold seal. Memory as a single
+ * continuous record that can always be traced back to its sealed origin. `tile` is the app-icon
+ * form: a white trace on a black tile.
  */
+const TRACE = "M24 5C24.8 5.18 27.29 5.54 28.8 6.1C30.3 6.65 31.76 7.44 33.04 8.35C34.31 9.26 35.48 10.37 36.45 11.55C37.42 12.73 38.24 14.07 38.85 15.43C39.46 16.78 39.88 18.25 40.11 19.68C40.34 21.11 40.36 22.6 40.21 24C40.06 25.4 39.71 26.8 39.21 28.08C38.72 29.35 38.03 30.58 37.24 31.64C36.45 32.71 35.49 33.68 34.48 34.48C33.47 35.28 32.33 35.94 31.18 36.43C30.03 36.92 28.79 37.25 27.6 37.42C26.4 37.59 25.16 37.58 24 37.43C22.84 37.28 21.69 36.96 20.64 36.52C19.6 36.09 18.61 35.49 17.75 34.83C16.89 34.16 16.12 33.35 15.49 32.51C14.86 31.67 14.35 30.73 13.98 29.79C13.61 28.85 13.37 27.84 13.27 26.87C13.17 25.91 13.21 24.92 13.36 24C13.51 23.08 13.8 22.18 14.17 21.37C14.54 20.56 15.04 19.79 15.59 19.14C16.14 18.49 16.79 17.92 17.46 17.46C18.13 17 18.88 16.64 19.61 16.39C20.34 16.14 21.11 16 21.85 15.96C22.58 15.92 23.32 15.99 24 16.14C24.68 16.29 25.34 16.55 25.91 16.86C26.49 17.17 27.02 17.57 27.46 18C27.91 18.43 28.28 18.93 28.57 19.43C28.86 19.93 29.09 20.74 29.2 21";
 export const IconLogo = ({ size = 24, tile = false, ...p }: P & { tile?: boolean }) => (
   <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden {...p}>
     {tile && <rect width="48" height="48" rx="12" fill="#0a0a0a" />}
-    <g transform={tile ? "translate(6.7 6.7) scale(0.72)" : undefined} stroke={tile ? "#ffffff" : "currentColor"} strokeWidth="5" strokeLinecap="round">
-      <path d="M39.59 15A18 18 0 1 1 27.13 6.27" />
-      <path d="M15.17 29.1A10.2 10.2 0 1 1 22.23 34.05" />
+    <g transform={tile ? "translate(6.7 6.7) scale(0.72)" : undefined}>
+      {/* The spiral's own bounds are off-centre; this centres it optically and fills the box. */}
+      <g transform="translate(24 24) scale(1.25) translate(-26.8 -21.3)">
+        <path d={TRACE} stroke={tile ? "#ffffff" : "currentColor"} strokeWidth="4.2" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="24" cy="24" r="3.6" fill="#d9b44a" />
+      </g>
     </g>
-    <circle cx="24" cy="24" r={tile ? 2.9 : 4} fill="#d9b44a" />
   </svg>
 );
 
