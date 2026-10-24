@@ -84,7 +84,14 @@ export function applyEntry(state: StateMap, id: string, h: Header): Set<string> 
     const w = h.refs.related[0] ?? null;
     if (t) {
       if (h.kind === "supersede" && h.refs.supersedes.includes(t)) retire(t, w ?? id, h.createdAt);
-      else if (w) unlinkPair(t, w);
+      else if (h.kind === "contradict" && w) {
+        const ts = state.get(t), ws = state.get(w);
+        if (ts && ws && ts.status === "active" && ws.status === "active" && t !== w) {
+          if (!ts.contradictedBy.includes(w)) ts.contradictedBy.push(w);
+          if (!ws.contradictedBy.includes(t)) ws.contradictedBy.push(t);
+          touch(t); touch(w);
+        }
+      } else if (w) unlinkPair(t, w);
     }
   }
   return changed;

@@ -10,8 +10,12 @@
 export type Op = "remember" | "reflect" | "forget" | "link";
 export type MemoryKind = "fact" | "preference" | "event" | "observation";
 export type EntryKind = MemoryKind | "summary" | "tombstone" | LinkKind;
-/** How a link entry settles a pair: one side wins, both are true, or the flag was wrong. */
-export type LinkKind = "supersede" | "refine" | "dismiss";
+/**
+ * What a link entry records about a pair (target, related[0]): one side wins
+ * (supersede), both are true (refine), the flag was wrong (dismiss), or a
+ * conflict found after the fact (contradict).
+ */
+export type LinkKind = "supersede" | "refine" | "dismiss" | "contradict";
 
 export type Status = "active" | "superseded" | "forgotten" | "recorded";
 
