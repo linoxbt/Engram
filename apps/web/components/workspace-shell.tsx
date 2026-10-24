@@ -89,7 +89,7 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
       {/* Left: workspace features. */}
       <aside
         className={clsx(
-          "fixed bottom-0 left-0 top-14 z-30 flex w-72 max-w-[85vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:top-0 lg:max-w-none lg:translate-x-0",
+          "fixed bottom-0 left-0 top-14 z-30 flex w-60 max-w-[78vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:top-0 lg:max-w-none lg:translate-x-0",
           menu ? "translate-x-0" : "-translate-x-full",
           mini ? "lg:w-[60px]" : "lg:w-60",
         )}
@@ -133,7 +133,7 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
         <aside
           className={clsx(
             // Phones: a drawer from the left, beneath the space header row. Desktop: the right-hand sidebar.
-            "fixed bottom-0 left-0 top-[6.5rem] z-30 flex w-72 max-w-[85vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:left-auto lg:right-0 lg:top-0 lg:max-w-none lg:translate-x-0 lg:border-l lg:border-r-0",
+            "fixed bottom-0 left-0 top-[6.5rem] z-30 flex w-60 max-w-[78vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:left-auto lg:right-0 lg:top-0 lg:max-w-none lg:translate-x-0 lg:border-l lg:border-r-0",
             spaceMenu ? "translate-x-0" : "-translate-x-full",
             rightMini ? "lg:w-[60px]" : "lg:w-56",
           )}
