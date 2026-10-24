@@ -68,7 +68,7 @@ export default function OverviewPage() {
           <div className="grid gap-4 lg:grid-cols-3">
             <div className="lg:col-span-2">
               <IntegrityBadge integrity={o.integrity} checkpoint={o.latestCheckpoint} size="lg" onVerify={() => verify.mutate()} />
-              {verify.isPending && <p className="mt-2 text-xs text-muted">Verifying on the server… for a trust-nobody check, open the <Link className="text-cyan" href={`/app/${space}/chain`}>Chain</Link> page.</p>}
+              {verify.isPending && <p className="mt-2 text-xs text-muted">Verifying on the server… for a trust-nobody check, open the <Link className="text-accent" href={`/app/${space}/chain`}>Chain</Link> page.</p>}
             </div>
             {showChecklist ? (
               <Card title="Get started" className="p-0">
@@ -106,7 +106,7 @@ export default function OverviewPage() {
             <Stat label="Agents" value={o.stats.agents} />
           </div>
 
-          <Card title={`Chain · last ${o.strip.length} of ${o.stats.entries}`} action={<Link href={`/app/${space}/chain`} className="text-2xs text-cyan hover:underline">Verify →</Link>}>
+          <Card title={`Chain · last ${o.strip.length} of ${o.stats.entries}`} action={<Link href={`/app/${space}/chain`} className="text-2xs text-accent hover:underline">Verify →</Link>}>
             <div className="p-4">
               {o.strip.length ? (
                 <ChainStrip compact blocks={o.strip.map((b) => ({ ...b, text: o.feed.find((f) => f.seq === b.seq)?.text }))} checkpoints={o.latestCheckpoint ? [o.latestCheckpoint.size] : []}
@@ -121,7 +121,7 @@ export default function OverviewPage() {
                 <Empty title="Waiting for the first memory">Connect an agent over MCP and ask it to remember something. It will appear here the moment it is written.</Empty>
               )}
             </Card>
-            <Card title="Top concepts" action={<Link href={`/app/${space}/concepts`} className="text-2xs text-cyan hover:underline">Map →</Link>}>
+            <Card title="Top concepts" action={<Link href={`/app/${space}/concepts`} className="text-2xs text-accent hover:underline">Map →</Link>}>
               <ul className="p-2">
                 {o.topConcepts.map((c) => (
                   <li key={c.id} className="flex items-center justify-between px-2 py-1.5 text-xs">

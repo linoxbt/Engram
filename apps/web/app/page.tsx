@@ -45,7 +45,7 @@ export default async function Landing() {
     <div className="prose-sans relative min-h-screen overflow-x-clip bg-bg">
       {/* Floating navigation */}
       <header className="fixed inset-x-0 top-4 z-40 flex justify-center px-4">
-        <nav className="l-glass flex h-14 w-full max-w-5xl items-center justify-between !rounded-full !bg-bg/75 px-4 sm:px-6" aria-label="Main">
+        <nav className="l-glass flex h-14 w-full max-w-5xl items-center justify-between !rounded-full !bg-bg/90 px-4 sm:px-6" aria-label="Main">
           <Link href="/" className="flex items-center gap-2.5"><IconLogo size={20} /><span className="font-mono text-[13px] tracking-[0.32em]">ENGRAM</span></Link>
           <div className="flex items-center gap-1 text-[13px] sm:gap-2">
             <a href="#proof" className="hidden rounded-full px-3 py-1.5 text-muted hover:text-text md:inline">Proof</a>
@@ -60,8 +60,8 @@ export default async function Landing() {
       {/* Hero */}
       <section className="relative flex min-h-[100svh] items-center overflow-hidden">
         <div className="l-aurora" />
-        <Lattice className="absolute inset-0 h-full w-full opacity-50 md:opacity-90" />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_60%_at_25%_50%,rgba(10,14,19,.85),transparent_70%)]" />
+        <Lattice className="absolute inset-0 h-full w-full opacity-30 md:opacity-90" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_60%_at_25%_50%,rgba(255,255,255,.88),transparent_70%)]" />
         <div className="l-grain" />
         <div className="relative mx-auto w-full max-w-6xl px-5 pb-20 pt-32 sm:px-8">
           <p className="l-eyebrow">Verifiable memory for artificial minds</p>
@@ -88,7 +88,7 @@ export default async function Landing() {
       {/* The problem */}
       <section id="problem" className="relative mx-auto max-w-6xl px-5 py-28 sm:px-8 sm:py-36">
         <Reveal><p className="l-eyebrow">The quiet failure of machine memory</p></Reveal>
-        <Reveal delay={80}><h2 className="l-display mt-5 max-w-3xl text-4xl sm:text-6xl">Agents remember. Nobody can <span className="l-serif text-cyan">prove</span> what they remembered.</h2></Reveal>
+        <Reveal delay={80}><h2 className="l-display mt-5 max-w-3xl text-4xl sm:text-6xl">Agents remember. Nobody can <span className="l-serif text-accent">prove</span> what they remembered.</h2></Reveal>
         <div className="mt-16 grid gap-10 md:grid-cols-3">
           {[
             ["No witness", "When an agent makes a bad call, its memory has already been overwritten, re-embedded, silently changed. The moment is gone."],
@@ -108,11 +108,11 @@ export default async function Landing() {
 
       {/* Proof playground */}
       <section id="proof" className="relative py-24 sm:py-32">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(50%_50%_at_50%_40%,rgba(0,194,209,.08),transparent_70%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(50%_50%_at_50%_40%,rgba(10,10,10,.035),transparent_70%)]" />
         <div className="relative mx-auto max-w-6xl px-5 sm:px-8">
           <Reveal className="max-w-3xl">
             <p className="l-eyebrow">Don&apos;t trust us. Try it.</p>
-            <h2 className="l-display mt-5 text-4xl sm:text-6xl">Change one word.<br /><span className="l-serif text-gold">Watch the seal break.</span></h2>
+            <h2 className="l-display mt-5 text-4xl sm:text-6xl">Change one word.<br /><span className="l-serif text-text">Watch the seal break.</span></h2>
             <p className="prose-sans mt-6 text-lg font-light text-text/70">This is the real verifier, the same code that guards every space, running on your device. Edit a memory, or play the attacker who covers their tracks. Each layer of defence catches a smarter lie.</p>
           </Reveal>
           <Reveal delay={120} className="mt-12"><ProofPlayground /></Reveal>
@@ -123,7 +123,7 @@ export default async function Landing() {
       <section id="time" className="relative mx-auto grid max-w-6xl items-center gap-12 px-5 py-24 sm:px-8 sm:py-32 lg:grid-cols-[1fr_1.15fr]">
         <Reveal>
           <p className="l-eyebrow">Time is a dimension of memory</p>
-          <h2 className="l-display mt-5 text-4xl sm:text-6xl">Ask the past.<br /><span className="l-serif text-violet">It answers honestly.</span></h2>
+          <h2 className="l-display mt-5 text-4xl sm:text-6xl">Ask the past.<br /><span className="l-serif text-text">It answers honestly.</span></h2>
           <p className="prose-sans mt-6 max-w-md text-lg font-light text-text/70">Every recall can run as of any moment. On Tuesday the agent believed Pro; today it knows Basic. A fact deliberately erased stays erased, and the erasure itself is on the record.</p>
           <p className="prose-sans mt-4 max-w-md text-sm text-muted">Drag the gold handle.</p>
         </Reveal>
@@ -134,10 +134,10 @@ export default async function Landing() {
       <section className="relative mx-auto max-w-6xl px-5 py-24 sm:px-8 sm:py-32">
         <Reveal><p className="l-eyebrow">Five promises</p></Reveal>
         <Reveal delay={60}><h2 className="l-display mt-5 max-w-3xl text-4xl sm:text-6xl">What memory should have been from the start.</h2></Reveal>
-        <div className="mt-14 grid gap-px overflow-hidden rounded-3xl border l-hairline bg-[rgba(211,228,234,0.06)] sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-14 grid gap-px overflow-hidden rounded-3xl border l-hairline bg-[rgba(10,10,10,0.08)] sm:grid-cols-2 lg:grid-cols-3">
           {PROMISES.map((p, i) => (
             <Reveal key={p.n} delay={i * 70} className="group bg-bg p-7 transition-colors hover:bg-panel sm:p-9">
-              <div className="flex items-baseline justify-between"><span className="font-mono text-xs text-cyan">{p.n}</span><span className="size-1.5 rounded-full bg-cyan/40 transition-all group-hover:bg-cyan group-hover:shadow-[0_0_12px_#00c2d1]" /></div>
+              <div className="flex items-baseline justify-between"><span className="font-mono text-xs text-accent">{p.n}</span><span className="size-1.5 rounded-full bg-accent/40 transition-all group-hover:bg-accent group-hover:shadow-[0_0_0_4px_rgba(10,10,10,.08)]" /></div>
               <h3 className="mt-10 text-2xl tracking-tight">{p.title}</h3>
               <p className="prose-sans mt-3 text-[15px] leading-relaxed text-muted">{p.body}</p>
             </Reveal>
@@ -154,10 +154,10 @@ export default async function Landing() {
       <section className="relative mx-auto max-w-6xl px-5 py-24 sm:px-8 sm:py-32">
         <Reveal><p className="l-eyebrow">How a memory lives</p></Reveal>
         <ol className="relative mt-14 space-y-0">
-          <span aria-hidden className="absolute bottom-6 left-[19px] top-6 w-px bg-gradient-to-b from-cyan/60 via-violet/40 to-gold/50 sm:left-[23px]" />
+          <span aria-hidden className="absolute bottom-6 left-[19px] top-6 w-px bg-gradient-to-b from-accent/60 via-violet/40 to-gold/50 sm:left-[23px]" />
           {FLOW.map((f, i) => (
             <Reveal as="li" key={f.k} delay={i * 60} className="relative grid grid-cols-[40px_1fr] gap-5 py-6 sm:grid-cols-[48px_200px_1fr] sm:gap-8">
-              <span className="relative z-10 flex size-10 items-center justify-center rounded-full border border-cyan/40 bg-bg font-mono text-xs text-cyan sm:size-12">{String(i + 1).padStart(2, "0")}</span>
+              <span className="relative z-10 flex size-10 items-center justify-center rounded-full border border-accent/40 bg-bg font-mono text-xs text-accent sm:size-12">{String(i + 1).padStart(2, "0")}</span>
               <h3 className="self-center text-2xl tracking-tight">{f.k}</h3>
               <p className="prose-sans col-start-2 self-center text-[15px] leading-relaxed text-muted sm:col-start-3">{f.d}</p>
             </Reveal>
@@ -179,7 +179,7 @@ export default async function Landing() {
           <div className="mt-14 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {APPWRITE.map(([t, d], i) => (
               <Reveal key={t} delay={i * 50} className="l-glass !rounded-2xl p-5">
-                <div className="font-mono text-xs text-cyan">{t}</div>
+                <div className="font-mono text-xs text-accent">{t}</div>
                 <p className="prose-sans mt-3 text-sm leading-relaxed text-text/70">{d}</p>
               </Reveal>
             ))}
@@ -191,7 +191,7 @@ export default async function Landing() {
       <section className="relative mx-auto grid max-w-6xl items-center gap-12 px-5 py-24 sm:px-8 sm:py-32 lg:grid-cols-2">
         <Reveal>
           <p className="l-eyebrow">Sixty seconds</p>
-          <h2 className="l-display mt-5 text-4xl sm:text-6xl">Give your agent<br /><span className="l-serif text-cyan">a memory it can stand behind.</span></h2>
+          <h2 className="l-display mt-5 text-4xl sm:text-6xl">Give your agent<br /><span className="l-serif text-accent">a memory it can stand behind.</span></h2>
           <p className="prose-sans mt-6 max-w-md text-lg font-light text-text/70">Create a space, mint an agent key, add one line to any MCP client. Six tools: remember, recall, forget, timeline, verify, resolve.</p>
         </Reveal>
         <Reveal delay={120} className="space-y-3">

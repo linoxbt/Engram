@@ -32,7 +32,7 @@ export function MemoryDrawer({ spaceKey, id, onClose, onNavigate }: { spaceKey: 
     <Drawer open={!!id} onClose={onClose} title={
       <div className="flex items-center gap-2">
         <span className="label">Entry</span>
-        <span className="tabular text-cyan">#{d?.seq ?? (id ? Number(id.slice(-12)) : "")}</span>
+        <span className="tabular text-accent">#{d?.seq ?? (id ? Number(id.slice(-12)) : "")}</span>
         {d && <Pill tone={d.conflict && d.status === "active" ? "conflict" : d.status}>{d.conflict && d.status === "active" ? "conflict" : d.status}</Pill>}
       </div>
     }>
@@ -92,7 +92,7 @@ function MemoryTab({ d, spaceKey, onNavigate }: { d: Detail; spaceKey: string; o
           erased && !dissolving ? (
             <div className="space-y-1 text-sm text-muted">
               <p>Content erased on {when(d.forgottenAt)}. Receipt kept.</p>
-              <p className="text-2xs">Salted fingerprint: <code>{shortHash(d.contentHash, 10, 6)}</code>{d.forgottenBy && <> · erased by <button className="text-cyan hover:underline" onClick={() => onNavigate(d.forgottenBy!)}>#{Number(d.forgottenBy.slice(-12))}</button></>}</p>
+              <p className="text-2xs">Salted fingerprint: <code>{shortHash(d.contentHash, 10, 6)}</code>{d.forgottenBy && <> · erased by <button className="text-accent hover:underline" onClick={() => onNavigate(d.forgottenBy!)}>#{Number(d.forgottenBy.slice(-12))}</button></>}</p>
             </div>
           ) : (
             <p className={clsx("text-base leading-relaxed", d.status === "superseded" && "text-muted")}>
@@ -102,7 +102,7 @@ function MemoryTab({ d, spaceKey, onNavigate }: { d: Detail; spaceKey: string; o
         ) : (
           <p className="text-sm">
             {d.op === "forget" ? "Forget entry" : `Link entry (${d.kind})`} targeting{" "}
-            {d.refs.target && <button className="text-cyan hover:underline" onClick={() => onNavigate(d.refs.target!)}>#{Number(d.refs.target.slice(-12))}</button>}
+            {d.refs.target && <button className="text-accent hover:underline" onClick={() => onNavigate(d.refs.target!)}>#{Number(d.refs.target.slice(-12))}</button>}
             {d.text && <span className="mt-1 block text-xs text-muted">Reason: {d.text}</span>}
           </p>
         )}
@@ -161,7 +161,7 @@ function ProvenanceTab({ d }: { d: Detail }) {
 
 function RelationsTab({ d, onNavigate }: { d: Detail; onNavigate: (id: string) => void }) {
   const relOf = (id: string) => {
-    if (d.refs.supersedes.includes(id)) return { label: "supersedes", tone: "cyan" };
+    if (d.refs.supersedes.includes(id)) return { label: "supersedes", tone: "accent" };
     if (d.supersededBy === id) return { label: "superseded by", tone: "superseded" };
     if (d.contradictedBy.includes(id) || d.refs.contradicts.includes(id)) return { label: "conflicts with", tone: "conflict" };
     if (d.refs.target === id) return { label: "target", tone: "gold" };
@@ -173,17 +173,17 @@ function RelationsTab({ d, onNavigate }: { d: Detail; onNavigate: (id: string) =
   return (
     <div className="space-y-4">
       <svg viewBox="0 0 400 120" className="w-full" role="img" aria-label="Relations graph">
-        <rect x="170" y="45" width="60" height="30" rx="2" fill="none" stroke="#00c2d1" strokeWidth="2" />
-        <text x="200" y="64" textAnchor="middle" fill="#d3e4ea" fontSize="11" fontFamily="JetBrains Mono">#{d.seq}</text>
+        <rect x="170" y="45" width="60" height="30" rx="2" fill="none" stroke="#0a0a0a" strokeWidth="2" />
+        <text x="200" y="64" textAnchor="middle" fill="#0a0a0a" fontSize="11" fontFamily="JetBrains Mono">#{d.seq}</text>
         {d.related.slice(0, 6).map((r, i) => {
           const x = 20 + (i % 3) * 140 + (i >= 3 ? 70 : 0) - (i >= 3 ? 70 : 0);
           const y = i < 3 ? 5 : 90;
           const rel = relOf(r.id);
-          const color = rel.tone === "conflict" ? "#ff5d73" : rel.tone === "gold" ? "#d9b44a" : rel.tone === "superseded" ? "#7f97a4" : rel.tone === "violet" ? "#9b8cff" : "#00c2d1";
+          const color = rel.tone === "conflict" ? "#d7263d" : rel.tone === "gold" ? "#9a7200" : rel.tone === "superseded" ? "#686868" : rel.tone === "violet" ? "#45454d" : "#0a0a0a";
           return (
             <g key={r.id} className="cursor-pointer" onClick={() => onNavigate(r.id)}>
               <line x1="200" y1={y < 45 ? 45 : 75} x2={x + 40} y2={y < 45 ? y + 25 : y} stroke={color} strokeWidth="1" strokeDasharray={rel.tone === "superseded" ? "3 3" : undefined} />
-              <rect x={x} y={y} width="80" height="25" rx="2" fill="#0f161e" stroke={color} />
+              <rect x={x} y={y} width="80" height="25" rx="2" fill="#ffffff" stroke={color} />
               <text x={x + 40} y={y + 16} textAnchor="middle" fill={color} fontSize="10" fontFamily="JetBrains Mono">#{r.seq} {rel.label.split(" ")[0]}</text>
             </g>
           );
@@ -194,7 +194,7 @@ function RelationsTab({ d, onNavigate }: { d: Detail; onNavigate: (id: string) =
           const rel = relOf(r.id);
           return (
             <li key={r.id}>
-              <button onClick={() => onNavigate(r.id)} className="panel w-full px-3 py-2 text-left hover:border-cyan/60">
+              <button onClick={() => onNavigate(r.id)} className="panel w-full px-3 py-2 text-left hover:border-accent/60">
                 <div className="flex items-center gap-2 text-2xs text-muted"><Pill tone={rel.tone}>{rel.label}</Pill><span className="tabular">#{r.seq}</span><span>{r.agentName}</span><span>{when(r.createdAt)}</span></div>
                 <p className={clsx("mt-1 text-xs", r.status === "superseded" && "text-muted line-through")}>{r.op === "forget" ? "Forget entry" : r.op === "link" ? `Link entry (${r.kind})` : r.text ?? "Content erased."}</p>
               </button>
@@ -256,8 +256,8 @@ function TimelineTab({ d, spaceKey, onNavigate }: { d: Detail; spaceKey: string;
     <ol className="relative ml-2 border-l border-line-2">
       {q.data?.entries.map((e) => (
         <li key={e.id} className="relative pl-4 pb-3">
-          <span className={clsx("absolute -left-[5px] top-1.5 size-2.5 rounded-full border", e.id === d.id ? "border-cyan bg-cyan" : e.op === "forget" ? "border-dashed border-muted" : e.status === "superseded" ? "border-muted" : "border-cyan bg-bg")} />
-          <button onClick={() => onNavigate(e.id)} className={clsx("block text-left text-xs", e.id === d.id && "text-cyan")}>
+          <span className={clsx("absolute -left-[5px] top-1.5 size-2.5 rounded-full border", e.id === d.id ? "border-accent bg-accent" : e.op === "forget" ? "border-dashed border-muted" : e.status === "superseded" ? "border-muted" : "border-accent bg-bg")} />
+          <button onClick={() => onNavigate(e.id)} className={clsx("block text-left text-xs", e.id === d.id && "text-accent")}>
             <span className="text-2xs text-muted">#{e.seq} · {when(e.createdAt)} · {e.agentName}</span>
             <span className={clsx("block", e.status === "superseded" && "line-through text-muted", e.status === "forgotten" && "italic text-muted")}>
               {e.op === "forget" ? `forgot #${e.target ? Number(e.target.slice(-12)) : "?"}` : e.op === "link" ? `resolved (${e.kind}) #${e.target ? Number(e.target.slice(-12)) : "?"}` : e.text ?? "content erased"}

@@ -93,7 +93,7 @@ export default function LabPage() {
 
   if (info.data && !info.data.settings.sandbox) {
     return (
-      <Card><Empty title="The Tamper Lab only runs in sandbox spaces" action={<Link href="/app" className="text-xs text-cyan hover:underline">Create a sandbox →</Link>}>
+      <Card><Empty title="The Tamper Lab only runs in sandbox spaces" action={<Link href="/app" className="text-xs text-accent hover:underline">Create a sandbox →</Link>}>
         Lab routes refuse any space that is not a sandbox, so destructive experiments never touch real memory.
       </Empty></Card>
     );

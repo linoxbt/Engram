@@ -15,8 +15,8 @@ export function Button({ variant = "outline", size = "md", loading, className, c
       className={clsx(
         "inline-flex items-center justify-center gap-2 rounded-[2px] border font-mono transition-colors disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap",
         size === "sm" ? "h-7 px-2.5 text-xs" : "h-9 px-3.5 text-sm",
-        variant === "primary" && "border-cyan bg-cyan text-bg hover:bg-cyan/85",
-        variant === "outline" && "border-line-2 bg-panel text-text hover:border-cyan hover:text-cyan",
+        variant === "primary" && "border-accent bg-accent text-bg hover:bg-accent/85",
+        variant === "outline" && "border-line-2 bg-panel text-text hover:border-accent hover:text-accent",
         variant === "ghost" && "border-transparent text-muted hover:text-text hover:bg-panel-2",
         variant === "danger" && "border-tamper/60 text-tamper hover:bg-tamper/10",
         variant === "gold" && "border-gold/70 text-gold hover:bg-gold/10",
@@ -34,13 +34,13 @@ export function Spinner({ className }: { className?: string }) {
 }
 
 export function Input({ className, ...p }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...p} className={clsx("h-9 w-full rounded-[2px] border border-line-2 bg-bg px-3 text-sm text-text placeholder:text-muted/70 focus:border-cyan focus:outline-none", className)} />;
+  return <input {...p} className={clsx("h-9 w-full rounded-[2px] border border-line-2 bg-bg px-3 text-sm text-text placeholder:text-muted/70 focus:border-accent focus:outline-none", className)} />;
 }
 export function Textarea({ className, ...p }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea {...p} className={clsx("w-full rounded-[2px] border border-line-2 bg-bg px-3 py-2 text-sm text-text placeholder:text-muted/70 focus:border-cyan focus:outline-none", className)} />;
+  return <textarea {...p} className={clsx("w-full rounded-[2px] border border-line-2 bg-bg px-3 py-2 text-sm text-text placeholder:text-muted/70 focus:border-accent focus:outline-none", className)} />;
 }
 export function Select({ className, children, ...p }: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select {...p} className={clsx("h-9 rounded-[2px] border border-line-2 bg-bg px-2 text-sm text-text focus:border-cyan focus:outline-none", className)}>{children}</select>;
+  return <select {...p} className={clsx("h-9 rounded-[2px] border border-line-2 bg-bg px-2 text-sm text-text focus:border-accent focus:outline-none", className)}>{children}</select>;
 }
 
 export function Field({ label, help, children, htmlFor }: { label: string; help?: ReactNode; children: ReactNode; htmlFor?: string }) {
@@ -56,8 +56,8 @@ export function Field({ label, help, children, htmlFor }: { label: string; help?
 export function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
   return (
     <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={() => onChange(!checked)}
-      className={clsx("relative h-5 w-9 rounded-full border transition-colors disabled:opacity-50", checked ? "border-cyan bg-cyan/25" : "border-line-2 bg-bg")}>
-      <span className={clsx("absolute top-0.5 size-3.5 rounded-full transition-all", checked ? "left-[18px] bg-cyan" : "left-0.5 bg-muted")} />
+      className={clsx("relative h-5 w-9 rounded-full border transition-colors disabled:opacity-50", checked ? "border-accent bg-accent/25" : "border-line-2 bg-bg")}>
+      <span className={clsx("absolute top-0.5 size-3.5 rounded-full transition-all", checked ? "left-[18px] bg-accent" : "left-0.5 bg-muted")} />
     </button>
   );
 }
@@ -67,7 +67,7 @@ const PILL: Record<string, string> = {
   superseded: "border-muted/40 text-muted", forgotten: "border-line-2 text-muted border-dashed",
   recorded: "border-line-2 text-muted", conflict: "border-tamper/50 text-tamper", tampered: "border-tamper/60 text-tamper",
   warning: "border-warn/50 text-warn", pending: "border-warn/50 text-warn", gold: "border-gold/50 text-gold",
-  cyan: "border-cyan/50 text-cyan", violet: "border-violet/50 text-violet",
+  accent: "border-accent/50 text-accent", violet: "border-violet/50 text-violet",
 };
 export function Pill({ tone, children, className }: { tone: keyof typeof PILL | string; children: ReactNode; className?: string }) {
   return <span className={clsx("inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-[2px] border px-1.5 text-2xs uppercase tracking-wider", PILL[tone] ?? "border-line-2 text-muted", className)}>{children}</span>;
@@ -112,7 +112,7 @@ export function CopyButton({ value, label = "Copy", className }: { value: string
   return (
     <button type="button" aria-label={`${label}: ${value.slice(0, 40)}`} title={label}
       onClick={async () => { try { await navigator.clipboard.writeText(value); setDone(true); setTimeout(() => setDone(false), 1200); } catch { /* clipboard blocked */ } }}
-      className={clsx("inline-flex size-6 items-center justify-center rounded-[2px] text-muted hover:bg-panel-2 hover:text-cyan", className)}>
+      className={clsx("inline-flex size-6 items-center justify-center rounded-[2px] text-muted hover:bg-panel-2 hover:text-accent", className)}>
       {done ? <IconTick className="text-valid" /> : <IconCopy />}
     </button>
   );
@@ -133,7 +133,7 @@ export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: 
     <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-line">
       {tabs.map((t) => (
         <button key={t.id} role="tab" aria-selected={value === t.id} onClick={() => onChange(t.id)}
-          className={clsx("-mb-px shrink-0 border-b-2 px-3 py-2 text-xs uppercase tracking-wider", value === t.id ? "border-cyan text-cyan" : "border-transparent text-muted hover:text-text")}>
+          className={clsx("-mb-px shrink-0 border-b-2 px-3 py-2 text-xs uppercase tracking-wider", value === t.id ? "border-accent text-accent" : "border-transparent text-muted hover:text-text")}>
           {t.label}
         </button>
       ))}

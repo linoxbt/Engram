@@ -15,7 +15,7 @@ const n = (id: string) => Number(id.slice(-12));
 export function MemoryCard({ m, onOpen, asOf, maxScore = 1 }: { m: RecallMemory; onOpen?: (id: string) => void; asOf?: string | null; maxScore?: number }) {
   const statusTone = m.status === "active" ? (m.conflict ? "conflict" : "active") : m.status;
   return (
-    <button onClick={() => onOpen?.(m.id)} className={clsx("panel block w-full px-4 py-3 text-left transition-colors hover:border-cyan/60", m.status === "forgotten" && "border-dashed")}>
+    <button onClick={() => onOpen?.(m.id)} className={clsx("panel block w-full px-4 py-3 text-left transition-colors hover:border-accent/60", m.status === "forgotten" && "border-dashed")}>
       <div className="flex items-start justify-between gap-3">
         <p className={clsx("text-sm", m.status === "superseded" && !asOf && "text-muted", m.status === "forgotten" && "italic text-muted")}>
           {m.text ?? m.note ?? "Content erased. Receipt kept."}
@@ -24,18 +24,18 @@ export function MemoryCard({ m, onOpen, asOf, maxScore = 1 }: { m: RecallMemory;
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-2xs text-muted">
         <Pill tone={statusTone}>{asOf ? (m.validAtAsOf ? "valid then" : m.status) : m.conflict && m.status === "active" ? "conflict" : m.status}</Pill>
-        <Pill tone="cyan">{m.kind}</Pill>
+        <Pill tone="accent">{m.kind}</Pill>
         {m.subject && <span>{m.subject}</span>}
         <span>· {m.agentName}</span>
         <span>· {when(m.createdAt)}</span>
-        {m.supersedes.map((s) => <Pill key={s} tone="cyan">supersedes #{n(s)}</Pill>)}
+        {m.supersedes.map((s) => <Pill key={s} tone="accent">supersedes #{n(s)}</Pill>)}
         {m.supersededBy && <Pill tone="superseded">superseded by #{n(m.supersededBy)}</Pill>}
         {m.contradictedBy.map((s) => <Pill key={s} tone="conflict">conflicts #{n(s)}</Pill>)}
         {m.checkpoint && <Pill tone="gold">sealed</Pill>}
       </div>
       {m.status !== "forgotten" && (
-        <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-line" aria-label={`score ${m.score}`}>
-          <div className="h-full bg-cyan/70" style={{ width: `${Math.max(4, Math.min(100, (m.score / Math.max(0.01, maxScore)) * 100))}%` }} />
+        <div className="mt-2 h-0.5 w-full overflow-hidden rounded-full bg-line" aria-label={`score ${m.score}`}>
+          <div className="h-full bg-accent/55" style={{ width: `${Math.max(4, Math.min(100, (m.score / Math.max(0.01, maxScore)) * 100))}%` }} />
         </div>
       )}
     </button>

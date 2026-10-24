@@ -32,10 +32,10 @@ export const IconBolt = (p: P) => <svg {...base(p)}><path d="M9 1.5L3.5 9H8l-1 5
 export const IconKey = (p: P) => <svg {...base(p)}><circle cx="5" cy="10.5" r="3" /><path d="M7.2 8.4L13.5 2M11 4.5l1.8 1.8M9.5 6l1.3 1.3" /></svg>;
 export const IconLogo = ({ size = 18, ...p }: P) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden {...p}>
-    <rect x="2" y="7" width="6" height="10" rx="1" stroke="#00c2d1" strokeWidth="1.6" />
-    <rect x="9" y="7" width="6" height="10" rx="1" stroke="#00c2d1" strokeWidth="1.6" />
-    <rect x="16" y="7" width="6" height="10" rx="1" stroke="#d9b44a" strokeWidth="1.6" />
-    <path d="M8 12h1M15 12h1" stroke="#00c2d1" strokeWidth="1.6" />
+    <rect x="2" y="7" width="6" height="10" rx="1" stroke="#0a0a0a" strokeWidth="1.6" />
+    <rect x="9" y="7" width="6" height="10" rx="1" stroke="#0a0a0a" strokeWidth="1.6" />
+    <rect x="16" y="7" width="6" height="10" rx="1" stroke="#9a7200" strokeWidth="1.6" />
+    <path d="M8 12h1M15 12h1" stroke="#0a0a0a" strokeWidth="1.6" />
   </svg>
 );
 

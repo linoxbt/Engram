@@ -95,7 +95,7 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
       ctx.scale(k, k);
       for (const l of links) {
         const s = l.source as SimNode, t = l.target as SimNode;
-        ctx.strokeStyle = l.conflict ? "rgba(255,93,115,0.85)" : `rgba(38,55,74,${0.4 + (l.weight - 0.75) * 2})`;
+        ctx.strokeStyle = l.conflict ? "rgba(215,38,61,0.85)" : `rgba(10,10,10,${0.18 + (l.weight - 0.75) * 1.2})`;
         ctx.lineWidth = l.conflict ? 2 / k : 1 / k;
         ctx.beginPath(); ctx.moveTo(s.x!, s.y!); ctx.lineTo(t.x!, t.y!); ctx.stroke();
       }
@@ -104,13 +104,13 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
         const dim = highlight && !hit;
         ctx.globalAlpha = dim ? 0.25 : 1;
         ctx.beginPath(); ctx.arc(n.x!, n.y!, n.r, 0, Math.PI * 2);
-        ctx.fillStyle = n.id === selected ? "rgba(155,140,255,0.45)" : "rgba(155,140,255,0.14)";
+        ctx.fillStyle = n.id === selected ? "rgba(10,10,10,0.9)" : "rgba(255,255,255,1)";
         ctx.fill();
         ctx.lineWidth = (n.id === selected || hit ? 2.5 : 1.2) / k;
-        ctx.strokeStyle = hit ? "#d9b44a" : "#9b8cff";
+        ctx.strokeStyle = hit ? "#9a7200" : "#0a0a0a";
         ctx.stroke();
         if (k > 0.6 || n.members > 4) {
-          ctx.fillStyle = "#d3e4ea";
+          ctx.fillStyle = "#0a0a0a";
           ctx.font = `${11 / k}px JetBrains Mono, monospace`;
           ctx.textAlign = "center";
           ctx.fillText(n.label.length > 26 ? n.label.slice(0, 25) + "…" : n.label, n.x!, n.y! + n.r + 12 / k);

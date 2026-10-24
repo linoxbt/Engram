@@ -60,7 +60,7 @@ export function Lattice({ className = "" }: { className?: string }) {
 
       for (const d of dust) {
         const p = project({ x: d.x, y: d.y + Math.sin(t * 0.2 + d.s * 6) * 0.05, z: d.z }, rot * 0.4, tilt);
-        ctx.fillStyle = `rgba(${d.s > 0.8 ? "217,180,74" : d.s > 0.5 ? "155,140,255" : "159,243,250"},${0.08 + 0.25 * p.f * d.s})`;
+        ctx.fillStyle = `rgba(${d.s > 0.88 ? "154,114,0" : "10,10,10"},${0.06 + 0.22 * p.f * d.s})`;
         ctx.fillRect(p.sx, p.sy, 1.2 * p.f, 1.2 * p.f);
       }
       const P = nodes.map((n) => project(n, rot, tilt));
@@ -68,7 +68,7 @@ export function Lattice({ className = "" }: { className?: string }) {
         const a = P[i - 1], b = P[i];
         const bad = broken && i > tamper;
         const snap = broken && i === tamper + 1;
-        ctx.strokeStyle = bad ? `rgba(255,93,115,${snap ? 0.15 : 0.35})` : `rgba(0,194,209,${0.12 + 0.3 * ((a.f + b.f) / 2 - 0.6)})`;
+        ctx.strokeStyle = bad ? `rgba(215,38,61,${snap ? 0.2 : 0.45})` : `rgba(10,10,10,${0.14 + 0.32 * ((a.f + b.f) / 2 - 0.6)})`;
         ctx.lineWidth = 1;
         ctx.beginPath();
         if (snap) { ctx.moveTo(a.sx, a.sy); ctx.lineTo((a.sx + b.sx) / 2 - 4, (a.sy + b.sy) / 2 - 4); }
@@ -78,7 +78,7 @@ export function Lattice({ className = "" }: { className?: string }) {
       // Rungs between strands: the Merkle pairing.
       for (let i = 0; i + 1 < N; i += 2) {
         const a = P[i], b = P[i + 1];
-        ctx.strokeStyle = "rgba(155,140,255,0.08)";
+        ctx.strokeStyle = "rgba(10,10,10,0.07)";
         ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
       }
       const order = P.map((p, i) => ({ p, i })).sort((u, v) => v.p.z - u.p.z);
@@ -88,18 +88,17 @@ export function Lattice({ className = "" }: { className?: string }) {
         const after = broken && i > tamper;
         ctx.save();
         ctx.translate(p.sx, p.sy);
-        if (isT) { ctx.shadowColor = "rgba(255,93,115,.9)"; ctx.shadowBlur = 24; }
-        else if (nodes[i].seal) { ctx.shadowColor = "rgba(217,180,74,.7)"; ctx.shadowBlur = 14; }
-        else { ctx.shadowColor = "rgba(0,194,209,.6)"; ctx.shadowBlur = 10 * p.f; }
-        ctx.strokeStyle = isT ? "#ff5d73" : after ? "rgba(255,93,115,.55)" : nodes[i].seal ? "#d9b44a" : `rgba(159,243,250,${0.45 + 0.5 * (p.f - 0.6)})`;
-        ctx.fillStyle = isT ? "rgba(255,93,115,.35)" : nodes[i].seal ? "rgba(217,180,74,.18)" : "rgba(0,194,209,.10)";
+        if (isT) { ctx.shadowColor = "rgba(215,38,61,.6)"; ctx.shadowBlur = 18; }
+        else if (nodes[i].seal) { ctx.shadowColor = "rgba(154,114,0,.35)"; ctx.shadowBlur = 10; }
+        ctx.strokeStyle = isT ? "#d7263d" : after ? "rgba(215,38,61,.6)" : nodes[i].seal ? "#9a7200" : `rgba(10,10,10,${0.5 + 0.5 * (p.f - 0.6)})`;
+        ctx.fillStyle = isT ? "rgba(215,38,61,.18)" : nodes[i].seal ? "rgba(154,114,0,.14)" : "rgba(255,255,255,.95)";
         ctx.lineWidth = 1.3;
         ctx.beginPath(); ctx.roundRect(-size / 2, -size * 0.7, size, size * 1.4, 1.5); ctx.fill(); ctx.stroke();
         ctx.restore();
       }
       if (sealPulse >= 0) {
         const head = P[N - 1];
-        ctx.strokeStyle = `rgba(217,180,74,${0.8 * (1 - sealPulse)})`;
+        ctx.strokeStyle = `rgba(154,114,0,${0.8 * (1 - sealPulse)})`;
         ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.arc(head.sx, head.sy, 10 + sealPulse * 60, 0, Math.PI * 2); ctx.stroke();
       }

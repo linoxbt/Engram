@@ -86,11 +86,11 @@ export function ProofPlayground() {
           const origin = first === i;
           return (
             <li key={i} className="relative">
-              {i > 0 && <span aria-hidden className={clsx("absolute -left-3 top-12 hidden h-px w-3 md:block", bad && i === first ? "bg-transparent" : bad ? "bg-tamper/60" : "bg-cyan/40")} />}
+              {i > 0 && <span aria-hidden className={clsx("absolute -left-3 top-12 hidden h-px w-3 md:block", bad && i === first ? "bg-transparent" : bad ? "bg-tamper/60" : "bg-accent/40")} />}
               {i === 2 && <span aria-hidden className={clsx("absolute -top-3 right-3 z-10 rounded-full border px-2 py-0.5 font-mono text-[10px]", first != null && first <= 2 ? "border-tamper/50 bg-bg text-tamper" : "border-gold/60 bg-bg text-gold")}>◆ sealed</span>}
               {i === 4 && <span aria-hidden className={clsx("absolute -top-3 right-3 z-10 rounded-full border px-2 py-0.5 font-mono text-[10px]", tampered ? "border-tamper/50 bg-bg text-tamper" : "border-gold/60 bg-bg text-gold")}>◆ signed root</span>}
               <div className={clsx("h-full rounded-2xl border p-3 transition-all duration-500",
-                origin ? "border-tamper bg-tamper/10 shadow-[0_0_40px_-10px_rgba(255,93,115,.7)]" : bad ? "border-tamper/40 bg-tamper/[0.03]" : "border-cyan/25 bg-cyan/[0.03]")}>
+                origin ? "border-tamper bg-tamper/10 shadow-[0_0_40px_-10px_rgba(215,38,61,.35)]" : bad ? "border-tamper/40 bg-tamper/[0.03]" : "border-accent/25 bg-accent/[0.03]")}>
                 <div className="flex items-center justify-between font-mono text-[10px] text-muted"><span>#{i}</span><span>{e ? short(e.metadata.hash) : "…"}</span></div>
                 {e ? (
                   <textarea aria-label={`Memory ${i}`} value={e.metadata.c.text ?? ""} onChange={(ev) => type(i, ev.target.value)} rows={3}

@@ -78,7 +78,7 @@ export function SpacesPage({ userName }: { userName: string }) {
         )}
         <div className="grid gap-3 md:grid-cols-2">
           {q.data?.spaces.map((s) => (
-            <Link key={s.key} href={`/app/${s.key}`} className="card block p-4 transition-colors hover:border-cyan/50">
+            <Link key={s.key} href={`/app/${s.key}`} className="card block p-4 transition-colors hover:border-accent/50">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="truncate text-sm">{s.name}</div>

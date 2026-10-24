@@ -47,7 +47,7 @@ export default function AgentsPage() {
                   <tr key={a.id} className="border-t border-line align-top">
                     <td className="px-4 py-2.5"><div>{a.name}</div><div className="max-w-xs text-2xs text-muted">{a.description}</div></td>
                     <td className="px-2 py-2.5"><code>{a.keyPrefix}_…</code></td>
-                    <td className="px-2 py-2.5"><div className="flex flex-wrap gap-1">{a.scopes.map((s) => <Pill key={s} tone="cyan">{s}</Pill>)}</div></td>
+                    <td className="px-2 py-2.5"><div className="flex flex-wrap gap-1">{a.scopes.map((s) => <Pill key={s} tone="accent">{s}</Pill>)}</div></td>
                     <td className="px-2 py-2.5 tabular">{Number(a.writes)}</td>
                     <td className="px-2 py-2.5 tabular">{Number(a.recalls ?? 0)}</td>
                     <td className="px-2 py-2.5 text-muted">{ago(a.lastSeenAt)}</td>
@@ -69,7 +69,7 @@ export default function AgentsPage() {
         {found.data && (
           <ul className="border-t border-line">
             {found.data.agents.map((a) => (
-              <li key={a.id} className="flex items-center justify-between border-b border-line px-4 py-2 text-xs"><span><span className="text-cyan">{a.name}</span> <span className="text-muted">· {a.description}</span></span><span className="tabular text-muted">{a.distance != null ? `${Math.round((1 - a.distance) * 100)}% match` : ""}</span></li>
+              <li key={a.id} className="flex items-center justify-between border-b border-line px-4 py-2 text-xs"><span><span className="text-accent">{a.name}</span> <span className="text-muted">· {a.description}</span></span><span className="tabular text-muted">{a.distance != null ? `${Math.round((1 - a.distance) * 100)}% match` : ""}</span></li>
             ))}
           </ul>
         )}
@@ -103,7 +103,7 @@ function CreateAgent({ open, onClose, space, onCreated }: { open: boolean; onClo
           <div className="flex flex-wrap gap-1.5">
             {SCOPES.map((s) => (
               <button type="button" key={s} aria-pressed={scopes.includes(s)} onClick={() => setScopes((xs) => xs.includes(s) ? xs.filter((x) => x !== s) : [...xs, s])}
-                className={`h-7 rounded-[2px] border px-2 text-2xs uppercase tracking-wider ${scopes.includes(s) ? "border-cyan text-cyan" : "border-line-2 text-muted"}`}>{s}</button>
+                className={`h-7 rounded-[2px] border px-2 text-2xs uppercase tracking-wider ${scopes.includes(s) ? "border-accent text-accent" : "border-line-2 text-muted"}`}>{s}</button>
             ))}
           </div>
         </Field>
@@ -125,7 +125,7 @@ export function Snippets({ apiKey, url }: { apiKey: string; url: string }) {
   return (
     <div className="space-y-3">
       <div className="rounded-[2px] border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-warn">Copy this key now. It is shown once and only its hash is stored.</div>
-      <div className="panel flex items-center gap-2 px-3 py-2"><code className="flex-1 break-all text-xs text-cyan">{apiKey}</code><CopyButton value={apiKey} label="Copy key" /></div>
+      <div className="panel flex items-center gap-2 px-3 py-2"><code className="flex-1 break-all text-xs text-accent">{apiKey}</code><CopyButton value={apiKey} label="Copy key" /></div>
       <Tabs value={tab} onChange={setTab} tabs={[{ id: "claude", label: "Claude Code" }, { id: "inspector", label: "MCP Inspector" }, { id: "rest", label: "REST" }, { id: "sdk", label: "SDK" }]} />
       <div className="relative">
         <pre className="overflow-x-auto rounded-[2px] border border-line bg-bg p-3 text-2xs leading-relaxed"><code>{snippets[tab]}</code></pre>

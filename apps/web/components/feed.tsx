@@ -12,7 +12,7 @@ export interface FeedItem {
 export function RelationChips({ item }: { item: Pick<FeedItem, "op" | "kind" | "supersedes" | "contradicts" | "target" | "related"> }) {
   return (
     <span className="inline-flex flex-wrap gap-1">
-      {item.supersedes.map((s) => <Pill key={`s${s}`} tone="cyan">supersedes #{s}</Pill>)}
+      {item.supersedes.map((s) => <Pill key={`s${s}`} tone="accent">supersedes #{s}</Pill>)}
       {item.contradicts.map((s) => <Pill key={`c${s}`} tone="conflict">conflicts #{s}</Pill>)}
       {item.related.map((s) => <Pill key={`r${s}`} tone="violet">{item.op === "link" ? "winner" : "refines"} #{s}</Pill>)}
       {item.op === "forget" && item.target != null && <Pill tone="forgotten">forgot #{item.target}</Pill>}
@@ -27,7 +27,7 @@ export function Feed({ items, onOpen, fresh }: { items: FeedItem[]; onOpen?: (id
       {items.map((it) => (
         <li key={it.id} className={clsx(fresh?.has(it.id) && "anim-slide-in")}>
           <button onClick={() => onOpen?.(it.id)} className="flex w-full gap-3 px-4 py-2.5 text-left hover:bg-panel-2">
-            <span className={clsx("mt-0.5", it.op === "forget" ? "text-muted" : it.op === "link" ? "text-gold" : it.op === "reflect" ? "text-violet" : "text-cyan")}><OpIcon op={it.op} /></span>
+            <span className={clsx("mt-0.5", it.op === "forget" ? "text-muted" : it.op === "link" ? "text-gold" : it.op === "reflect" ? "text-violet" : "text-accent")}><OpIcon op={it.op} /></span>
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline gap-2 text-2xs text-muted">
                 <span className="tabular text-text">#{it.seq}</span>

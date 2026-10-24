@@ -46,7 +46,7 @@ export default function RecallsPage() {
                   </button>
                   {sel === r.id && (
                     <div className="flex flex-wrap gap-1.5 bg-bg px-4 pb-3">
-                      {r.returned.map((id) => <button key={id} onClick={() => open(id)} className="rounded-[2px] border border-cyan/40 px-2 py-0.5 text-2xs text-cyan hover:bg-cyan/10">#{Number(id.slice(-12))}</button>)}
+                      {r.returned.map((id) => <button key={id} onClick={() => open(id)} className="rounded-[2px] border border-accent/40 px-2 py-0.5 text-2xs text-accent hover:bg-accent/10">#{Number(id.slice(-12))}</button>)}
                       {!r.returned.length && <span className="text-2xs text-muted">Nothing was returned.</span>}
                     </div>
                   )}

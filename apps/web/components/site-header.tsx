@@ -11,11 +11,11 @@ export function SiteHeader({ signedIn }: { signedIn?: boolean }) {
           <Link href="/verify" className="hidden hover:text-text sm:inline">Verify</Link>
           <a href="https://github.com/linoxbt/Engram" className="hidden hover:text-text sm:inline">GitHub</a>
           {signedIn ? (
-            <Link href="/app" className="rounded-[2px] border border-cyan px-3 py-1.5 text-cyan hover:bg-cyan/10">Dashboard</Link>
+            <Link href="/app" className="rounded-[2px] border border-accent px-3 py-1.5 text-accent hover:bg-accent/10">Dashboard</Link>
           ) : (
             <>
               <Link href="/login" className="hover:text-text">Sign in</Link>
-              <Link href="/signup" className="rounded-[2px] border border-cyan px-3 py-1.5 text-cyan hover:bg-cyan/10">Create account</Link>
+              <Link href="/signup" className="rounded-[2px] border border-accent px-3 py-1.5 text-accent hover:bg-accent/10">Create account</Link>
             </>
           )}
         </nav>

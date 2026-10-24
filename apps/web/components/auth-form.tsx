@@ -37,7 +37,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           <Button type="submit" variant="primary" className="w-full" loading={loading}>{mode === "login" ? "Sign in" : "Create account"}</Button>
         </form>
         <p className="mt-4 text-center text-xs text-muted">
-          {mode === "login" ? <>New here? <Link className="text-cyan" href={`/signup${next ? `?next=${encodeURIComponent(next)}` : ""}`}>Create an account</Link></> : <>Have an account? <Link className="text-cyan" href={`/login${next ? `?next=${encodeURIComponent(next)}` : ""}`}>Sign in</Link></>}
+          {mode === "login" ? <>New here? <Link className="text-accent" href={`/signup${next ? `?next=${encodeURIComponent(next)}` : ""}`}>Create an account</Link></> : <>Have an account? <Link className="text-accent" href={`/login${next ? `?next=${encodeURIComponent(next)}` : ""}`}>Sign in</Link></>}
         </p>
       </div>
     </div>

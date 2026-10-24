@@ -1,6 +1,6 @@
 # Demo script (2 minutes 30 seconds)
 
-Record at 1080p, dark theme, browser zoom 125 %, notifications off. One slide only.
+Record at 1080p, browser zoom 125 %, notifications off. One slide only.
 
 ## Before recording
 

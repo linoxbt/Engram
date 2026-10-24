@@ -135,7 +135,7 @@ export function ChainStrip({
                 className="absolute" style={{ left: 8 + i * STEP, top: compact ? 14 : 22 }}
                 onMouseEnter={(e) => setHover({ b, x: (e.currentTarget as HTMLElement).offsetLeft - scroll })} onMouseLeave={() => setHover(null)}>
                 {i > 0 && <span className={clsx("absolute top-1/2 h-px", states?.get(b.seq) === "fail" ? "bg-tamper" : "bg-line-2")} style={{ left: -GAP, width: GAP }} />}
-                <button tabIndex={-1} onClick={() => { setActive(b.seq); onOpen?.(b.seq); }} className={clsx("block", active === b.seq && "outline outline-2 outline-offset-2 outline-cyan")}>
+                <button tabIndex={-1} onClick={() => { setActive(b.seq); onOpen?.(b.seq); }} className={clsx("block", active === b.seq && "outline outline-2 outline-offset-2 outline-accent")}>
                   <Block b={b} state={states?.get(b.seq)} flag={flags.has(b.seq)} />
                 </button>
                 {(i % 10 === 0 || i === blocks.length - 1) && !compact && <span className="absolute left-0 top-[34px] text-[10px] tabular text-muted">{b.seq}</span>}
@@ -146,7 +146,7 @@ export function ChainStrip({
       </div>
       {hover && (
         <div className="pointer-events-none absolute -top-2 z-20 w-64 -translate-y-full rounded-[2px] border border-line-2 bg-panel-2 px-2.5 py-2 text-2xs shadow-lg" style={{ left: Math.min(Math.max(0, hover.x - 100), width - 260) }}>
-          <div className="flex justify-between"><span className="text-cyan">#{hover.b.seq} · {hover.b.op}</span><span className="text-muted">{shortHash(hover.b.hash)}</span></div>
+          <div className="flex justify-between"><span className="text-accent">#{hover.b.seq} · {hover.b.op}</span><span className="text-muted">{shortHash(hover.b.hash)}</span></div>
           <div className="mt-1 line-clamp-2 text-text">{hover.b.text === undefined ? "Header only: text is never shared publicly." : hover.b.op === "forget" ? "Forget entry" : hover.b.op === "link" ? "Link entry (resolution)" : hover.b.text ?? "Content erased. Receipt kept."}</div>
           {hover.b.agentName && <div className="mt-0.5 text-muted">{hover.b.agentName}</div>}
         </div>
@@ -161,9 +161,9 @@ function Block({ b, state, flag, small }: { b: StripBlock; state?: BlockState; f
     b.op === "forget" ? "border border-dashed border-muted/70 bg-transparent" :
     b.op === "link" ? "border border-line-2 bg-transparent" :
     b.op === "reflect" ? "border-2 border-violet/80 bg-violet/10" :
-    b.status === "superseded" ? "border-2 border-cyan/40 bg-transparent" :
-    b.status === "forgotten" ? "border border-dashed border-cyan/50 bg-transparent" :
-    "border-2 border-cyan/90 bg-cyan/10";
+    b.status === "superseded" ? "border-2 border-accent/40 bg-transparent" :
+    b.status === "forgotten" ? "border border-dashed border-accent/50 bg-transparent" :
+    "border-2 border-accent/90 bg-accent/10";
   return (
     <span className={clsx("relative inline-flex shrink-0 items-center justify-center rounded-[2px] transition-colors", size, base,
       state === "ok" && "border-valid! bg-valid/20!", state === "fail" && "border-tamper! bg-tamper/30! anim-flash")}>

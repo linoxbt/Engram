@@ -123,7 +123,7 @@ export default function TimeMachinePage() {
 
 function Row({ m, onOpen, label, fade }: { m: RecallMemory; onOpen: (id: string) => void; label: string | null; fade?: boolean }) {
   return (
-    <button onClick={() => onOpen(m.id)} className={cx("panel block w-full px-3 py-2 text-left transition-opacity hover:border-cyan/60", label && "anim-pulse", fade && "opacity-60", m.status === "forgotten" && "border-dashed")}>
+    <button onClick={() => onOpen(m.id)} className={cx("panel block w-full px-3 py-2 text-left transition-opacity hover:border-accent/60", label && "anim-pulse", fade && "opacity-60", m.status === "forgotten" && "border-dashed")}>
       <div className="flex items-start justify-between gap-2">
         <p className={cx("text-sm", m.status === "forgotten" && "italic text-muted")}>{m.text ?? m.note}</p>
         <span className="text-2xs tabular text-muted">#{m.seq}</span>
@@ -131,7 +131,7 @@ function Row({ m, onOpen, label, fade }: { m: RecallMemory; onOpen: (id: string)
       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-2xs text-muted">
         <span>{m.agentName} · {when(m.createdAt)}</span>
         {m.conflict && m.status === "active" && <Pill tone="conflict">conflict</Pill>}
-        {label && <Pill tone={label.startsWith("new") ? "cyan" : label.startsWith("forgotten") ? "forgotten" : "superseded"}>{label}</Pill>}
+        {label && <Pill tone={label.startsWith("new") ? "accent" : label.startsWith("forgotten") ? "forgotten" : "superseded"}>{label}</Pill>}
       </div>
     </button>
   );
@@ -158,7 +158,7 @@ function Timeline({ start, end, pos, onChange, ticks }: { start: number; end: nu
       <div className="absolute inset-x-0 top-10 h-px bg-line-2" />
       {ticks.map((t) => {
         const tall = t.superseding || t.op === "forget" || t.op === "link";
-        const color = t.op === "forget" ? "bg-muted" : t.op === "link" ? "bg-gold" : t.superseding ? "bg-cyan" : "bg-line-2";
+        const color = t.op === "forget" ? "bg-muted" : t.op === "link" ? "bg-gold" : t.superseding ? "bg-accent" : "bg-line-2";
         return <span key={t.seq} className={cx("absolute w-px", color)} style={{ left: `${frac(Date.parse(t.at)) * 100}%`, top: tall ? 22 : 32, height: tall ? 36 : 16 }} title={`#${t.seq} ${t.op} ${when(t.at)}`} />;
       })}
       <div className="absolute inset-y-0 left-0 bg-gold/5" style={{ width: `${frac(pos) * 100}%` }} />

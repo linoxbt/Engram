@@ -36,10 +36,10 @@ export default function ConflictsPage() {
             <div className="grid gap-3 p-4 md:grid-cols-2">
               {[p.a, p.b].map((s, i) => (
                 <div key={s.id} className="panel flex flex-col p-3">
-                  <div className="flex items-center justify-between text-2xs text-muted"><span>{i === 0 ? "A" : "B"} · #{s.seq}</span><button className="text-cyan hover:underline" onClick={() => open(s.id)}>details</button></div>
+                  <div className="flex items-center justify-between text-2xs text-muted"><span>{i === 0 ? "A" : "B"} · #{s.seq}</span><button className="text-accent hover:underline" onClick={() => open(s.id)}>details</button></div>
                   <p className="mt-2 flex-1 text-sm">{s.text}</p>
                   <div className="mt-2 flex flex-wrap gap-1.5 text-2xs text-muted">
-                    <span>{s.agentName}</span><span>· {when(s.createdAt)}</span>{s.source && <Pill tone="cyan">{s.source}</Pill>}<span>· importance {s.importance}</span>
+                    <span>{s.agentName}</span><span>· {when(s.createdAt)}</span>{s.source && <Pill tone="accent">{s.source}</Pill>}<span>· importance {s.importance}</span>
                   </div>
                   <Button className="mt-3" variant="outline" loading={busy === (i === 0 ? p.b.id + p.a.id : p.a.id + p.b.id) && resolve.variables?.action === "supersede"}
                     onClick={() => resolve.mutate({ winnerId: s.id, loserId: i === 0 ? p.b.id : p.a.id, action: "supersede" })}>

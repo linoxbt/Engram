@@ -9,7 +9,7 @@ export function CopyCommand({ command }: { command: string }) {
         <span className="size-2.5 rounded-full bg-tamper/70" /><span className="size-2.5 rounded-full bg-warn/70" /><span className="size-2.5 rounded-full bg-valid/70" />
         <span className="ml-3 font-mono text-[11px] text-muted">terminal</span>
         <button onClick={async () => { try { await navigator.clipboard.writeText(command); setDone(true); setTimeout(() => setDone(false), 1400); } catch { /* blocked */ } }}
-          className="ml-auto font-mono text-[11px] text-cyan hover:underline">{done ? "copied" : "copy"}</button>
+          className="ml-auto font-mono text-[11px] text-accent hover:underline">{done ? "copied" : "copy"}</button>
       </div>
       <pre className="overflow-x-auto px-4 py-4 font-mono text-[12.5px] leading-relaxed"><code><span className="text-muted">$ </span>{command}</code></pre>
     </div>

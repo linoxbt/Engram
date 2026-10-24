@@ -109,7 +109,7 @@ export default function ChainPage() {
         <>
           <div className="flex rounded-[2px] border border-line-2 text-xs" role="group" aria-label="Verification mode">
             {(["standard", "deep"] as const).map((m) => (
-              <button key={m} onClick={() => setMode(m)} aria-pressed={mode === m} className={cx("px-3 py-1.5", mode === m ? "bg-panel-2 text-cyan" : "text-muted hover:text-text")}>{m}</button>
+              <button key={m} onClick={() => setMode(m)} aria-pressed={mode === m} className={cx("px-3 py-1.5", mode === m ? "bg-panel-2 text-accent" : "text-muted hover:text-text")}>{m}</button>
             ))}
           </div>
           {(info.data?.signing.inline || info.data?.signing.function) && <Button variant="gold" onClick={() => seal.mutate()} loading={seal.isPending}><IconSeal /> Seal now</Button>}
@@ -126,8 +126,8 @@ export default function ChainPage() {
             <ChainStrip blocks={blocks} checkpoints={cpSizes} states={states} focusSeq={focus} onOpen={(seq) => open(`m_${space}_${String(seq).padStart(12, "0")}`)} />
           ) : <p className="text-xs text-muted">The chain is empty.</p>}
           <div className="mt-3 flex flex-wrap gap-4 text-2xs text-muted">
-            <span className="flex items-center gap-1.5"><span className="inline-block size-3 rounded-[2px] border-2 border-cyan bg-cyan/10" /> memory</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block size-3 rounded-[2px] border-2 border-cyan/40" /> superseded</span>
+            <span className="flex items-center gap-1.5"><span className="inline-block size-3 rounded-[2px] border-2 border-accent bg-accent/10" /> memory</span>
+            <span className="flex items-center gap-1.5"><span className="inline-block size-3 rounded-[2px] border-2 border-accent/40" /> superseded</span>
             <span className="flex items-center gap-1.5"><span className="inline-block size-3 rounded-[2px] border-2 border-violet" /> summary</span>
             <span className="flex items-center gap-1.5"><span className="inline-block size-3 rounded-[2px] border border-dashed border-muted" /> forget</span>
             <span className="flex items-center gap-1.5"><span className="inline-block size-3 rounded-[2px] border border-line-2" /> link</span>
@@ -155,8 +155,8 @@ export default function ChainPage() {
               <tbody>
                 {report.findings.map((f, i) => (
                   <tr key={i} className="border-t border-line align-top hover:bg-panel-2">
-                    <td className="px-4 py-2"><Pill tone={f.severity === "critical" ? "tampered" : f.severity === "warning" ? "warning" : "cyan"}>{f.severity}</Pill></td>
-                    <td className="px-2 py-2 tabular"><button className="text-cyan hover:underline" onClick={() => { setFocus(f.seq); open(`m_${space}_${String(f.seq).padStart(12, "0")}`); }}>#{f.seq}</button></td>
+                    <td className="px-4 py-2"><Pill tone={f.severity === "critical" ? "tampered" : f.severity === "warning" ? "warning" : "accent"}>{f.severity}</Pill></td>
+                    <td className="px-2 py-2 tabular"><button className="text-accent hover:underline" onClick={() => { setFocus(f.seq); open(`m_${space}_${String(f.seq).padStart(12, "0")}`); }}>#{f.seq}</button></td>
                     <td className="px-2 py-2 text-muted">{f.rule}</td>
                     <td className="px-2 py-2">{f.message}</td>
                   </tr>
@@ -183,7 +183,7 @@ export default function ChainPage() {
                       <td className="px-2 py-2"><code title={c.root}>{shortHash(c.root)}</code></td>
                       <td className="px-2 py-2 text-muted">{when(c.createdAt)}</td>
                       <td className="px-2 py-2">{!pub ? <span className="text-muted">no key</span> : sigs.get(c.seq) == null ? "…" : sigs.get(c.seq) ? <span className="text-valid"><IconTick className="inline" /> valid</span> : <span className="text-tamper"><IconCross className="inline" /> invalid</span>}</td>
-                      <td className="px-2 py-2">{c.anchor ? <a className="inline-flex items-center gap-1 text-cyan hover:underline" href={`https://github.com/${c.anchor.repo}/commit/${c.anchor.commit}`} target="_blank" rel="noreferrer">GitHub <IconExternal size={11} /></a> : <span className="text-muted">—</span>}</td>
+                      <td className="px-2 py-2">{c.anchor ? <a className="inline-flex items-center gap-1 text-accent hover:underline" href={`https://github.com/${c.anchor.repo}/commit/${c.anchor.commit}`} target="_blank" rel="noreferrer">GitHub <IconExternal size={11} /></a> : <span className="text-muted">—</span>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -198,7 +198,7 @@ export default function ChainPage() {
             ) : <p className="text-warn">No public key configured. Set NEXT_PUBLIC_CP_PUBLIC_KEY to let verifiers check signatures.</p>}
             <p className="text-muted">Key ID {info.data?.keyId}. The signing key never touches the database; only the checkpoint Function holds it.</p>
             {info.data?.settings.publicVerify ? (
-              <Link href={`/verify/${space}`} className="inline-flex items-center gap-1 text-cyan hover:underline">Open the public verifier <IconExternal size={11} /></Link>
+              <Link href={`/verify/${space}`} className="inline-flex items-center gap-1 text-accent hover:underline">Open the public verifier <IconExternal size={11} /></Link>
             ) : <p className="text-muted">Public verification is off. Turn it on in Settings to share a no-login verifier.</p>}
           </div>
         </Card>

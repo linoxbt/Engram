@@ -63,7 +63,7 @@ export default function SettingsPage() {
         <div className="grid gap-5 p-4 md:grid-cols-2">
           {RANGES.map((r) => (
             <Field key={r.key} label={`${r.label}: ${nums[r.key]}`} help={r.help}>
-              <input type="range" min={r.min} max={r.max} step={r.step} value={nums[r.key]} disabled={!owner} className="w-full accent-[#00c2d1]"
+              <input type="range" min={r.min} max={r.max} step={r.step} value={nums[r.key]} disabled={!owner} className="w-full accent-[#0a0a0a]"
                 onChange={(e) => setNums({ ...nums, [r.key]: Number(e.target.value) })} />
             </Field>
           ))}
@@ -93,7 +93,7 @@ export default function SettingsPage() {
 
       <Card title="Data">
         <div className="flex flex-wrap gap-3 p-4">
-          <a href={`/api/app/spaces/${space}/export`} className="inline-flex h-9 items-center rounded-[2px] border border-line-2 px-3.5 text-sm hover:border-cyan hover:text-cyan">Export JSON</a>
+          <a href={`/api/app/spaces/${space}/export`} className="inline-flex h-9 items-center rounded-[2px] border border-line-2 px-3.5 text-sm hover:border-accent hover:text-accent">Export JSON</a>
           {owner && <Button onClick={() => repair.mutate()} loading={repair.isPending}>Rebuild derived state</Button>}
           <p className="w-full text-2xs text-muted">Rebuild replays the chain and rewrites status, validity and conflict fields that disagree with it, and finishes any pending erasure. It never touches hashed fields. Run it only after reviewing verifier warnings: it removes the evidence of a derived-field tamper.</p>
         </div>

@@ -78,7 +78,7 @@ export default function MemoriesPage() {
         <div className="flex flex-wrap gap-1" role="group" aria-label="Kinds">
           {KINDS.map((k) => (
             <button key={k} onClick={() => setKinds((ks) => ks.includes(k) ? ks.filter((x) => x !== k) : [...ks, k])} aria-pressed={kinds.includes(k)}
-              className={`h-7 rounded-[2px] border px-2 text-2xs uppercase tracking-wider ${kinds.includes(k) ? "border-cyan text-cyan" : "border-line-2 text-muted hover:text-text"}`}>{k}</button>
+              className={`h-7 rounded-[2px] border px-2 text-2xs uppercase tracking-wider ${kinds.includes(k) ? "border-accent text-accent" : "border-line-2 text-muted hover:text-text"}`}>{k}</button>
           ))}
         </div>
         <Select aria-label="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} className="h-7 text-xs">
@@ -151,7 +151,7 @@ function AddMemory({ open, onClose, space, onDone }: { open: boolean; onClose: (
           <Field label="Subject" help='Like "customer:ada"'><Input value={subject} onChange={(e) => setSubject(e.target.value.toLowerCase())} pattern="[a-z0-9_-]+:[a-z0-9_.-]+" placeholder="customer:ada" /></Field>
           <Field label="Kind"><Select value={kind} onChange={(e) => setKind(e.target.value)} className="w-full">{KINDS.slice(0, 4).map((k) => <option key={k}>{k}</option>)}</Select></Field>
         </div>
-        <Field label={`Importance: ${importance}`}><input type="range" min={0} max={10} value={importance} onChange={(e) => setImportance(Number(e.target.value))} className="w-full accent-[#00c2d1]" /></Field>
+        <Field label={`Importance: ${importance}`}><input type="range" min={0} max={10} value={importance} onChange={(e) => setImportance(Number(e.target.value))} className="w-full accent-[#0a0a0a]" /></Field>
         <ErrorNote error={m.error} />
         <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={m.isPending}>Remember</Button></div>
       </form>

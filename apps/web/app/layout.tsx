@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 // cannot hydrate <head> with those extra nodes, so they are removed before the app's scripts run.
 const STRIP_HOST_INJECTIONS = `(function(){var h=document.head;if(!h)return;for(var n=h.firstChild;n;){var x=n.nextSibling;if(n.nodeType===8||(n.nodeType===3&&!n.textContent.trim()))h.removeChild(n);n=x;}})();`;
 
-export const viewport: Viewport = { themeColor: "#0a0e13", width: "device-width", initialScale: 1 };
+export const viewport: Viewport = { themeColor: "#ffffff", width: "device-width", initialScale: 1 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

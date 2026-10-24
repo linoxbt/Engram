@@ -66,7 +66,7 @@ export function SpaceShell({ spaceKey, children }: { spaceKey: string; children:
                 const active = n.exact ? pathname === n.href : pathname.startsWith(n.href);
                 return (
                   <Link key={n.href} href={n.href} aria-current={active ? "page" : undefined}
-                    className={clsx("mb-0.5 flex items-center gap-2.5 rounded-[2px] px-2.5 py-2 text-xs", active ? "bg-panel-2 text-cyan" : "text-muted hover:bg-panel-2 hover:text-text")}>
+                    className={clsx("mb-0.5 flex items-center gap-2.5 rounded-[2px] px-2.5 py-2 text-xs", active ? "bg-panel-2 text-accent" : "text-muted hover:bg-panel-2 hover:text-text")}>
                     <n.icon /> <span className="flex-1">{n.label}</span>
                     {n.badge ? <span className="rounded-[2px] bg-tamper/20 px-1.5 text-2xs text-tamper">{n.badge}</span> : null}
                   </Link>

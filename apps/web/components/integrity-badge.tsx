@@ -15,7 +15,7 @@ export function IntegrityBadge({ integrity, checkpoint, size = "md", onVerify }:
     return (
       <div className={clsx("inline-flex items-center gap-2 rounded-[2px] border border-line-2 px-2 text-muted", size === "lg" ? "py-3" : "h-7 text-xs")}>
         <IconShield /> Not verified yet
-        {onVerify && <button onClick={onVerify} className="text-cyan hover:underline">verify now</button>}
+        {onVerify && <button onClick={onVerify} className="text-accent hover:underline">verify now</button>}
       </div>
     );
   }
@@ -37,7 +37,7 @@ export function IntegrityBadge({ integrity, checkpoint, size = "md", onVerify }:
             ? `${integrity.entries} entries.${checkpoint ? ` Signed ${when(checkpoint.createdAt)}.` : ""} Checked ${ago(integrity.checkedAt)}.`
             : `${integrity.firstFinding ?? ""} Checked ${ago(integrity.checkedAt)}.`}
         </p>
-        {onVerify && <button onClick={onVerify} className="mt-2 text-xs text-cyan hover:underline">Run verification in this browser →</button>}
+        {onVerify && <button onClick={onVerify} className="mt-2 text-xs text-accent hover:underline">Run verification in this browser →</button>}
       </div>
     );
   }
