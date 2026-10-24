@@ -1,0 +1,36 @@
+{
+  "name": "@engram/web",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@engram/core": "workspace:*",
+    "@engram/server": "workspace:*",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "@tanstack/react-query": "^5.104.5",
+    "appwrite": "^29.1.0",
+    "clsx": "^2.1.1",
+    "d3-force": "^3.0.0",
+    "mcp-handler": "^2.3.0",
+    "next": "^16.4.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/d3-force": "^3.0.10",
+    "@types/node": "^22.19.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~5.9.3"
+  }
+}
