@@ -1,4 +1,5 @@
-# Netlify: Next.js on the OpenNext runtime (installed automatically), pnpm workspace.
+# Netlify: Next.js on the OpenNext runtime, pnpm workspace. The runtime plugin is
+# declared explicitly because upload-triggered builds don't auto-install it.
 [build]
   base = "apps/web"
   command = "pnpm run build"
@@ -7,3 +8,6 @@
 [build.environment]
   NODE_VERSION = "22"
   NEXT_TELEMETRY_DISABLED = "1"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

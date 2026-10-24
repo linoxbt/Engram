@@ -60,7 +60,8 @@ export function getConfig(): EngramConfig {
     },
     vectorFilters: bool("ENGRAM_VECTOR_FILTERS", true),
     embedPrefixes: bool("ENGRAM_EMBED_PREFIXES", true),
-    localDataDir: env("ENGRAM_LOCAL_DIR") ?? ".engram-local",
+    // Serverless filesystems are read-only outside /tmp; there the local backend is ephemeral.
+    localDataDir: env("ENGRAM_LOCAL_DIR") ?? (env("AWS_LAMBDA_FUNCTION_NAME") || env("NETLIFY") ? "/tmp/engram-local" : ".engram-local"),
     classifierModel: env("CLASSIFIER_MODEL"),
     modelApiKey: env("MODEL_API_KEY"),
     anthropicWorkspaceId: env("ANTHROPIC_WORKSPACE_ID"),
