@@ -39,14 +39,18 @@ export const IconSidebar = (p: P) => <svg {...base(p)}><rect x="2" y="2.5" width
 export const IconChevron = (p: P) => <svg {...base(p)}><path d="M10 3.5L5.5 8l4.5 4.5" /></svg>;
 
 /**
- * The Engram mark: an E drawn as three entries on one spine (the hash chain). The middle entry
- * ends in a gold seal, the signed head. Black tile, so it reads the same at 16px as in a header.
+ * The Engram mark: two rings of memory around a gold seal. Each ring is open at a different angle,
+ * so the mark reads as a vault dial and as layers of time closing in on a sealed core (the signed
+ * Merkle root). `tile` is the app-icon form: white rings on a black tile.
  */
-export const IconLogo = ({ size = 22, ...p }: P) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden {...p}>
-    <rect width="24" height="24" rx="6.5" fill="#0a0a0a" />
-    <path d="M8.25 6.75v10.5M8.25 6.75h8M8.25 12h4.75M8.25 17.25h8" stroke="#ffffff" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="16.6" cy="12" r="1.85" fill="#d9b44a" />
+export const IconLogo = ({ size = 24, tile = false, ...p }: P & { tile?: boolean }) => (
+  <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden {...p}>
+    {tile && <rect width="48" height="48" rx="12" fill="#0a0a0a" />}
+    <g transform={tile ? "translate(6.7 6.7) scale(0.72)" : undefined} stroke={tile ? "#ffffff" : "currentColor"} strokeWidth="5" strokeLinecap="round">
+      <path d="M39.59 15A18 18 0 1 1 27.13 6.27" />
+      <path d="M15.17 29.1A10.2 10.2 0 1 1 22.23 34.05" />
+    </g>
+    <circle cx="24" cy="24" r={tile ? 2.9 : 4} fill="#d9b44a" />
   </svg>
 );
 
@@ -54,8 +58,8 @@ export const IconLogo = ({ size = 22, ...p }: P) => (
 export function Wordmark({ size = 22, className = "" }: { size?: number; className?: string }) {
   return (
     <span className={`inline-flex items-center gap-2.5 ${className}`}>
-      <IconLogo size={size} />
-      <span className={`font-sans font-semibold tracking-[-0.02em] text-text ${size >= 22 ? "text-[17px]" : "text-[15px]"}`}>engram</span>
+      <IconLogo size={size} className="text-text" />
+      <span className={`font-sans font-semibold tracking-[-0.03em] text-text ${size >= 22 ? "text-[18px]" : "text-[16px]"}`}>engram</span>
     </span>
   );
 }
