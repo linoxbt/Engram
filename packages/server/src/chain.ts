@@ -81,6 +81,8 @@ export interface Draft {
   createdAt?: string;
   /** Override the acting agent (seed routes write as several agents). */
   agent?: string;
+  /** Extra operational derived fields, not checked by the verifier (classifier reasons, summary sources). */
+  extra?: Record<string, unknown>;
 }
 
 export interface Appended { id: string; seq: number; hash: string; meta: EntryMeta; derivedPending: boolean }
@@ -105,7 +107,12 @@ async function loadInvolved(b: Backend, refs: Refs): Promise<Map<string, MemDoc>
   return docs;
 }
 
-export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
+export interface AppendOptions {
+  /** The caller applied pending entries just before (remember does, in parallel with its other reads). */
+  pendingChecked?: boolean;
+}
+
+export async function append(ctx: Ctx, draft: Draft, opts: AppendOptions = {}): Promise<Appended> {
   const { b, space } = ctx;
   const refs: Refs = { ...emptyRefs(), ...draft.refs };
   const vector = draft.vector ?? tombstoneVector(COLLECTION_DIMS.memories);
@@ -120,13 +127,13 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
   // Hashed into the header, so one canonical form: 24-char UTC ISO.
   const validFrom = draft.validFrom ? Date.parse(draft.validFrom) : null;
   if (validFrom !== null && !(Number.isFinite(validFrom) && validFrom >= 0 && validFrom < 253402300800000)) throw new EngramError("bad_request", `validFrom ${draft.validFrom} is not a valid date.`);
+  const hasEffects = involvedIds(refs).length > 0;
 
   for (let attempt = 0; attempt < 8; attempt++) {
-    await applyPending(ctx);
-    const head = await chainHead(b, space.key);
-    // An entry created after applyPending looked may still be pending; its effects must land before we read
-    // the derived state of the memories we touch.
-    if (head && head.metadata.applied === "false") await updateNeighbours(ctx, head.$id, head.metadata.h).catch(() => false);
+    // Helping: earlier entries' effects land before we read the state of the memories we touch. Correctness does
+    // not depend on it (our own update below waits for them, in chain order), but it keeps a backlog from growing.
+    if (attempt > 0 || !opts.pendingChecked) await applyPending(ctx);
+    const [head, involved] = await Promise.all([chainHead(b, space.key), loadInvolved(b, refs)]);
     const seq = head ? seqOf(head.$id) + 1 : 0;
     const prevHash = head ? head.metadata.hash : await genesis(space.key);
     const headAt = head?.metadata.createdAt ?? "";
@@ -158,28 +165,49 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
     const hash = await headerHash(h);
     const id = entryId(space.key, seq);
 
-    const involved = await loadInvolved(b, refs);
+    // Our own derived state, from the neighbours read above. If an earlier pending entry changes them, the update
+    // below repairs our side (a partner retired before our update landed is dropped from our conflicts).
     const state = new Map<string, DerivedState>();
     for (const [k, d] of involved) state.set(k, toState(d.metadata));
     applyEntry(state, id, h);
     const mine = state.get(id)!;
-    const d = { ...initialDerived(draft.op), ...mine, contradictedBy: [...mine.contradictedBy], relateStatus: draft.relateStatus ?? "done" };
-    const meta = buildMeta({ h, hash, c: { text: draft.text, salt: draft.text == null ? null : salt }, d, idem: draft.idem ?? null, applied: involvedIds(refs).length ? "false" : "true" });
+    const d = { ...initialDerived(draft.op), ...mine, contradictedBy: [...mine.contradictedBy], relateStatus: draft.relateStatus ?? "done", ...(draft.extra ?? {}) };
+    const meta = buildMeta({ h, hash, c: { text: draft.text, salt: draft.text == null ? null : salt }, d, idem: draft.idem ?? null, applied: hasEffects ? "false" : "true" });
 
-    try {
-      await b.vectors.create<EntryMeta>("memories", id, { embeddings: vector, metadata: meta }, perms);
-    } catch (e) {
-      if (!isConflict(e)) throw e;
+    // Entries before ours that may still be pending are read alongside the create: they all exist already,
+    // because ours builds on the head that follows them.
+    const [created, before] = await Promise.all([
+      b.vectors.create<EntryMeta>("memories", id, { embeddings: vector, metadata: meta }, perms).then((doc) => ({ doc, err: null as unknown }), (err: unknown) => ({ doc: null, err })),
+      hasEffects ? pendingPage(ctx).catch(() => null) : Promise.resolve([] as MemDoc[]),
+    ]);
+    let self: MemDoc | null = created.doc;
+    if (created.err) {
+      if (!isConflict(created.err)) throw created.err;
       // A timed-out create may have succeeded: if the stored entry is ours, we are done.
       const existing = await b.vectors.get<EntryMeta>("memories", id);
       if (existing?.metadata.hash !== hash) { await jitter(); continue; }
+      self = existing;
     }
+    if (!hasEffects) return { id, seq, hash, meta, derivedPending: false };
+
     let ok = false;
     try {
-      ok = await updateNeighbours(ctx, id, h);
+      // Strict chain order: entries before ours land first. If one cannot, ours stays pending and the next writer
+      // applies both, in order. Applying ours first could leave state that the replay disagrees with.
+      const earlier = before ? before.filter((p) => p.$id < id) : null;
+      if (earlier && before!.length < PENDING_PAGE) {
+        ok = true;
+        for (const p of earlier) if (!(await applyOne(ctx, p.$id, p.metadata.h))) { ok = false; break; }
+        // Our neighbours were read before the create; any earlier entry applied since makes that copy stale.
+        const fresh = !earlier.length && self && self.$updatedAt ? { docs: involved, self } : undefined;
+        if (ok) ok = await updateNeighbours(ctx, id, h, 5, fresh);
+      } else {
+        ok = !(await applyPending(ctx, { through: id })).blocked;
+      }
     } catch (e) {
       // The entry is committed; its effects stay pending and the next writer applies them.
       console.error(`[engram] neighbour update for ${id} failed; left pending`, e);
+      ok = false;
     }
     return { id, seq, hash, meta, derivedPending: !ok };
   }
@@ -189,12 +217,16 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
 /**
  * Apply an entry's effect to the derived fields of the memories it touches.
  * Idempotent: re-applying an entry that already took effect changes nothing.
+ * Callers keep chain order: an entry is applied only after every earlier one (see applyPending).
+ * `preload`: documents the caller has just read, used for the first attempt only (a stale copy fails the
+ * conditional write and the next attempt re-reads).
  */
-export async function updateNeighbours(ctx: Ctx, id: string, h: Header, attempts = 5): Promise<boolean> {
+export async function updateNeighbours(ctx: Ctx, id: string, h: Header, attempts = 5, preload?: { docs: Map<string, MemDoc>; self: MemDoc }): Promise<boolean> {
   const { b } = ctx;
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const docs = await loadInvolved(b, h.refs);
-    const self = await b.vectors.get<EntryMeta>("memories", id);
+    const [docs, self] = attempt === 0 && preload
+      ? [preload.docs, preload.self]
+      : await Promise.all([loadInvolved(b, h.refs), b.vectors.get<EntryMeta>("memories", id)]);
     const state = new Map<string, DerivedState>();
     for (const [k, d] of docs) state.set(k, toState(d.metadata));
     const changed = applyEntry(state, id, h);
@@ -207,7 +239,7 @@ export async function updateNeighbours(ctx: Ctx, id: string, h: Header, attempts
       const before = JSON.stringify(toState(doc.metadata));
       if (before === JSON.stringify(st) && !(st.status === "forgotten" && doc.metadata.c.text != null)) continue;
       const erase = st.status === "forgotten";
-      const metadata = patchMeta(doc.metadata, { ...st, contradictedBy: [...st.contradictedBy] }, erase ? { text: null, salt: null } : undefined);
+      const metadata = patchMeta(doc.metadata, { ...st, contradictedBy: [...st.contradictedBy], ...(erase ? ERASED_NOTES : {}) }, erase ? { text: null, salt: null } : undefined);
       ops.push({
         action: "update", coll: "memories", id: cid, ifUpdatedAt: doc.$updatedAt,
         data: erase ? { metadata, embeddings: tombstoneVector(COLLECTION_DIMS.memories) } : { metadata },
@@ -239,24 +271,45 @@ export async function updateNeighbours(ctx: Ctx, id: string, h: Header, attempts
   return false;
 }
 
+/** Classifier reasons can quote memory text, so a forgotten memory's notes go with its text. */
+const ERASED_NOTES = { reasons: {} } as unknown as Partial<EntryMeta["d"]>;
+
+const PENDING_PAGE = 100;
+const pendingPage = (ctx: Ctx, cursorAfter?: string) => ctx.b.vectors.query<EntryMeta>("memories", {
+  filters: [{ op: "eq", path: "metadata.space", values: [ctx.space.key] }, { op: "eq", path: "metadata.applied", values: ["false"] }],
+  order: { field: "$id", dir: "asc" },
+  limit: PENDING_PAGE,
+  cursorAfter,
+  withVectors: false,
+});
+
+async function applyOne(ctx: Ctx, id: string, h: Header, attempts?: number): Promise<boolean> {
+  try { return await updateNeighbours(ctx, id, h, attempts); }
+  catch (e) { console.error(`[engram] could not apply pending entry ${id}`, e); return false; }
+}
+
 /**
- * Helping: apply the effects of earlier entries whose neighbour updates never
- * committed (a crashed instance, a lost race), oldest first, before this writer
- * reads any derived state. Idempotent, so concurrent helpers are safe.
+ * Helping: apply the effects of entries whose neighbour updates never committed (a crashed instance, a lost
+ * race), strictly in chain order, before this writer reads any derived state. Derived state is a fold over the
+ * chain and the fold is order-sensitive (when two entries supersede one memory, the earlier one wins), so the
+ * pass stops at the first entry that does not land: applying a later one first would leave state the replay
+ * disagrees with. Idempotent, so concurrent helpers are safe. With `through`, later entries are left alone.
  */
-export async function applyPending(ctx: Ctx): Promise<number> {
-  const pending = await ctx.b.vectors.query<EntryMeta>("memories", {
-    filters: [{ op: "eq", path: "metadata.space", values: [ctx.space.key] }, { op: "eq", path: "metadata.applied", values: ["false"] }],
-    order: { field: "$id", dir: "asc" },
-    limit: 25,
-    withVectors: false,
-  });
-  let n = 0;
-  for (const p of pending) {
-    try { if (await updateNeighbours(ctx, p.$id, p.metadata.h)) n++; }
-    catch (e) { console.error(`[engram] could not apply pending entry ${p.$id}`, e); break; }
+export async function applyPending(ctx: Ctx, opts: { through?: string; attempts?: number } = {}): Promise<{ applied: number; blocked: boolean }> {
+  let applied = 0;
+  let cursor: string | undefined;
+  // Bounded: a backlog this long is a job for repair, not for one request.
+  for (let pages = 0; pages < 50; pages++) {
+    const page = await pendingPage(ctx, cursor);
+    for (const p of page) {
+      if (opts.through && p.$id > opts.through) return { applied, blocked: false };
+      if (!(await applyOne(ctx, p.$id, p.metadata.h, opts.attempts))) return { applied, blocked: true };
+      applied++;
+    }
+    if (page.length < PENDING_PAGE) return { applied, blocked: false };
+    cursor = page[page.length - 1].$id;
   }
-  return n;
+  return { applied, blocked: true };
 }
 
 /** Patch derived fields of one entry without touching the chain (access counts, concept, relate status). */

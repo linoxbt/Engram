@@ -1,5 +1,5 @@
 /** remember: embed, find neighbours, relate, append to the chain, then post-commit work. */
-import { count8, iso, seqOf, sha256Hex, type EntryMeta } from "@engram/core";
+import { count8, iso, randomSalt, seqOf, sha256Hex, type EntryMeta } from "@engram/core";
 import { agentNames, bumpAgentStats, requireScope } from "./agents";
 import { append, applyPending, patchDerived, type MemDoc } from "./chain";
 import { assignConcept } from "./concepts";
@@ -7,7 +7,7 @@ import { requestCheckpoint } from "./checkpoints";
 import type { Ctx } from "./context";
 import { embedDocument } from "./embed";
 import { EngramError, isConflict } from "./errors";
-import { effective, relate, THRESHOLDS, type Neighbour, type Relation, type RelationKind } from "./relate";
+import { effective, modelFor, relate, THRESHOLDS, type Neighbour, type Relation, type RelationKind } from "./relate";
 import { RememberInput } from "./schemas";
 import type { Filter } from "./backend/types";
 
@@ -59,7 +59,7 @@ export async function remember(ctx: Ctx, raw: unknown, opts: RememberOptions = {
     throw new EngramError("too_large", "Memories are limited to 2,000 characters. Split long text into several self-contained memories.");
   }
   const input = RememberInput.parse(raw);
-  const { b, space } = ctx;
+  const { b } = ctx;
 
   // Idempotency keys belong to the agent that sent them; another agent's key never matches.
   const actor = opts.agent ?? ctx.actor;
@@ -68,62 +68,90 @@ export async function remember(ctx: Ctx, raw: unknown, opts: RememberOptions = {
     const [hit] = await b.vectors.query<EntryMeta>("memories", { filters: [spaceF(ctx), { op: "eq", path: "metadata.idem", values: [idem!] }], limit: 1, withVectors: false });
     return hit ? { id: hit.$id, seq: seqOf(hit.$id), hash: hit.metadata.hash, status: "created" as const, relations: refsAsRelations(hit.metadata), relateStatus: hit.metadata.d.relateStatus } : null;
   };
-  if (idem) {
-    const hit = await replay();
-    if (hit) return hit;
-  }
-  if (!opts.createdAt) await enforceRate(ctx);
-  // Two retries racing each other would both miss the lookup above; a create-first lock lets only one write.
-  const lock = idem ? await takeIdemLock(ctx, idem, replay) : null;
+
+  // Independent round trips run side by side: the idempotency lock (then the replay check under it), the rate
+  // limit, the embedding, and applying earlier pending entries, which must land before neighbours' status is read.
+  // Two retries racing each other would both miss a plain lookup; the create-first lock lets only one write.
+  const [lockR, rateR, vecR, pendR] = await Promise.allSettled([
+    idem ? takeIdemLock(ctx, idem, replay) : Promise.resolve(null),
+    opts.createdAt ? Promise.resolve() : enforceRate(ctx),
+    opts.vector ? Promise.resolve(opts.vector) : embedDocument(ctx, input.text),
+    applyPending(ctx),
+  ]);
+  if (lockR.status === "rejected") throw lockR.reason;
+  const lock = lockR.value;
+  // A retry of a write that already landed gets its result back, even past the rate limit.
   if (lock && "id" in lock) return lock;
   try {
-    return await write(ctx, input, opts, idem);
-  } finally {
+    for (const r of [rateR, vecR, pendR]) if (r.status === "rejected") throw r.reason;
+    const result = await write(ctx, input, opts, idem, (vecR as PromiseFulfilledResult<number[]>).value);
+    // Releasing after the response is safe: until then a retry finds the lock, then the entry.
+    if (lock) ctx.defer(() => lock.release());
+    return result;
+  } catch (e) {
     if (lock) await lock.release();
+    throw e;
   }
 }
 
+const sameBytes = (a: Uint8Array | null, b: Uint8Array) => !!a && a.length === b.length && a.every((x, i) => x === b[i]);
+
 async function takeIdemLock(ctx: Ctx, idem: string, replay: () => Promise<RememberResult | null>): Promise<{ release: () => Promise<void> } | RememberResult> {
+  const { files } = ctx.b;
   const bucket = ctx.cfg.appwrite.checkpointsBucket;
   const fileId = `idm_${ctx.space.key}_${(await sha256Hex(idem)).slice(0, 24)}`;
-  const release = () => ctx.b.files.delete(bucket, fileId).catch(() => undefined);
+  // A token per holder: release deletes the lock only while it is still ours. A lock judged stale and reclaimed
+  // by another writer belongs to that writer, and deleting it would let a third writer in beside it.
+  const body = new TextEncoder().encode(JSON.stringify({ at: iso(), token: randomSalt() }));
+  const release = async () => {
+    const cur = await files.get(bucket, fileId).catch(() => null);
+    if (sameBytes(cur, body)) await files.delete(bucket, fileId).catch(() => undefined);
+  };
   for (let attempt = 0; attempt < 20; attempt++) {
     try {
-      await ctx.b.files.put(bucket, fileId, `${fileId}.json`, new TextEncoder().encode(JSON.stringify({ at: iso() })), ctx.b.teamRead(ctx.space.teamId));
-      return { release };
+      await files.put(bucket, fileId, `${fileId}.json`, body, ctx.b.teamRead(ctx.space.teamId));
     } catch (e) {
       if (!isConflict(e)) throw e;
       const hit = await replay();
       if (hit) return hit;
       // A writer that died holding the lock must not block the key forever.
-      const raw = await ctx.b.files.get(bucket, fileId);
+      const raw = await files.get(bucket, fileId);
+      if (!raw) continue;
       let at = 0;
-      try { at = raw ? Date.parse(JSON.parse(new TextDecoder().decode(raw)).at) : 0; } catch { at = 0; }
-      if (Date.now() - at > 60_000) { await release(); continue; }
+      try { at = Date.parse(JSON.parse(new TextDecoder().decode(raw)).at); } catch { at = 0; }
+      if (Date.now() - (at || 0) > 60_000) {
+        // Remove only the exact stale lock judged above, never a fresh one another writer took meanwhile.
+        if (sameBytes(await files.get(bucket, fileId), raw)) await files.delete(bucket, fileId).catch(() => undefined);
+        continue;
+      }
       await new Promise((r) => setTimeout(r, 150));
+      continue;
     }
+    // Acquired. The holder we waited for (or one that finished just before our create) may have written already.
+    const hit = await replay();
+    if (hit) { await release(); return hit; }
+    return { release };
   }
   throw new EngramError("chain_busy", "A request with this idempotency key is still in progress. Retry with the same key.");
 }
 
-async function write(ctx: Ctx, input: RememberInput, opts: RememberOptions, idem: string | null): Promise<RememberResult> {
+async function write(ctx: Ctx, input: RememberInput, opts: RememberOptions, idem: string | null, vector: number[]): Promise<RememberResult> {
   const { b, space } = ctx;
-
-  const vector = opts.vector ?? (await embedDocument(ctx, input.text));
-  // Earlier entries' effects must be in place before we look at neighbours' status.
-  await applyPending(ctx);
   const createdAt = opts.createdAt ?? iso();
   let relations: Relation[] = [];
   let relateStatus: RememberResult["relateStatus"] = "skipped";
+  const near = new Map<string, MemDoc>();
 
   if (opts.relations) {
     relations = opts.relations;
     relateStatus = "done";
   } else if (!opts.skipRelate) {
-    const near = await nearestActive(ctx, vector, 5, space.settings.neighbourDistance);
-    if (near.length) {
-      const names = await agentNames(b, near.map((n) => n.metadata.agent), space);
-      const neighbours: Neighbour[] = near.map((n) => ({
+    for (const n of await nearestActive(ctx, vector, 5, space.settings.neighbourDistance)) near.set(n.$id, n);
+    if (near.size) {
+      const docs = [...near.values()];
+      // Display names only go into the model's prompt; the rule-based classifier does not need the lookups.
+      const names = modelFor(ctx) ? await agentNames(b, docs.map((n) => n.metadata.agent), space) : {};
+      const neighbours: Neighbour[] = docs.map((n) => ({
         id: n.$id, text: n.metadata.c.text ?? "", createdAt: n.metadata.createdAt, agent: n.metadata.agent,
         agentName: names[n.metadata.agent] ?? n.metadata.agent, subject: n.metadata.subject, kind: n.metadata.kind, distance: n.$distance ?? 1,
       }));
@@ -139,7 +167,7 @@ async function write(ctx: Ctx, input: RememberInput, opts: RememberOptions, idem
   const eff = effective(relations);
   const dup = eff.find((r) => r.relation === "duplicate");
   if (dup) {
-    const doc = await b.vectors.get<EntryMeta>("memories", dup.id);
+    const doc = near.get(dup.id) ?? (await b.vectors.get<EntryMeta>("memories", dup.id));
     if (doc) {
       await patchDerived(b, dup.id, { access: count8(Number(doc.metadata.d.access) + 1), lastAccessAt: iso() });
       return { id: dup.id, seq: seqOf(dup.id), hash: doc.metadata.hash, status: "duplicate", relations: decorate(eff), relateStatus };
@@ -165,7 +193,7 @@ async function write(ctx: Ctx, input: RememberInput, opts: RememberOptions, idem
     relateStatus,
     createdAt: opts.createdAt,
     agent: opts.agent,
-  });
+  }, { pendingChecked: true });
 
   const actor = opts.agent ?? ctx.actor;
   ctx.defer(() => postCommit(ctx, res.id, res.seq, vector, actor, relateStatus === "pending" ? input : null));

@@ -1,7 +1,7 @@
 /** forget (provable erasure) and link entries (conflict resolution, late findings). */
 import { seqOf, tombstoneVector, type EntryMeta, type LinkKind } from "@engram/core";
 import { requireScope } from "./agents";
-import { append, updateNeighbours } from "./chain";
+import { append, applyPending } from "./chain";
 import { scrubConcept } from "./concepts";
 import { COLLECTION_DIMS, type Ctx } from "./context";
 import { EngramError, isEngramError } from "./errors";
@@ -34,8 +34,9 @@ export async function forget(ctx: Ctx, raw: unknown, opts: { createdAt?: string 
   let erased = !res.derivedPending;
   if (!erased) {
     // Erasure is a promise: keep trying in the background until it lands.
-    erased = await updateNeighbours(ctx, res.id, res.meta.h, 8);
-    if (!erased) ctx.defer(() => updateNeighbours(ctx, res.id, res.meta.h, 20));
+    // In chain order: earlier pending entries land first, so the erasure leaves the state the replay computes.
+    erased = !(await applyPending(ctx, { through: res.id, attempts: 8 })).blocked;
+    if (!erased) ctx.defer(() => applyPending(ctx, { through: res.id, attempts: 20 }));
   }
   // Text also lives on in places built from it: concept labels, reflect summaries and recall logs.
   await eraseCopies(ctx, input.id, m.d.concept ?? null).catch((e) => {
