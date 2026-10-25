@@ -114,6 +114,9 @@ test.describe.serial("signature path", () => {
   test("a forgotten password can be reset from the emailed link", async ({ page }) => {
     await page.goto("/login");
     await page.getByRole("link", { name: "Forgot password?" }).click();
+    // Pages render per request now (CSP nonce), so wait for the new page before filling its "Email" field,
+    // or the login page's field of the same name gets the text.
+    await page.waitForURL("**/forgot-password");
     await page.getByLabel("Email").fill(email);
     await page.getByRole("button", { name: "Send reset link" }).click();
     await expect(page.getByText(/a reset link is on its way/)).toBeVisible();
