@@ -20,6 +20,7 @@ export * from "./lab";
 export * from "./seed";
 export * from "./seed-data";
 export * from "./sentinel";
+export * from "./scheduled";
 export * from "./stats";
 export * from "./export";
 export * from "./reflect";
