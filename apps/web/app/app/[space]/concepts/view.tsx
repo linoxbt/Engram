@@ -146,19 +146,21 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
       .on("tick", () => draw.current())
       .on("end", () => {
         if (touched.current || !seeded.length) return;
-        // Fit every node and its label in view once the layout settles. Labels keep a fixed screen size, so their
-        // extent in world units depends on the zoom: settle it in a few rounds.
-        const pad = 24, w = c.clientWidth;
+        // Fit every node and its label in view once the layout settles. Labels keep their screen size whatever the
+        // zoom, so each node limits the zoom by how far it sits from the centre plus its label's half-width in pixels.
+        const pad = 16, w = c.clientWidth;
         ctx.font = "11px JetBrains Mono, monospace";
-        const half = new Map(seeded.map((n) => [n.id, ctx.measureText(labelOf(n)).width / 2]));
-        let k = 1, box = { x0: 0, x1: 0, y0: 0, y1: 0 };
-        for (let round = 0; round < 4; round++) {
-          const xs = seeded.flatMap((n) => { const e = Math.max(n.r, half.get(n.id)! / k); return [n.x! - e, n.x! + e]; });
-          const ys = seeded.flatMap((n) => [n.y! - n.r, n.y! + n.r + 16 / k]);
-          box = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
-          k = Math.min(2, Math.max(0.3, Math.min((w - pad * 2) / Math.max(1, box.x1 - box.x0), (H - pad * 2) / Math.max(1, box.y1 - box.y0))));
+        const xs = seeded.map((n) => n.x!), ys = seeded.map((n) => n.y!);
+        const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+        let k = 2;
+        for (const n of seeded) {
+          const half = Math.max(ctx.measureText(labelOf(n)).width / 2, n.r);
+          const dx = Math.abs(n.x! - cx), dyTop = Math.max(0, cy - n.y!) + n.r, dyBottom = Math.max(0, n.y! - cy) + n.r;
+          if (dx > 0) k = Math.min(k, (w / 2 - pad - half) / dx);
+          k = Math.min(k, (H / 2 - pad) / Math.max(1, dyTop), (H / 2 - pad - 16) / Math.max(1, dyBottom));
         }
-        view.current = { k, x: -((box.x1 + box.x0) / 2) * k, y: -((box.y1 + box.y0) / 2) * k };
+        k = Math.min(2, Math.max(0.3, k));
+        view.current = { k, x: -cx * k, y: -cy * k };
         draw.current();
       });
     resize();
