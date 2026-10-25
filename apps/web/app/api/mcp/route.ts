@@ -42,7 +42,7 @@ const handler = createMcpHandler(
       try { const r = await forget(await ctxFrom(extra), args); return ok(formatForget(r), r); } catch (e) { return fail(e); }
     });
     server.registerTool("timeline", { title: "Timeline", description: TIMELINE_DESCRIPTION, inputSchema: TimelineInput }, async (args, extra) => {
-      try { const r = await timeline(await ctxFrom(extra), args); return ok(formatTimeline(r.subject, r.entries), r); } catch (e) { return fail(e); }
+      try { const r = await timeline(await ctxFrom(extra), args); return ok(formatTimeline(r.subject, r.entries, r.next), r); } catch (e) { return fail(e); }
     });
     server.registerTool("verify", {
       title: "Verify",
