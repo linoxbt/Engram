@@ -46,9 +46,9 @@ export function TimeScrubber() {
           <span key={e.at} className="absolute top-2 h-6 w-px bg-accent/70" style={{ left: `${((Date.parse(e.at) - START) / (END - START)) * 100}%` }} />
         ))}
         <span className="absolute top-2 h-6 w-px bg-muted" style={{ left: `${((Date.parse("2026-10-24T09:30:00Z") - START) / (END - START)) * 100}%` }} title="erasure" />
-        <span aria-hidden className="pointer-events-none absolute top-[11px] size-[18px] -translate-x-1/2 rounded-full border-2 border-gold bg-bg shadow-[0_0_20px_rgba(154,114,0,.35)]" style={{ left: `${frac * 100}%` }} />
         <input type="range" aria-label="As of" min={START} max={END} step={15 * 60_000} value={t} onChange={(e) => setT(Number(e.target.value))}
-          className="absolute inset-0 w-full cursor-ew-resize opacity-0" />
+          className="peer absolute inset-0 w-full cursor-ew-resize opacity-0" />
+        <span aria-hidden className="pointer-events-none absolute top-[11px] size-[18px] -translate-x-1/2 rounded-full border-2 border-gold bg-bg shadow-[0_0_20px_rgba(154,114,0,.35)] peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2" style={{ left: `${frac * 100}%` }} />
       </div>
       <div className="mt-1 flex justify-between font-mono text-[10px] text-muted"><span>19 Oct</span><span>22 Oct</span><span>25 Oct</span></div>
 
