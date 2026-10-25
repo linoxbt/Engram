@@ -14,7 +14,7 @@ import { getConfig } from "../src/config";
 import { isConflict } from "../src/errors";
 
 const endpoint = process.env.APPWRITE_TEST_ENDPOINT, project = process.env.APPWRITE_TEST_PROJECT, key = process.env.APPWRITE_TEST_KEY;
-const SPACE = process.env.APPWRITE_TEST_SPACE ?? "test0000";
+const SPACE = process.env.APPWRITE_TEST_SPACE || "test0000";
 const live = !!(endpoint && project && key);
 if (live && !/^[a-z0-9]{8}$/.test(SPACE)) throw new Error("APPWRITE_TEST_SPACE must be 8 characters of [a-z0-9]");
 
@@ -27,7 +27,7 @@ const meta = (extra: Record<string, string> = {}) => ({ space: SPACE, test: "app
 
 describe.skipIf(!live)("Appwrite adapter, live", () => {
   let b: Backend;
-  const bucket = process.env.APPWRITE_TEST_BUCKET ?? process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints";
+  const bucket = process.env.APPWRITE_TEST_BUCKET || process.env.APPWRITE_CHECKPOINTS_BUCKET || "checkpoints";
   const fileId = `tst_${SPACE}_${base}`;
 
   async function sweep() {
@@ -41,7 +41,7 @@ describe.skipIf(!live)("Appwrite adapter, live", () => {
 
   beforeAll(async () => {
     const cfg = getConfig();
-    b = createAppwriteBackend({ ...cfg, appwrite: { ...cfg.appwrite, endpoint: endpoint!, projectId: project!, apiKey: key!, databaseId: process.env.APPWRITE_TEST_DB ?? cfg.appwrite.databaseId } });
+    b = createAppwriteBackend({ ...cfg, appwrite: { ...cfg.appwrite, endpoint: endpoint!, projectId: project!, apiKey: key!, databaseId: process.env.APPWRITE_TEST_DB || cfg.appwrite.databaseId } });
     // Leftovers from an interrupted run. A failure here (no connection, missing scope) is reported by the tests.
     await sweep().catch((e) => console.warn("[appwrite-live] initial sweep failed:", e instanceof Error ? e.message : e));
   }, 120_000);

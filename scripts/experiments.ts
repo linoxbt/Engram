@@ -16,7 +16,7 @@ const endpoint = process.env.APPWRITE_ENDPOINT, project = process.env.APPWRITE_P
 if (!endpoint || !project || !key) { console.error("Set APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID and APPWRITE_API_KEY."); process.exit(1); }
 const DB = process.env.APPWRITE_DB_ID ?? "engram";
 /** Reserved space key for anything written to the real collections ("0" never appears in generated keys). */
-const TEST_SPACE = process.env.APPWRITE_TEST_SPACE ?? "test0000";
+const TEST_SPACE = process.env.APPWRITE_TEST_SPACE || "test0000";
 
 if (process.argv.includes("--events")) {
   const res = await runEventsExperiments({

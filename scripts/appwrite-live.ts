@@ -14,7 +14,7 @@ import { table, upsertSection, type Row } from "./lib/verified-md";
 const e = process.env;
 const endpoint = e.APPWRITE_TEST_ENDPOINT ?? e.APPWRITE_ENDPOINT, project = e.APPWRITE_TEST_PROJECT ?? e.APPWRITE_PROJECT_ID, key = e.APPWRITE_TEST_KEY ?? e.APPWRITE_API_KEY;
 if (!endpoint || !project || !key) { console.error("Set APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID and APPWRITE_API_KEY (or the APPWRITE_TEST_* variants)."); process.exit(1); }
-const space = e.APPWRITE_TEST_SPACE ?? "test0000";
+const space = e.APPWRITE_TEST_SPACE || "test0000";
 
 const out = join(mkdtempSync(join(tmpdir(), "engram-live-")), "results.json");
 const r = spawnSync(process.execPath, ["node_modules/vitest/vitest.mjs", "run", "packages/server/test/appwrite-live.test.ts", "--reporter=json", `--outputFile=${out}`], {

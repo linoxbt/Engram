@@ -50,8 +50,8 @@ if (context !== "production" && !localRun) {
 
 const env: Record<string, string | undefined> = { ...process.env, FORCE_COLOR: "0" };
 const redact = makeRedactor(env);
-const owner = env.ENGRAM_DEMO_OWNER ?? "engramdb@gmail.com";
-const demoName = env.ENGRAM_DEMO_NAME ?? "Northwind support";
+const owner = env.ENGRAM_DEMO_OWNER || "engramdb@gmail.com";
+const demoName = env.ENGRAM_DEMO_NAME || "Northwind support";
 const budgetMs = Math.min(Math.max(Number(env.ENGRAM_PROVISION_BUDGET_MIN) || 22, 2), 40) * 60_000;
 const deadline = Date.now() + budgetMs;
 

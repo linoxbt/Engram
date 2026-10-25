@@ -91,7 +91,7 @@ ec0a9a63949ad6b798f2f85d802d33d11e5c1f3940fc670a205c96290664da71
 
 ```bash
 pnpm install
-cp .env.example .env.local        # leave APPWRITE_ENDPOINT empty for the local backend
+cp .env.example .env.local        # leave APPWRITE_ENDPOINT empty for the local backend; set NEXT_PUBLIC_APP_URL=http://localhost:3000
 pnpm keygen >> .env.local         # checkpoint keys
 pnpm dev                          # http://localhost:3000
 ```
