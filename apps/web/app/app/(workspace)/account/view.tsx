@@ -49,15 +49,21 @@ export function View() {
     onSuccess: () => { qc.clear(); router.push("/"); router.refresh(); },
   });
 
-  const signOut = async () => { await api("/api/auth/logout", { method: "POST" }); qc.clear(); router.push("/"); };
+  const signOut = useMutation({
+    mutationFn: () => api("/api/auth/logout", { method: "POST" }),
+    onSuccess: () => { qc.clear(); router.push("/"); },
+    onError: (e) => toast(`Could not sign out: ${e instanceof Error ? e.message : String(e)}`, "error"),
+  });
 
   return (
     <>
       <PageHeader title="Account">Your identity in Engram. People sign in here; agents use their own keys.</PageHeader>
       {me.isLoading && <Skeleton className="h-40" />}
+      {me.error ? <ErrorNote error={me.error} /> : null}
+      {me.data && !u && <ErrorNote error="You are signed out. Sign in again to see your account." />}
       {u && (
         <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
-          <div className="space-y-5">
+          <div className="min-w-0 space-y-5">
             <Card title="Profile">
               <div className="flex items-center gap-4 p-4">
                 <span className="grid size-12 shrink-0 place-items-center rounded-full bg-accent text-lg font-semibold uppercase text-bg">{u.name.slice(0, 1) || "?"}</span>
@@ -79,14 +85,14 @@ export function View() {
               <dl className="divide-y divide-line border-t border-line text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
                   <dt className="text-muted">Email</dt>
-                  <dd className="flex items-center gap-2">
-                    <span className="truncate">{u.email}</span>
+                  <dd className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+                    <span className="min-w-0 break-all">{u.email}</span>
                     {u.emailVerified ? <Pill tone="valid">verified</Pill> : <Pill tone="warning">not verified</Pill>}
                     {!u.emailVerified && <Button size="sm" variant="outline" loading={resend.isPending} onClick={() => resend.mutate()}>Resend link</Button>}
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-3 px-4 py-2.5"><dt className="text-muted">User ID</dt><dd className="flex min-w-0 items-center gap-2"><code className="truncate">{u.id}</code><CopyButton value={u.id} /></dd></div>
-                <div className="flex items-center justify-between gap-3 px-4 py-2.5"><dt className="text-muted">Sign-in</dt><dd>{appwrite ? "Appwrite Auth · email and password" : "Local demo store"}</dd></div>
+                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5"><dt className="text-muted">Sign-in</dt><dd className="min-w-0">{appwrite ? "Appwrite Auth · email and password, or a passkey" : "Local demo store · email and password, or a passkey"}</dd></div>
               </dl>
               {(resend.error || devLink) && (
                 <div className="space-y-2 border-t border-line px-4 py-3 text-2xs">
@@ -116,6 +122,7 @@ export function View() {
             <PasskeysCard user={u} />
 
             <Card title="Your spaces">
+              {spaces.error ? <div className="px-4 pt-4"><ErrorNote error={spaces.error} /></div> : null}
               <div className="grid grid-cols-3 gap-3 p-4">
                 <Stat label="Owned" value={owned.length} />
                 <Stat label="Member" value={list.length - owned.length} />
@@ -135,11 +142,11 @@ export function View() {
             </Card>
           </div>
 
-          <div className="space-y-5">
+          <div className="min-w-0 space-y-5">
             <Card title="Session">
               <div className="space-y-3 p-4 text-xs text-muted">
                 <p>You are signed in on this device with an HTTP-only session cookie. Agents never use it; they authenticate with scoped keys.</p>
-                <Button variant="outline" onClick={() => void signOut()}>Sign out</Button>
+                <Button variant="outline" loading={signOut.isPending} onClick={() => signOut.mutate()}>Sign out</Button>
               </div>
             </Card>
             <Card title="Privacy">

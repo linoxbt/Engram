@@ -104,7 +104,12 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
   ];
   const statusTone = !health.data ? "bg-line-2" : health.data.ok ? "bg-valid" : storageDown(health.data) ? "bg-warn" : "bg-tamper";
   const statusText = !health.data ? "Checking…" : health.data.ok ? "All systems normal" : storageDown(health.data) ? "Memory storage pending" : "Degraded";
-  const signOut = async () => { await api("/api/auth/logout", { method: "POST" }); qc.clear(); router.push("/"); };
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+  const signOut = async () => {
+    setSignOutError(null);
+    try { await api("/api/auth/logout", { method: "POST" }); qc.clear(); router.push("/"); }
+    catch (e) { setSignOutError(e instanceof Error ? e.message : String(e)); }
+  };
   // Rails are desktop-only; the mobile drawers always show labels.
   const rail = mini && !menu;
   const rightRail = rightMini && !spaceMenu;
@@ -147,6 +152,7 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
             <span className={clsx("min-w-0 flex-1 truncate text-text", rail && "lg:hidden")}>{user.name}</span>
             <button onClick={signOut} className={clsx("hover:text-text", rail && "lg:hidden")}>Sign out</button>
           </div>
+          {signOutError && <p role="alert" className={clsx("mt-1 px-1 text-tamper", rail && "lg:hidden")}>Sign-out failed: {signOutError}</p>}
           {rail && (
             <button onClick={toggleMini} className="mt-2 hidden w-full place-items-center rounded-[2px] py-1 text-muted hover:bg-panel-2 hover:text-text lg:grid" aria-label="Expand sidebar" title="Expand sidebar">
               <IconChevron className="rotate-180" />
@@ -189,7 +195,7 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
             <NavLinks items={space.nav} pathname={pathname} rail={rightRail} />
           </nav>
           <div className="border-t border-line px-3 py-3 text-2xs text-muted">
-            <div className={clsx("flex items-center gap-2 px-1 py-1", rightRail && "lg:justify-center")} title={space.live === "realtime" ? "Appwrite Realtime connected" : "Polling every 3 seconds"}>
+            <div className={clsx("flex items-center gap-2 px-1 py-1", rightRail && "lg:justify-center")} title={space.live === "realtime" ? "Appwrite Realtime connected; pages still poll slowly in case the socket drops" : "Realtime is not connected: pages poll for changes (the feed every 3 seconds, conflicts every 10)"}>
               <span className={clsx("size-2 shrink-0 rounded-full", space.live === "realtime" ? "bg-valid" : "bg-warn")} />
               <span className={clsx("truncate", rightRail && "lg:hidden")}>{space.live === "realtime" ? "Realtime" : "Live (polling)"}</span>
             </div>
@@ -217,9 +223,10 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
         <main className={clsx("mx-auto w-full flex-1 p-4", wide ? "max-w-[1400px] md:p-6" : "max-w-6xl md:p-8")}>
           {/* Phones: the space's pages open from this button, just below the space row. */}
           {space && (
-            <button className={clsx("mb-4 grid size-9 place-items-center rounded-[2px] border lg:hidden", spaceMenu ? "border-accent bg-accent text-bg" : "border-line text-text")}
-              onClick={() => { setMenu(false); setSpaceMenu((m) => !m); }} aria-label={spaceMenu ? "Close space menu" : "Open space menu"} aria-expanded={spaceMenu}>
+            <button className={clsx("mb-4 inline-flex h-9 items-center gap-2 rounded-[2px] border px-3 text-xs lg:hidden", spaceMenu ? "border-accent bg-accent text-bg" : "border-line text-text")}
+              onClick={() => { setMenu(false); setSpaceMenu((m) => !m); }} aria-expanded={spaceMenu}>
               {spaceMenu ? <IconCross size={16} /> : <IconSidebar size={16} />}
+              {spaceMenu ? "Close space menu" : "Space menu"}
             </button>
           )}
           {children}
