@@ -1,22 +1,55 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { EngramError, getBackend, isOwnerRole, membership, requireSpace, type SpaceInfo, type User } from "@engram/server";
+import { EngramError, getBackend, isEngramError, isOwnerRole, membership, requireSpace, type SpaceInfo, type User } from "@engram/server";
+import { currentRequest } from "./request";
 
-export const SESSION_COOKIE = "engram_session";
+const PROD = process.env.NODE_ENV === "production";
+/**
+ * `__Host-` makes the browser insist on Secure, Path=/ and no Domain, so a sibling subdomain cannot set or shadow
+ * it. Browsers accept Secure cookies from http://localhost, so the production build works there too; `next dev`
+ * keeps the plain name so it also works over plain HTTP on a LAN address.
+ */
+export const SESSION_COOKIE = PROD ? "__Host-engram_session" : "engram_session";
+/** The name before the rename: still read, and moved to the new name, so nobody is signed out by the change. */
+const LEGACY_COOKIE = "engram_session";
+/** The cookie never outlives this, whatever session length Appwrite is configured with. */
+export const SESSION_MAX_AGE_S = 30 * 86_400;
 
 export async function sessionSecret(): Promise<string | null> {
-  return (await cookies()).get(SESSION_COOKIE)?.value ?? null;
+  const jar = await cookies();
+  const current = jar.get(SESSION_COOKIE)?.value;
+  if (current) return current;
+  if (LEGACY_COOKIE === SESSION_COOKIE) return null;
+  const legacy = jar.get(LEGACY_COOKIE)?.value;
+  if (!legacy) return null;
+  // Migrate once. Cookies can only be written from route handlers; elsewhere (page rendering) the old cookie keeps
+  // working until the next API call moves it.
+  try {
+    writeCookie(jar, legacy, new Date(Date.now() + SESSION_MAX_AGE_S * 1000));
+    jar.delete(LEGACY_COOKIE);
+  } catch { /* read-only here */ }
+  return legacy;
 }
 
-export async function currentUser(): Promise<User | null> {
+async function lookupUser(): Promise<User | null> {
   const secret = await sessionSecret();
   if (!secret) return null;
   try {
     return await getBackend().auth.getUser(secret);
-  } catch {
-    return null;
+  } catch (e) {
+    // Only an invalid session means "signed out"; an outage must not look like one.
+    if (isEngramError(e) && e.code === "unauthorized") return null;
+    throw e;
   }
+}
+
+/** The signed-in user, looked up once per API request. */
+export async function currentUser(): Promise<User | null> {
+  const r = currentRequest();
+  if (!r) return lookupUser();
+  r.user ??= lookupUser();
+  return r.user;
 }
 
 /** For server components: redirect to login when signed out. */
@@ -51,16 +84,28 @@ export async function replaceSession(secret: string, expire: string) {
   if (old && old !== secret) await getBackend().auth.signOut(old).catch(() => undefined);
 }
 
-export async function setSession(secret: string, expire: string) {
-  (await cookies()).set(SESSION_COOKIE, secret, {
+type Jar = Awaited<ReturnType<typeof cookies>>;
+function writeCookie(jar: Jar, secret: string, expires: Date) {
+  jar.set(SESSION_COOKIE, secret, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: PROD,
     sameSite: "lax",
     path: "/",
-    expires: new Date(expire),
+    expires,
   });
 }
 
+export async function setSession(secret: string, expire: string) {
+  const jar = await cookies();
+  const cap = Date.now() + SESSION_MAX_AGE_S * 1000;
+  const until = Date.parse(expire);
+  writeCookie(jar, secret, new Date(Number.isFinite(until) ? Math.min(until, cap) : cap));
+  if (LEGACY_COOKIE !== SESSION_COOKIE && jar.get(LEGACY_COOKIE)) jar.delete(LEGACY_COOKIE);
+}
+
 export async function clearSession() {
-  (await cookies()).delete(SESSION_COOKIE);
+  const jar = await cookies();
+  // A __Host- cookie is only replaced by one that is Secure with Path=/ too, so the deletion says so.
+  jar.delete({ name: SESSION_COOKIE, path: "/", secure: PROD, httpOnly: true, sameSite: "lax" });
+  if (LEGACY_COOKIE !== SESSION_COOKIE && jar.get(LEGACY_COOKIE)) jar.delete(LEGACY_COOKIE);
 }

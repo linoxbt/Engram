@@ -18,7 +18,8 @@ let cache: { at: number; status: number; body: Record<string, unknown> } | null 
 
 export async function GET(req: Request) {
   const fresh = new URL(req.url).searchParams.has("fresh");
-  const user = await currentUser();
+  // An auth outage must not take the health check down with it.
+  const user = await currentUser().catch(() => null);
   // Signed-in people may force a re-run (the Status page), but not more than every 10 seconds.
   if (!cache || Date.now() - cache.at > TTL_MS || (fresh && user && Date.now() - cache.at > 10_000)) {
     const { status, body } = await run();

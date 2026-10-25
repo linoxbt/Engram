@@ -25,6 +25,13 @@ function mapError(e: unknown): unknown {
   }
   return e;
 }
+/** A session check that failed for a reason other than the session being invalid. */
+function unavailableAuth(e: unknown): unknown {
+  const m = mapError(e);
+  if (isEngramError(m) && m.code !== "not_found") return m;
+  console.warn("[engram] session check failed", e instanceof Error ? e.message : e);
+  return new EngramError("unavailable", "Sign-in is temporarily unavailable. Try again shortly.");
+}
 /** Appwrite only redirects to hosts registered as a platform; say so plainly instead of a raw 400. */
 function authLinkError(e: unknown): unknown {
   if (e instanceof AppwriteException && e.code === 400 && /url/i.test(e.message)) {
@@ -359,7 +366,22 @@ class AppwriteAuth implements AuthStore {
     try {
       const u = await new Account(this.anon().setSession(secret)).get();
       return { id: u.$id, email: u.email, name: u.name, emailVerified: u.emailVerification };
-    } catch { return null; }
+    } catch (e) {
+      // Only Appwrite's 401 means the session is gone. Anything else (an outage, a network error) must not look
+      // like being signed out, which would clear the cookie and bounce people to the login page.
+      if (e instanceof AppwriteException && e.code === 401) return null;
+      throw unavailableAuth(e);
+    }
+  }
+  /** End every other session of the user behind `sessionSecret` (after a password change). */
+  private async endOtherSessions(sessionSecret: string) {
+    const account = this.account(sessionSecret);
+    const [me, current] = await Promise.all([call(() => account.get()), call(() => account.getSession({ sessionId: "current" }))]);
+    const users = new Users(this.admin);
+    const list = await call(() => users.listSessions({ userId: me.$id }));
+    await Promise.all(list.sessions.filter((s) => s.$id !== current.$id).map((s) => users.deleteSession({ userId: me.$id, sessionId: s.$id }).catch((e) => {
+      if (!(e instanceof AppwriteException && e.code === 404)) throw mapError(e);
+    })));
   }
   async signOut(secret: string) {
     try { await new Account(this.anon().setSession(secret)).deleteSession({ sessionId: "current" }); } catch { /* already gone */ }
@@ -384,6 +406,8 @@ class AppwriteAuth implements AuthStore {
       // A successful reset proves ownership of the email, so it lifts any sign-in lockout.
       const users = new Users(this.admin);
       await users.get({ userId }).then((u) => clearAttempts(this.attempts, u.email, { all: true })).catch(() => undefined);
+      // And it signs the account out everywhere: whoever knew the old password must not keep a session.
+      await users.deleteSessions({ userId }).catch((e) => console.error("[engram] could not end sessions after a password reset", e));
     } catch (e) {
       if (e instanceof AppwriteException && e.code === 400 && /password/i.test(e.message)) throw new EngramError("bad_request", e.message);
       if (e instanceof AppwriteException && (e.code === 401 || e.code === 404 || e.code === 400)) throw new EngramError("bad_request", "This reset link is invalid or has expired. Request a new one.");
@@ -419,6 +443,8 @@ class AppwriteAuth implements AuthStore {
       if (e instanceof AppwriteException && e.code === 400) throw new EngramError("bad_request", e.message);
       throw mapError(e);
     }
+    // Every other device is signed out; this one stays.
+    await this.endOtherSessions(sessionSecret).catch((e) => console.error("[engram] could not end other sessions after a password change", e));
   }
   async deleteUser(userId: string) {
     await call(() => new Users(this.admin).delete({ userId }));

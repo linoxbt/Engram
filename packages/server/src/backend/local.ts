@@ -307,6 +307,8 @@ class LocalAuth implements AuthStore {
     if (password.length < 8) throw new EngramError("bad_request", "Password must be at least 8 characters.");
     u.salt = randomBytes(16).toString("hex");
     u.hash = scryptSync(password, u.salt, 32).toString("hex");
+    // Every other device is signed out; this one stays.
+    for (const [k, v] of Object.entries(this.s.db.sessions)) if (v.userId === user.id && k !== sessionSecret) delete this.s.db.sessions[k];
     this.s.save();
   }
   async deleteUser(userId: string) {

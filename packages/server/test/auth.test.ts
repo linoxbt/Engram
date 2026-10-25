@@ -48,6 +48,16 @@ describe("local auth", () => {
     expect(await b.auth.findUserByEmail("cy@example.com")).toBeNull();
   });
 
+  it("a password change signs out every other session but keeps the current one", async () => {
+    const b = createLocalBackend();
+    await b.auth.signUp("eve@example.com", "password123", "Eve");
+    const laptop = await b.auth.signIn("eve@example.com", "password123");
+    const phone = await b.auth.signIn("eve@example.com", "password123");
+    await b.auth.updatePassword(laptop.secret, "password123", "password789");
+    expect(await b.auth.getUser(laptop.secret)).not.toBeNull();
+    expect(await b.auth.getUser(phone.secret)).toBeNull();
+  });
+
   it("passkey changes need a recent sign-in, and passkey options name this site", async () => {
     const b = createLocalBackend();
     await b.auth.signUp("dee@example.com", "password123", "Dee");

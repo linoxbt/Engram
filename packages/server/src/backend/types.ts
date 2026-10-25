@@ -90,6 +90,7 @@ export interface AuthStore {
    * passes none.
    */
   signIn(email: string, password: string, opts?: { client?: string }): Promise<{ secret: string; userId: string; expire: string }>;
+  /** Null only when the session is invalid or expired; an outage throws (`unavailable`) instead of looking signed out. */
   getUser(secret: string): Promise<User | null>;
   signOut(secret: string): Promise<void>;
   /** A short-lived JWT the browser SDK can use for Realtime. Null when unsupported. */
@@ -106,6 +107,7 @@ export interface AuthStore {
   requestVerification(sessionSecret: string, url: string): Promise<{ devLink?: string }>;
   completeVerification(userId: string, secret: string, sessionSecret: string | null): Promise<void>;
   updateName(sessionSecret: string, name: string): Promise<User>;
+  /** Also ends every other session of the account; the one making the change stays signed in. */
   updatePassword(sessionSecret: string, oldPassword: string, password: string): Promise<void>;
   /** Permanently remove the account and every session it holds. */
   deleteUser(userId: string): Promise<void>;
