@@ -1,5 +1,5 @@
 import { type EntryMeta } from "@engram/core";
-import { getBackend } from "@engram/server";
+import { getBackend, parseEntryCursor, parseLimit } from "@engram/server";
 import { route } from "@/lib/server/api";
 import { publicSpace } from "@/lib/server/public";
 
@@ -8,9 +8,11 @@ export const runtime = "nodejs";
 /** Header fields and hashes only, paged in chain order. */
 export const GET = route<{ key: string }>(async (req, { key }) => {
   await publicSpace(key);
-  const cursor = req.nextUrl.searchParams.get("cursor") ?? undefined;
-  const limit = Math.min(500, Math.max(1, Number(req.nextUrl.searchParams.get("limit") ?? 500)));
-  const docs = await getBackend().vectors.query<EntryMeta>("memories", {
+  const b = getBackend();
+  const sp = req.nextUrl.searchParams;
+  const limit = parseLimit(sp.get("limit"), 500, 500);
+  const cursor = await parseEntryCursor(b, key, sp.get("cursor"));
+  const docs = await b.vectors.query<EntryMeta>("memories", {
     filters: [{ op: "eq", path: "metadata.space", values: [key] }],
     order: { field: "$id", dir: "asc" }, limit, cursorAfter: cursor, withVectors: false,
   });

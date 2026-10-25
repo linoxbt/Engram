@@ -1,5 +1,5 @@
 import { type EntryMeta } from "@engram/core";
-import { remember, type Filter } from "@engram/server";
+import { parseEntryCursor, parseLimit, remember, type Filter } from "@engram/server";
 import { readJson, spaceRoute } from "@/lib/server/api";
 import { toFeedItem, agentNames } from "@engram/server";
 
@@ -14,7 +14,9 @@ export const GET = spaceRoute(async (ctx, _a, req) => {
   const subject = sp.get("subject"); if (subject) filters.push({ op: "eq", path: "metadata.subject", values: [subject] });
   const agent = sp.get("agent"); if (agent) filters.push({ op: "eq", path: "metadata.agent", values: [agent] });
   const op = sp.get("op"); if (op) filters.push({ op: "eq", path: "metadata.op", values: op.split(",") });
-  const docs = await ctx.b.vectors.query<EntryMeta>("memories", { filters, order: { field: "$id", dir: "desc" }, limit: Math.min(200, Number(sp.get("limit") ?? 50)), cursorAfter: sp.get("cursor") ?? undefined, withVectors: false });
+  const limit = parseLimit(sp.get("limit"), 50, 200);
+  const cursor = await parseEntryCursor(ctx.b, ctx.space.key, sp.get("cursor"));
+  const docs = await ctx.b.vectors.query<EntryMeta>("memories", { filters, order: { field: "$id", dir: "desc" }, limit, cursorAfter: cursor, withVectors: false });
   const names = await agentNames(ctx.b, docs.map((d) => d.metadata.agent), ctx.space);
   return { items: docs.map((d) => toFeedItem(d, names)), next: docs.length ? docs[docs.length - 1].$id : null };
 });
