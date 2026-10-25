@@ -12,7 +12,8 @@ export const RememberInput = z.object({
   importance: z.number().int().min(0).max(10).default(5),
   confidence: z.number().int().min(0).max(10).default(7),
   source: z.string().max(200).optional(),
-  validFrom: z.string().datetime().optional(),
+  // No transform here (MCP publishes this schema as JSON Schema); remember() normalises it to 24-char UTC ISO.
+  validFrom: z.string().datetime({ offset: true }).optional(),
   idempotencyKey: z.string().max(64).optional(),
 });
 export type RememberInput = z.infer<typeof RememberInput>;

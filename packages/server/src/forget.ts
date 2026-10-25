@@ -88,6 +88,7 @@ export async function resolveConflict(ctx: Ctx, raw: unknown): Promise<ResolveRe
 /** Append a link entry about a pair: target and other (the winner for supersede). */
 export async function linkFound(ctx: Ctx, args: { target: string; other: string; kind: LinkKind; reason: string }) {
   const t = await ctx.b.vectors.get<EntryMeta>("memories", args.target);
+  if (!t || t.metadata.space !== ctx.space.key || !args.other.startsWith(`m_${ctx.space.key}_`)) throw new EngramError("not_found", "One of the memories was not found in this space.");
   return append(ctx, {
     op: "link",
     kind: args.kind,

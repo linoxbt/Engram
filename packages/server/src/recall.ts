@@ -51,6 +51,8 @@ export interface RecallResult {
   tookMs: number;
 }
 
+const BUMP_EVERY_MS = 10 * 60_000;
+const BUMPS_PER_RECALL = 3;
 const spaceF = (k: string): Filter => ({ op: "eq", path: "metadata.space", values: [k] });
 
 export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {}): Promise<RecallResult> {
@@ -159,10 +161,12 @@ export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {
   if (opts.log !== false) {
     ctx.defer(async () => {
       await logRecall(ctx, input.query, vector, asOf, input.k, memories);
-      await Promise.all(memories.filter((m) => m.status !== "forgotten").map((m) => {
-        const d = byId.get(m.id);
-        return patchDerived(b, m.id, { access: count8(Number(d?.metadata.d.access ?? 0) + 1), lastAccessAt: iso() }).catch(() => undefined);
-      }));
+      // Each bump is several writes and moves $updatedAt, which fails concurrent neighbour updates: the top few
+      // only, and a memory at most once per BUMP_EVERY_MS. Access is a ranking hint, not a counter anyone audits.
+      const due = docs.map((d) => d.doc).filter((d) => d.metadata.d.status !== "forgotten"
+        && (!d.metadata.d.lastAccessAt || Date.now() - Date.parse(d.metadata.d.lastAccessAt) >= BUMP_EVERY_MS)).slice(0, BUMPS_PER_RECALL);
+      await Promise.all(due.map((d) =>
+        patchDerived(b, d.$id, { access: count8(Number(d.metadata.d.access ?? 0) + 1), lastAccessAt: iso() }).catch(() => undefined)));
       await bumpAgentStats(b, ctx.actor, "recalls").catch(() => undefined);
     });
   }

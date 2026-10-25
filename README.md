@@ -100,6 +100,8 @@ With no Appwrite variables, Engram runs on a local file-backed backend with a de
 
 **Provisioning from the hosting build.** So the Appwrite key never leaves the host, the same steps can run inside the Netlify build: set `ENGRAM_PROVISION=<random id>` (and optionally `ENGRAM_PROVISION_STEPS=setup,experiments,functions,seed,diagnose`), deploy, and read the redacted report at `/_provision/<id>.json`. `ENGRAM_DEMO_RESET=<same id>` re-seeds the demo space once. Remove the variables afterwards; without them the step does nothing.
 
+The labeler's event trigger in `appwrite.json` (`databases.engram.collections.concepts.documents.*.create`) names the database, so keep `APPWRITE_DB_ID=engram` (the default) or change that event path to match; otherwise the labeler never fires and a new concept keeps its rule-based label until the app relabels it at 3 members.
+
 | Command | What it does |
 |---------|--------------|
 | `pnpm test` | Core and engine tests: hashes, Merkle proofs (sizes 1–70), every Tamper Lab attack, 20 parallel writers, supersede/conflict/forget/as-of, the seeded demo story |

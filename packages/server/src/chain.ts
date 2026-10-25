@@ -20,6 +20,8 @@ export type MemDoc = VDoc<EntryMeta>;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const jitter = () => sleep(20 + Math.random() * 60);
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const MAX_FUTURE_MS = 5 * 60_000;
 export const emptyRefs = (): Refs => ({ supersedes: [], contradicts: [], related: [], target: null, derivedFrom: [] });
 
 export async function chainHead(b: Backend, space: string): Promise<MemDoc | null> {
@@ -110,6 +112,14 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
   const salt = randomSalt();
   const evh = await embHash(vector, draft.vector && draft.text != null ? salt : null);
   const perms = b.teamRead(space.teamId);
+  if (draft.createdAt !== undefined) {
+    // A far-future timestamp would freeze every later entry at it: createdAt never decreases.
+    if (!ISO_RE.test(draft.createdAt) || !Number.isFinite(Date.parse(draft.createdAt))) throw new EngramError("bad_request", `Explicit createdAt ${draft.createdAt} is not a 24-character ISO time.`);
+    if (Date.parse(draft.createdAt) > Date.now() + MAX_FUTURE_MS) throw new EngramError("bad_request", `Explicit createdAt ${draft.createdAt} is in the future.`);
+  }
+  // Hashed into the header, so one canonical form: 24-char UTC ISO.
+  const validFrom = draft.validFrom ? Date.parse(draft.validFrom) : null;
+  if (validFrom !== null && !(Number.isFinite(validFrom) && validFrom >= 0 && validFrom < 253402300800000)) throw new EngramError("bad_request", `validFrom ${draft.validFrom} is not a valid date.`);
 
   for (let attempt = 0; attempt < 8; attempt++) {
     await applyPending(ctx);
@@ -141,7 +151,7 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
       importance: score(draft.importance ?? 5),
       confidence: score(draft.confidence ?? 7),
       source: draft.source ?? null,
-      validFrom: draft.validFrom ?? createdAt,
+      validFrom: validFrom === null ? createdAt : iso(validFrom),
       createdAt,
       refs,
     };
@@ -268,27 +278,55 @@ export async function patchDerived(b: Backend, id: string, patch: Partial<EntryM
 /**
  * Rebuild derived state for a whole space from the chain and erase content of
  * forgotten memories. Run by people from Settings, never silently.
+ *
+ * Writers keep appending meanwhile: before each write, entries appended since the snapshot are folded in, and
+ * the write is conditional on the document read, so a neighbour update that lands first is re-read, never
+ * overwritten. A document still contended after a few tries is counted and skipped.
  */
-export async function repairSpace(ctx: Ctx): Promise<{ fixed: number; erased: number }> {
+export async function repairSpace(ctx: Ctx): Promise<{ fixed: number; erased: number; conflicts: number }> {
   const { b } = ctx;
   const entries = await loadChain(b, ctx.space.key);
   const state = new Map<string, DerivedState>();
   for (const e of entries) applyEntry(state, e.$id, e.metadata.h);
-  let fixed = 0, erased = 0;
+  let lastId = entries[entries.length - 1]?.$id;
+  const catchUp = async () => {
+    for (;;) {
+      const more = await b.vectors.query<EntryMeta>("memories", {
+        filters: [{ op: "eq", path: "metadata.space", values: [ctx.space.key] }], order: { field: "$id", dir: "asc" }, cursorAfter: lastId, limit: 100, withVectors: false,
+      });
+      for (const d of more) { applyEntry(state, d.$id, d.metadata.h); lastId = d.$id; }
+      if (more.length < 100) return;
+    }
+  };
+  const needs = (m: EntryMeta, st: DerivedState) =>
+    JSON.stringify(toState(m)) !== JSON.stringify(st) || (st.status === "forgotten" && m.c.text != null) || m.status !== m.d.status || m.applied === "false";
+
+  let fixed = 0, erased = 0, conflicts = 0;
   for (const e of entries) {
-    const st = state.get(e.$id);
-    if (!st) continue;
-    const m = e.metadata;
-    const erase = st.status === "forgotten" && m.c.text != null;
-    if (JSON.stringify(toState(m)) === JSON.stringify(st) && !erase && m.status === m.d.status && m.applied !== "false") continue;
-    const cur = await b.vectors.get<EntryMeta>("memories", e.$id);
-    if (!cur) continue;
-    await b.vectors.update("memories", e.$id, {
-      metadata: { ...patchMeta(cur.metadata, { ...st }, erase ? { text: null, salt: null } : undefined), applied: "true" },
-      ...(erase ? { embeddings: tombstoneVector(COLLECTION_DIMS.memories) } : {}),
-    }, undefined, { ifUpdatedAt: cur.$updatedAt });
-    fixed++;
-    if (erase) erased++;
+    if (!state.has(e.$id) || !needs(e.metadata, state.get(e.$id)!)) continue;
+    let done = false;
+    for (let attempt = 0; attempt < 5 && !done; attempt++) {
+      const cur = await b.vectors.get<EntryMeta>("memories", e.$id);
+      if (!cur) { done = true; break; }
+      await catchUp();
+      const st = state.get(e.$id)!;
+      const m = cur.metadata;
+      if (!needs(m, st)) { done = true; break; }
+      const erase = st.status === "forgotten" && m.c.text != null;
+      try {
+        await b.vectors.update("memories", e.$id, {
+          metadata: { ...patchMeta(m, { ...st, contradictedBy: [...st.contradictedBy] }, erase ? { text: null, salt: null } : undefined), applied: "true" },
+          ...(erase ? { embeddings: tombstoneVector(COLLECTION_DIMS.memories) } : {}),
+        }, undefined, { ifUpdatedAt: cur.$updatedAt });
+        fixed++;
+        if (erase) erased++;
+        done = true;
+      } catch (err) {
+        if (!isConflict(err)) throw err;
+        await jitter();
+      }
+    }
+    if (!done) conflicts++;
   }
-  return { fixed, erased };
+  return { fixed, erased, conflicts };
 }

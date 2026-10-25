@@ -15,3 +15,5 @@ const ok = await mem.verifyProof(await mem.proof(memories[0].id)); // checked lo
 ```
 
 Retries 429 and 503 responses with backoff. `remember` sends an idempotency key (generated when you do not pass one), so its retries are safe; writes without one are only retried when the server says it did nothing. `verifyProof` is only `ok` when the signature checks out under a key you supplied.
+
+`pnpm --filter engram-sdk build` writes the publishable package to `dist/` (ESM, Node 20+ or any modern browser): the verifier code from `@engram/core` is bundled in, and `@noble/ed25519` is the only runtime dependency. Inside this repository, tests and scripts import the source through path aliases, so no build is needed for them.

@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { timingSafeEqualHex } from "@engram/core";
-import { createSpace, getBackend, getConfig, getSpace, personCtx, seedStory, EngramError, updateSettings } from "@engram/server";
+import { bearerMatches, createSpace, getBackend, getConfig, getSpace, isConflict, personCtx, seedStory, EngramError, updateSettings } from "@engram/server";
 import { defer, readJson, route } from "@/lib/server/api";
 
 export const runtime = "nodejs";
@@ -14,20 +13,37 @@ const Body = z.object({
   publicVerify: z.boolean().default(true),
 });
 
-/** Seeds the demo story with past timestamps. Protected by SEED_ADMIN_TOKEN; delete the token after seeding. */
+/**
+ * Seeds the demo story with past timestamps. Does not exist unless SEED_ADMIN_TOKEN is set; delete the token after
+ * seeding. An explicit key must be new, except to resume a seed of that key the same owner started.
+ */
 export const POST = route(async (req) => {
   const token = getConfig().seedAdminToken;
-  if (!token || !timingSafeEqualHex(req.headers.get("authorization") ?? "", `Bearer ${token}`)) throw new EngramError("unauthorized", "Seed route disabled or bad token.");
+  if (!token) throw new EngramError("not_found", "Not found.");
+  if (!(await bearerMatches(req.headers.get("authorization"), token))) throw new EngramError("unauthorized", "Bad seed token.");
   const body = Body.parse(await readJson(req));
   const b = getBackend();
   const password = req.headers.get("x-owner-password");
   if (!password) throw new EngramError("bad_request", "Send the owner's password in X-Owner-Password so the seed can sign in as them.");
   const session = await b.auth.signIn(body.ownerEmail, password);
-  const user = (await b.auth.getUser(session.secret))!;
-  const existing = body.key ? await getSpace(b, body.key) : null;
-  const space = existing ?? (await createSpace(b, { name: body.name, ownerId: user.id, ownerName: user.name, publicVerify: body.publicVerify, sandbox: body.variant === "sandbox", key: body.key }));
-  if (body.publicVerify && !space.settings.publicVerify) await updateSettings(b, space.key, { publicVerify: true });
-  const res = await seedStory(personCtx(b, (await getSpace(b, space.key))!, user, defer), { variant: body.variant, createdBy: `user:${user.id}` });
-  await b.auth.signOut(session.secret);
-  return { space: space.key, ...res };
+  try {
+    const user = (await b.auth.getUser(session.secret))!;
+    const existing = body.key ? await getSpace(b, body.key) : null;
+    if (existing && !(existing.settings.seeding && existing.settings.ownerId === user.id)) throw new EngramError("conflict", `Space ${body.key} already exists.`);
+    let space = existing;
+    if (!space) {
+      try {
+        space = await createSpace(b, { name: body.name, ownerId: user.id, ownerName: user.name, publicVerify: body.publicVerify, sandbox: body.variant === "sandbox", key: body.key });
+      } catch (e) {
+        // The team exists without readable settings (half-deleted or foreign): still not ours to write into.
+        if (isConflict(e)) throw new EngramError("conflict", `Space ${body.key} already exists.`);
+        throw e;
+      }
+    }
+    if (body.publicVerify && !space.settings.publicVerify) await updateSettings(b, space.key, { publicVerify: true });
+    const res = await seedStory(personCtx(b, (await getSpace(b, space.key))!, user, defer), { variant: body.variant, createdBy: `user:${user.id}` });
+    return { space: space.key, ...res };
+  } finally {
+    await b.auth.signOut(session.secret).catch(() => undefined);
+  }
 });

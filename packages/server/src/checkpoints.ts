@@ -4,7 +4,7 @@
  * is configured); verifiers need only the public key.
  */
 import {
-  buildCheckpoint, checkpointFileId, checkpointProblem, cpSize, iso, signCheckpoint, toBase64, verifySpace, type Anchor, type Checkpoint,
+  buildCheckpoint, checkpointFileId, checkpointProblem, cpSize, iso, randomSalt, signCheckpoint, toBase64, verifySpace, type Anchor, type Checkpoint,
 } from "@engram/core";
 import type { Backend } from "./backend/types";
 import { chainHead, loadChain } from "./chain";
@@ -17,28 +17,39 @@ import { integrityOf } from "./verify";
 const fileCache = new Map<string, Checkpoint>();
 const dec = new TextDecoder();
 
+async function readCheckpoint(b: Backend, bucket: string, fileId: string, spaceKey: string): Promise<Checkpoint | null> {
+  const hit = fileCache.get(fileId);
+  if (hit) return hit;
+  const bytes = await b.files.get(bucket, fileId);
+  if (!bytes) return null;
+  let cp: Checkpoint;
+  try { cp = JSON.parse(dec.decode(bytes)) as Checkpoint; } catch { return null; }
+  // A malformed file is left to the verifier to report; the engine must never build on it.
+  if (checkpointProblem(cp, spaceKey)) return null;
+  fileCache.set(fileId, cp);
+  return cp;
+}
+
 export async function loadCheckpoints(b: Backend, spaceKey: string): Promise<Checkpoint[]> {
   const bucket = getConfig().appwrite.checkpointsBucket;
   const files = await b.files.list(bucket, `cp_${spaceKey}_`);
   const out: Checkpoint[] = [];
   for (const f of files) {
-    let cp = fileCache.get(f.fileId);
-    if (!cp) {
-      const bytes = await b.files.get(bucket, f.fileId);
-      if (!bytes) continue;
-      try { cp = JSON.parse(dec.decode(bytes)) as Checkpoint; } catch { continue; }
-      // A malformed file is left to the verifier to report; the engine must never build on it.
-      if (checkpointProblem(cp, spaceKey)) continue;
-      fileCache.set(f.fileId, cp);
-    }
-    out.push(cp);
+    const cp = await readCheckpoint(b, bucket, f.fileId, spaceKey);
+    if (cp) out.push(cp);
   }
   return out.sort((a, b) => cpSize(a) - cpSize(b));
 }
 
+/** Downloads only the newest file: IDs embed the zero-padded seq, so ID order is size order. */
 export async function latestCheckpoint(b: Backend, spaceKey: string): Promise<Checkpoint | null> {
-  const all = await loadCheckpoints(b, spaceKey);
-  return all[all.length - 1] ?? null;
+  const bucket = getConfig().appwrite.checkpointsBucket;
+  const files = (await b.files.list(bucket, `cp_${spaceKey}_`)).sort((x, y) => (x.fileId < y.fileId ? 1 : -1));
+  for (const f of files) {
+    const cp = await readCheckpoint(b, bucket, f.fileId, spaceKey);
+    if (cp && checkpointFileId(cp) === f.fileId) return cp;
+  }
+  return null;
 }
 
 export interface CheckpointRun { created: boolean; reason?: string; checkpoint?: Checkpoint }
@@ -48,6 +59,8 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
   const head = await chainHead(b, space.key);
   if (!head) return { created: false, reason: "empty chain" };
   const size = Number(head.metadata.seq) + 1;
+  // Cheap exit for scheduled runs: settings record the latest checkpoint, so an idle space costs no file reads.
+  if (!opts.force && space.settings.latestCheckpoint?.size === size) return { created: false, reason: "no new entries" };
   const prev = await latestCheckpoint(b, space.key);
   if (prev && cpSize(prev) >= size && !opts.force) return { created: false, reason: "no new entries" };
 
@@ -61,7 +74,9 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
   const entries = (await loadChain(b, space.key)).slice(0, size);
   // The signer is the trust anchor: it must never certify a chain that does not verify. Without this, anyone who
   // rewrites or deletes entries after the latest checkpoint gets the change signed on the next scheduled run.
-  const report = await verifySpace({ space: space.key, entries, checkpoints: prev ? [...(await loadCheckpoints(b, space.key))] : [], publicKeyHex: cfg.checkpoint.publicKey ?? undefined });
+  // Checking against prev alone is enough: the chain links every entry, prev's root covers its first prev.size
+  // leaves, and prev itself was only signed after the same check. Older files are the sentinel's job.
+  const report = await verifySpace({ space: space.key, entries, checkpoints: prev ? [prev] : [], publicKeyHex: cfg.checkpoint.publicKey ?? undefined });
   if (entries.length !== size || report.status === "tampered") {
     await b.files.delete(bucket, lockId).catch(() => undefined);
     await updateSettings(b, space.key, { integrity: integrityOf(report) }).catch(() => undefined);
@@ -93,22 +108,32 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
 }
 
 const LOCK_STALE_MS = 5 * 60_000;
+/** Longer than a storage round trip: a reclaimer that judged the same stale lock has deleted by then, if at all. */
+const LOCK_SETTLE_MS = 250;
+const sameBytes = (a: Uint8Array | null, b: Uint8Array) => !!a && a.length === b.length && a.every((x, i) => x === b[i]);
 
 async function takeLock(b: Backend, bucket: string, lockId: string, space: SpaceInfo, prev: Checkpoint | null): Promise<boolean> {
-  const body = new TextEncoder().encode(JSON.stringify({ at: iso(), prev: prev?.seq ?? null }));
+  const body = new TextEncoder().encode(JSON.stringify({ at: iso(), prev: prev?.seq ?? null, token: randomSalt() }));
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await b.files.put(bucket, lockId, `${lockId}.json`, body, b.teamRead(space.teamId));
-      return true;
+      if (attempt === 0) return true;
+      // Storage has no conditional delete, so another reclaimer that saw the same stale lock may still delete
+      // ours. Its delete lands within one round trip; whoever's lock survives the wait owns it.
+      await new Promise((r) => setTimeout(r, LOCK_SETTLE_MS));
+      return sameBytes(await b.files.get(bucket, lockId), body);
     } catch (e) {
       if (!isConflict(e)) throw e;
       // A run that took the lock and died must not block checkpoints forever.
       const raw = await b.files.get(bucket, lockId);
+      if (!raw) continue;
       let at = 0;
-      try { at = raw ? Date.parse(JSON.parse(dec.decode(raw)).at) : 0; } catch { at = 0; }
+      try { at = Date.parse(JSON.parse(dec.decode(raw)).at); } catch { at = 0; }
       const latest = await latestCheckpoint(b, space.key);
       const stillPrev = (latest?.seq ?? null) === (prev?.seq ?? null);
-      if (!stillPrev || Date.now() - at < LOCK_STALE_MS) return false;
+      if (!stillPrev || Date.now() - (at || 0) < LOCK_STALE_MS) return false;
+      // Remove only the exact stale lock judged above: another run may have reclaimed it and taken a fresh one.
+      if (!sameBytes(await b.files.get(bucket, lockId), raw)) return false;
       await b.files.delete(bucket, lockId);
     }
   }

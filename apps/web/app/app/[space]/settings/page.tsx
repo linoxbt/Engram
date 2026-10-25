@@ -33,6 +33,7 @@ export default function SettingsPage() {
   const [retention, setRetention] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [typed, setTyped] = useState("");
+  const [password, setPassword] = useState("");
   // Fill the form once per space: a background refetch (window refocus) must not overwrite unsaved edits.
   const filledFor = useRef<string | null>(null);
   useEffect(() => {
@@ -47,7 +48,7 @@ export default function SettingsPage() {
     onSuccess: () => { toast("Settings saved.", "ok"); qc.invalidateQueries({ queryKey: ["space", space] }); qc.invalidateQueries({ queryKey: ["spaces"] }); },
   });
   const repair = useMutation({ mutationFn: () => api<{ fixed: number; erased: number }>(`/api/app/spaces/${space}/repair`, { method: "POST" }), onSuccess: (r) => toast(`Rebuilt derived state for ${r.fixed} entries${r.erased ? `, erased ${r.erased}` : ""}.`, "ok") });
-  const del = useMutation({ mutationFn: () => api(`/api/app/spaces/${space}`, { method: "DELETE" }), onSuccess: () => { qc.clear(); router.push("/app"); } });
+  const del = useMutation({ mutationFn: () => api(`/api/app/spaces/${space}`, { method: "DELETE", json: { password } }), onSuccess: () => { qc.clear(); router.push("/app"); } });
 
   if (!s || !nums) return <Skeleton className="h-96" />;
   return (
@@ -113,11 +114,14 @@ export default function SettingsPage() {
           </div>
         </Card>
       )}
-      <Modal open={confirmDelete} onClose={() => setConfirmDelete(false)} title="Delete space">
-        <p className="text-xs text-muted">Type <span className="text-text">{s.name}</span> to confirm.</p>
-        <Input className="mt-3" value={typed} onChange={(e) => setTyped(e.target.value)} aria-label="Space name" />
-        <ErrorNote error={del.error} />
-        <div className="mt-4 flex justify-end gap-2"><Button variant="ghost" onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="danger" disabled={typed !== s.name} loading={del.isPending} onClick={() => del.mutate()}>Delete forever</Button></div>
+      <Modal open={confirmDelete} onClose={() => { setConfirmDelete(false); setPassword(""); }} title="Delete space">
+        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (typed === s.name && password) del.mutate(); }}>
+          <p className="text-xs text-muted">Type <span className="text-text">{s.name}</span> to confirm.</p>
+          <Input value={typed} onChange={(e) => setTyped(e.target.value)} aria-label="Space name" />
+          <Field label="Your password"><Input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+          <ErrorNote error={del.error} />
+          <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => { setConfirmDelete(false); setPassword(""); }}>Cancel</Button><Button type="submit" variant="danger" disabled={typed !== s.name || !password} loading={del.isPending}>Delete forever</Button></div>
+        </form>
       </Modal>
     </div>
   );
