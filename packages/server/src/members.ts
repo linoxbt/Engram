@@ -6,6 +6,7 @@
  */
 import { sha256Hex, timingSafeEqualHex, toBase64 } from "@engram/core";
 import type { Backend, TeamMember, User } from "./backend/types";
+import { revokeAgentsCreatedBy } from "./agents";
 import { EngramError } from "./errors";
 import type { SpaceInvite } from "./settings";
 import { getSpace, isOwnerRole, requireSpace, updateSettings } from "./spaces";
@@ -94,4 +95,6 @@ export async function removeMember(b: Backend, key: string, userId: string) {
   if (!m) throw new EngramError("not_found", "Not a member of this space.");
   if (isOwnerRole(m.roles)) throw new EngramError("bad_request", "The owner cannot be removed. Delete the space instead.");
   await b.teams.removeMember(s.teamId, userId);
+  // Keys they created would otherwise keep writing to the space after they lost access to it.
+  await revokeAgentsCreatedBy(b, key, userId);
 }

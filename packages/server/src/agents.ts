@@ -105,6 +105,20 @@ export async function revokeAgent(b: Backend, space: string, id: string) {
   authCache.clear();
 }
 
+/**
+ * Offboarding: revoke every active key a person created, in one space or (spaceKey null) in every space. A key
+ * must not outlive its creator's access. Returns the number of keys revoked.
+ */
+export async function revokeAgentsCreatedBy(b: Backend, spaceKey: string | null, userId: string): Promise<number> {
+  const createdBy = userId.startsWith("user:") ? userId : `user:${userId}`;
+  const filters: Filter[] = [{ op: "eq", path: "metadata.createdBy", values: [createdBy] }];
+  if (spaceKey) filters.push({ op: "eq", path: "metadata.space", values: [spaceKey] });
+  const docs = (await queryAllAgents(b, filters)).filter((d) => d.metadata.status === "active");
+  for (const d of docs) await updateAgent(b, d.$id, (m) => (m.status === "revoked" ? null : { ...m, status: "revoked" }), 10);
+  authCache.clear();
+  return docs.length;
+}
+
 export async function findAgentsByCapability(b: Backend, space: string, query: string, k = 3) {
   const v = await embedAgentDescription(b, query);
   const docs = await b.vectors.query<AgentMeta>("agents", { vector: v, filters: [{ op: "eq", path: "metadata.space", values: [space] }], limit: k, withVectors: false });
