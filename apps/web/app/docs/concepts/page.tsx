@@ -5,12 +5,12 @@ export default function Concepts() {
       <p>Engram makes five promises: memories are found by meaning; every write is tamper-evident; any recall can run in the past; new facts reconcile themselves with old ones; and forgetting is provable.</p>
       <h2>Entries and the chain</h2>
       <p>Every record in a space is an <em>entry</em> with a sequence number. Its ID encodes that number, <code>m_&lt;space&gt;_&lt;seq as 12 digits&gt;</code>, so ordering by ID is chain order. An entry is one of four ops:</p>
-      <table><thead><tr><th>Op</th><th>Holds</th><th>Effect</th></tr></thead><tbody>
+      <div className="overflow-x-auto"><table><thead><tr><th>Op</th><th>Holds</th><th>Effect</th></tr></thead><tbody>
         <tr><td><code>remember</code></td><td>text and an embedding</td><td>a new memory (fact, preference, event, observation)</td></tr>
         <tr><td><code>reflect</code></td><td>a model-written summary</td><td>a summary memory linked to its sources</td></tr>
         <tr><td><code>forget</code></td><td>a reason, a tombstone vector</td><td>the target's text, salt and vector are erased</td></tr>
         <tr><td><code>link</code></td><td>a reason, a tombstone vector</td><td>records a resolution: supersede, refine, dismiss, or a conflict found later</td></tr>
-      </tbody></table>
+      </tbody></table></div>
       <h2>The four hashes</h2>
       <ul>
         <li><strong>genesis</strong>: <code>SHA-256("engram:genesis:v1:" + space)</code>, the previous hash of entry 0.</li>
@@ -20,7 +20,7 @@ export default function Concepts() {
       </ul>
       <p>Status, validity windows, conflicts and access counts are <em>derived</em>: they are recomputed by replaying the chain, and the verifier flags any disagreement.</p>
       <h2>Lock-free writes</h2>
-      <p>Two writers that read the same head compute the same next ID. VectorsDB accepts only one create for that ID; the other gets a conflict and rebuilds on the new head. No queue, no lock document. Derived updates on neighbours then commit in one transaction, and they are idempotent, so a retry is always safe.</p>
+      <p>Two writers that read the same head compute the same next ID. VectorsDB accepts only one create for that ID; the other gets a conflict and rebuilds on the new head. No queue, no lock document. Derived updates on neighbours (status, validity, conflicts) are then applied one conditional compare-and-swap write at a time, each only if the document is unchanged since it was read, because VectorsDB transactions do not work on this project. They are idempotent, and the new entry stays marked as pending until all of them land, so the next writer finishes a batch an instance left half done.</p>
       <h2>Checkpoints</h2>
       <p>A scheduled Function builds an RFC 6962 Merkle tree over the header hashes, signs the root, head and size with Ed25519, and stores the checkpoint as a file. Each checkpoint links to the previous one. Optionally the root is committed to a public GitHub repository, an outside timestamp the operator cannot rewrite. Inclusion proofs show that one memory is part of a signed checkpoint.</p>
       <h2>Contradictions</h2>

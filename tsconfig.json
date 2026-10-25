@@ -23,6 +23,8 @@
   "include": [
     "scripts/**/*.ts",
     "functions/**/*.ts",
-    "vitest.config.ts"
+    "vitest.config.ts",
+    "apps/web/e2e/**/*.ts",
+    "apps/web/playwright.config.ts"
   ]
 }

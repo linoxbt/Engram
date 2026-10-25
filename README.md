@@ -50,7 +50,7 @@ Tools: `remember`, `recall`, `forget`, `timeline`, `verify`, `resolve`. REST API
 - **Forgetting.** A forget entry is appended; the target's text, salt and vector are erased; its header stays, so the chain still verifies.
 - **Tamper Lab.** In sandbox spaces, nine attackers with full database access corrupt the chain, each caught by a different layer, the last ones only by the signed checkpoint.
 
-More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corrections.md) · [demo script](docs/demo-script.md) · [Day 1 verification](docs/verified.md).
+More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corrections.md) · [demo script](docs/demo-script.md) · [live verification](docs/verified.md).
 
 ## Appwrite features used
 
@@ -63,11 +63,11 @@ More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corre
 | **Transactions** | Tried first for derived updates on neighbours; on this project they return `transaction_not_found` right after creation, so the adapter falls back to conditional bulk updates (see [verified](docs/verified.md) items 3, 13, 14) |
 | **Document permissions** | `read(team:<space>)` on every document; agents collection is server-only |
 | **Auth + Teams** | Email/password and passkey sign-in, email verification, password recovery; one team per space with `admin` and `member` roles, single-use invite links; space settings in team preferences |
-| **Storage** | Signed checkpoint files and exports |
-| **Functions** | checkpoint (5 min), sentinel (15 min), labeler (concept events), reflect (daily) |
-| **Realtime** | Live feed via a short-lived JWT, with 3-second polling as fallback |
+| **Storage** | Signed checkpoint files and their create-first lock files (exports are streamed to the browser, never stored) |
+| **Functions** | checkpoint (5 min), sentinel (15 min), labeler (concept update events, catch-up relabels at 3/10/30/100 members), reflect (daily) |
+| **Realtime** | Live feed via a short-lived JWT when Realtime delivers VectorsDB events, otherwise 3-second polling (the `events` provisioning step checks which channel fires; see [verified](docs/verified.md)) |
 | **Messaging** | Optional tamper alert emails from the sentinel |
-| **Backups** | Daily backup policy on the `engram` database |
+| **Backups** | `pnpm setup:appwrite` creates a daily backup policy for the `engram` database where the plan allows it (and says so when it cannot); `pnpm backup` exports what database backups do not cover |
 
 ## Security model
 
@@ -91,7 +91,7 @@ ec0a9a63949ad6b798f2f85d802d33d11e5c1f3940fc670a205c96290664da71
 
 ```bash
 pnpm install
-cp .env.example .env.local        # leave APPWRITE_ENDPOINT empty for the local backend
+cp .env.example .env.local        # leave APPWRITE_ENDPOINT empty for the local backend; set NEXT_PUBLIC_APP_URL=http://localhost:3000
 pnpm keygen >> .env.local         # checkpoint keys
 pnpm dev                          # http://localhost:3000
 ```
@@ -100,15 +100,30 @@ With no Appwrite variables, Engram runs on a local file-backed backend with a de
 
 **On Appwrite:** `pnpm setup:appwrite`, then `pnpm experiments` (writes `docs/verified.md`), `pnpm functions:deploy` (builds and deploys the Functions from `appwrite.json`, with the signing key as a Function secret), then `pnpm seed -- --owner you@example.com --public`. Deploy to Netlify (`netlify.toml` at the root builds `apps/web`) with the variables in `.env.example`; `pnpm functions:deploy` deploys the Appwrite Functions that sign checkpoints and run the sentinel.
 
-**Provisioning from the hosting build.** So the Appwrite key never leaves the host, the same steps can run inside the Netlify build: set `ENGRAM_PROVISION=<random id>` (and optionally `ENGRAM_PROVISION_STEPS=setup,experiments,functions,seed,diagnose`), deploy, and read the redacted report at `/_provision/<id>.json`. `ENGRAM_DEMO_RESET=<same id>` re-seeds the demo space once. Remove the variables afterwards; without them the step does nothing.
+**Provisioning from the hosting build.** So the Appwrite key never leaves the host, the same steps can run inside the Netlify build, in the **production context only** (deploy previews and branch deploys never run it; `scripts/provision.ts` checks `CONTEXT` too and logs why it skipped):
 
-The labeler's event trigger in `appwrite.json` (`databases.engram.collections.concepts.documents.*.create`) names the database, so keep `APPWRITE_DB_ID=engram` (the default) or change that event path to match; otherwise the labeler never fires and a new concept keeps its rule-based label until the app relabels it at 3 members.
+1. Once, on your machine: `pnpm decrypt-report --keygen ~/.engram/report.key`. It writes the private key and prints `ENGRAM_REPORT_PUBKEY=...`.
+2. In Netlify (production scope): `ENGRAM_REPORT_PUBKEY=<printed value>`, `ENGRAM_PROVISION=<16–64 chars of a-z0-9>` and optionally `ENGRAM_PROVISION_STEPS`. Default steps: `diagnose,setup,experiments,functions,seed`. Optional: `appwrite-live` (adapter integration suite against a reserved test space), `quality` (classifier and recall fixtures), `events` (Realtime channel and Function event discovery); `all` runs every step. The run is capped at `ENGRAM_PROVISION_BUDGET_MIN` (default 22) minutes.
+3. Deploy, then `pnpm decrypt-report ~/.engram/report.key https://<site>/_provision/<id>.enc.json`. The report is redacted and encrypted to your key; without `ENGRAM_REPORT_PUBKEY` no report file is written and only a summary appears in the build log. Copy `verifiedMd` from the report into `docs/verified.md`.
+
+`ENGRAM_DEMO_RESET=<same id>` re-seeds the demo space once. Remove `ENGRAM_PROVISION` afterwards; without it the step does nothing.
+
+The labeler's event trigger in `appwrite.json` (`databases.engram.collections.concepts.documents.*.update`) names the database, so keep `APPWRITE_DB_ID=engram` (the default) or change that event path to match. Whether VectorsDB documents raise `databases.*` or `vectorsdb.*` events is checked by the `events` provisioning step; until it reports one that fires, the app's inline relabelling at 3, 10, 30 and 100 members is what names concepts.
+
+**Backups and restore.** Appwrite's database backup covers the VectorsDB collections only. Space settings live in team preferences and signed checkpoints in Storage, so export those too: `pnpm backup` writes every space team (name, preferences, members) and every file in the checkpoints bucket to `~/engram-backups/` (keep the file private). To restore after a loss:
+
+1. Restore the database from its backup in the Appwrite console (Databases → `engram` → Backups → Restore), into the same database ID.
+2. `pnpm backup -- --restore <file> --dry-run`, then without `--dry-run`. Missing teams are recreated with their preferences and missing files with their original IDs and permissions. Existing spaces and files are left alone, so a newer `latestCheckpoint` is never moved backwards. Members are listed, not re-created: re-invite them.
+3. Verify every restored space (Chain page, or the sentinel's next run). A checkpoint newer than the restored database shows up as truncation, which is the honest answer: entries written after the backup are gone.
 
 | Command | What it does |
 |---------|--------------|
-| `pnpm test` | Core and engine tests: hashes, Merkle proofs (sizes 1–70), every Tamper Lab attack, 20 parallel writers, supersede/conflict/forget/as-of, the seeded demo story |
-| `pnpm e2e` | Playwright: cookie consent, sign up, sandbox, browser verification, recall, conflict resolution, Tamper Lab levels 1 and 4, public verifier, password reset, passkeys (virtual authenticator), invites |
-| `pnpm typecheck` | All packages, scripts and Functions |
+| `pnpm test` | Core and engine tests: hashes, Merkle proofs (sizes 1–70), every Tamper Lab attack, 20 parallel writers, supersede/conflict/forget/as-of, the seeded demo story; the Appwrite adapter against a mocked SDK; health, labeler, provisioning (redaction, report encryption), backup and quality harness tests. The live adapter suite runs only with `APPWRITE_TEST_ENDPOINT/PROJECT/KEY` |
+| `pnpm e2e` | Playwright: cookie consent, sign up, sandbox, browser verification, recall, conflict resolution, Tamper Lab levels 1 and 4, public verifier, password reset, passkeys (virtual authenticator), invites, every MCP tool over Streamable HTTP, Time Machine and Prove it, forget-then-verify, docs at phone width. For the pinned-key path build first with `eval "$(pnpm -s tsx scripts/e2e-keys.ts)"` |
+| `pnpm typecheck` | All packages and their tests, scripts, Functions and e2e specs |
+| `pnpm quality` | Relation accuracy (30 pairs, gate 22/30) and recall hit rate (15 queries, 40 memories) against the configured model and embeddings; `-- --offline` for rules and the hashing embedder |
+| `pnpm backup` | Export (or `-- --restore`) team settings and checkpoint files |
+| `pnpm decrypt-report` | `--keygen <file>` once, then decrypt a provisioning report |
 | `pnpm demo-agent smoke` | MCP smoke test with the official MCP client SDK (`ENGRAM_URL`, `ENGRAM_KEY`) |
 
 ## Tech stack and open-source libraries

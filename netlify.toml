@@ -2,13 +2,25 @@
 # declared explicitly because upload-triggered builds don't auto-install it.
 [build]
   base = "apps/web"
-  # `provision` is a no-op unless ENGRAM_PROVISION is set (see scripts/provision.ts).
-  command = "pnpm -C ../.. run provision && pnpm run build"
+  # Deploy previews and branch deploys only build. Provisioning (scripts/provision.ts) touches the production
+  # Appwrite project, so it is wired into the production context alone, and the script itself also refuses to
+  # run unless CONTEXT is "production". It is a no-op unless ENGRAM_PROVISION is set.
+  command = "pnpm run build"
   publish = ".next"
+
+[context.production]
+  command = "pnpm -C ../.. run provision && pnpm run build"
 
 [build.environment]
   NODE_VERSION = "22"
   NEXT_TELEMETRY_DISABLED = "1"
+
+# Encrypted provisioning reports: never cached or indexed.
+[[headers]]
+  for = "/_provision/*"
+  [headers.values]
+    Cache-Control = "no-store"
+    X-Robots-Tag = "noindex"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"

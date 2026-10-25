@@ -23,7 +23,10 @@
     "functions:build": "tsx scripts/build-functions.ts",
     "e2e": "pnpm --filter @engram/web e2e",
     "functions:deploy": "tsx scripts/deploy-functions.ts",
-    "provision": "tsx scripts/provision.ts"
+    "provision": "tsx scripts/provision.ts",
+    "decrypt-report": "tsx scripts/decrypt-report.ts",
+    "quality": "tsx scripts/quality.ts",
+    "backup": "tsx scripts/backup.ts"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.4.0",

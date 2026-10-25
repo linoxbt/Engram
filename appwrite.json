@@ -57,7 +57,7 @@
       "timeout": 60,
       "execute": [],
       "events": [
-        "databases.engram.collections.concepts.documents.*.create"
+        "databases.engram.collections.concepts.documents.*.update"
       ],
       "scopes": [
         "teams.read",

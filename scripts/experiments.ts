@@ -1,18 +1,41 @@
 /**
  * Day 1 verification experiments (Document 5, section 3) against your Appwrite project.
- *   pnpm experiments
- * Creates a temporary collection, runs every check, deletes it, and writes docs/verified.md.
- * The engine already has a fallback for each item; this tells you which path you are on.
+ *   pnpm experiments              # core items: temporary collection, every check, then deleted (section "core")
+ *   pnpm experiments -- --events  # Realtime channel and Function event discovery (section "events")
+ * Results go into their own section of docs/verified.md. The engine already has a fallback for each item; this
+ * tells you which path you are on.
  */
 import "./env";
-import { writeFileSync } from "node:fs";
+import { runEventsExperiments } from "./lib/events-experiments";
+import { table, upsertSection } from "./lib/verified-md";
 import { AppwriteException, Client, Embeddings, EmbeddingModel, ID, Query, Teams, VectorsDB, VectorsDBIndexType } from "node-appwrite";
-import { cosine, embHash, quantize } from "@engram/core";
+import { cosine, embHash, entryId, quantize } from "@engram/core";
 import { createAppwriteBackend, getConfig, isConflict } from "@engram/server";
 
 const endpoint = process.env.APPWRITE_ENDPOINT, project = process.env.APPWRITE_PROJECT_ID, key = process.env.APPWRITE_API_KEY;
 if (!endpoint || !project || !key) { console.error("Set APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID and APPWRITE_API_KEY."); process.exit(1); }
 const DB = process.env.APPWRITE_DB_ID ?? "engram";
+/** Reserved space key for anything written to the real collections ("0" never appears in generated keys). */
+const TEST_SPACE = process.env.APPWRITE_TEST_SPACE || "test0000";
+
+if (process.argv.includes("--events")) {
+  const res = await runEventsExperiments({
+    endpoint, project, key, db: DB, space: TEST_SPACE, labelerId: process.env.LABELER_FUNCTION_ID || "labeler",
+    origin: (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "").replace(/\/$/, "") || null,
+  });
+  for (const r of res.rows) console.log(`${r.ok === null ? "·" : r.ok ? "✓" : "✗"} ${r.n}. ${r.item}: ${r.result}`);
+  for (const n of res.notes) console.log(`! ${n}`);
+  console.log(`\nRealtime channel: ${res.realtimeChannel ?? "none fired"}\nFunction events that fired: ${res.functionEvents.join(", ") || "none"}`);
+  upsertSection("events", `## Realtime and Function events
+
+Run by the \`events\` step on ${new Date().toISOString()} against \`${endpoint}\`, database \`${DB}\`, reserved test space \`${TEST_SPACE}\`.
+Verified channel for the live feed: **${res.realtimeChannel ?? "none (polling)"}**. Function events that fired: **${res.functionEvents.join(", ") || "none"}**.${res.notes.length ? `\n\nNotes: ${res.notes.join("; ")}` : ""}
+
+${table(res.rows)}`);
+  console.log("Wrote the events section of docs/verified.md");
+  process.exit(res.rows.every((r) => r.ok !== false) ? 0 : 1);
+}
+
 const client = new Client().setEndpoint(endpoint).setProject(project).setKey(key);
 const vdb = new VectorsDB(client);
 const emb = new Embeddings(client);
@@ -137,15 +160,17 @@ try {
   // 13. The engine's conditional write (stage in a transaction, re-read, commit) under a real race: of two
   // writers that read the same version, exactly one may land. Runs through the engine's own adapter.
   {
+    // Runs in the real memories collection, so it uses the reserved test space (no team, no permissions) and is
+    // deleted in `finally`.
     const b = createAppwriteBackend(getConfig());
-    const id = `exp_${Date.now().toString(36)}`;
+    const id = entryId(TEST_SPACE, 900_000_000_000 + Math.floor(Math.random() * 1e9));
     try {
-      await b.vectors.create("memories", id, { embeddings: vecs[0], metadata: { space: "exp00000", n: "0" } });
+      await b.vectors.create("memories", id, { embeddings: vecs[0], metadata: { space: TEST_SPACE, n: "0" } }, []);
       const read = (await b.vectors.get<{ n: string }>("memories", id))!;
-      const attempts = await Promise.allSettled([1, 2, 3].map((n) => b.vectors.update("memories", id, { metadata: { space: "exp00000", n: String(n) } }, undefined, { ifUpdatedAt: read.$updatedAt })));
+      const attempts = await Promise.allSettled([1, 2, 3].map((n) => b.vectors.update("memories", id, { metadata: { space: TEST_SPACE, n: String(n) } }, undefined, { ifUpdatedAt: read.$updatedAt })));
       const won = attempts.filter((a) => a.status === "fulfilled").length;
       const conflicts = attempts.filter((a) => a.status === "rejected" && isConflict(a.reason)).length;
-      const stale = await b.vectors.update("memories", id, { metadata: { space: "exp00000", n: "late" } }, undefined, { ifUpdatedAt: read.$updatedAt }).then(() => "landed", (e) => (isConflict(e) ? "rejected" : `error ${err(e)}`));
+      const stale = await b.vectors.update("memories", id, { metadata: { space: TEST_SPACE, n: "late" } }, undefined, { ifUpdatedAt: read.$updatedAt }).then(() => "landed", (e) => (isConflict(e) ? "rejected" : `error ${err(e)}`));
       const ok = won === 1 && conflicts === 2 && stale === "rejected";
       rec(13, "Conditional writes under a race (3 writers, same read)", ok, `${won} landed, ${conflicts} conflicts; a later stale write was ${stale}`, ok ? "Stale copies cannot overwrite newer data (erasures stay erased)" : "Conditional writes are not safe: add a monotonic rev field and compare it instead of $updatedAt");
     } catch (e) { rec(13, "Conditional writes under a race", false, err(e), "Investigate before relying on conditional writes"); }
@@ -169,21 +194,13 @@ try {
     } catch (e) { out.push(`failed: ${err(e)}`); }
     rec(14, "Transactions: where they fail", null, out.join("; "), "Without working transactions the engine applies batches one conditional write at a time (see 13)");
   }
-
-  rec(11, "Realtime channel for VectorsDB documents", null, "manual: open the dashboard; the sidebar shows Realtime or polling", "Engine subscribes to databases.<db>.collections.memories.documents with a JWT, else polls every 3 s");
-  rec(12, "Function trigger on a VectorsDB document event", null, "manual: create a concept and check the labeler's executions", "The app labels inline when events do not fire");
 } finally {
   try { await vdb.deleteCollection({ databaseId: DB, collectionId: COLL }); } catch { /* ignore */ }
 }
 
-const md = `# Day 1 verification results
+upsertSection("core", `## Core experiments
 
-Generated by \`pnpm experiments\` on ${new Date().toISOString()} against \`${endpoint}\`, database \`${DB}\`.
-Each item matches a VERIFY note in the build series. The engine has a fallback for every one.
+Run by \`pnpm experiments\` on ${new Date().toISOString()} against \`${endpoint}\`, database \`${DB}\`. Each item matches a VERIFY note in the build series; the engine has a fallback for every one. Items 11 and 12 (Realtime and Function events) are in the events section.
 
-| # | Item | Result | OK | What Engram does |
-|---|------|--------|----|------------------|
-${rows.map((r) => `| ${r.n} | ${r.item} | ${r.result.replace(/\|/g, "\\|")} | ${r.ok === null ? "info" : r.ok ? "yes" : "**no**"} | ${r.action} |`).join("\n")}
-`;
-writeFileSync("docs/verified.md", md);
-console.log("\nWrote docs/verified.md");
+${table(rows)}`);
+console.log("\nWrote the core section of docs/verified.md");

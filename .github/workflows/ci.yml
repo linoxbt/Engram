@@ -19,27 +19,58 @@ jobs:
       ENGRAM_BACKEND: local
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      # Actions are pinned to commit SHAs (tag in the comment); Dependabot keeps them current.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Typecheck
+      - name: Typecheck (packages, their tests, scripts, Functions, e2e specs)
         run: pnpm typecheck
-      - name: Unit and integration tests
+      - name: Unit and integration tests (incl. the mocked Appwrite adapter suite)
         run: pnpm test
       - name: Build Functions
         run: pnpm functions:build
       - name: Build SDK
         run: pnpm --filter engram-sdk build
-      - name: Build web app
+      # NEXT_PUBLIC_* values are inlined at build time, so the e2e checkpoint key must exist before the build for
+      # the browser verifier's pinned-key path to be tested. The script also sets E2E_EXPECT_PINNED=1.
+      - name: Generate end-to-end checkpoint keys
+        run: pnpm exec tsx scripts/e2e-keys.ts --github-env
+      - name: Build web app (production CSP path with an Appwrite endpoint)
+        env:
+          NEXT_PUBLIC_APPWRITE_ENDPOINT: https://appwrite.invalid/v1
+          NEXT_PUBLIC_APPWRITE_PROJECT_ID: ci-dummy
         run: pnpm build
+      - name: Playwright version
+        id: pw
+        run: echo "version=$(pnpm --filter @engram/web exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - name: Install Playwright Chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter @engram/web exec playwright install --with-deps chromium
+      - name: Install Playwright system dependencies
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: pnpm --filter @engram/web exec playwright install-deps chromium
       - name: End-to-end (Playwright, local backend)
-        run: |
-          pnpm --filter @engram/web exec playwright install --with-deps chromium
-          pnpm e2e
+        run: pnpm e2e
       - name: Show end-to-end failure context
         if: failure()
         run: find apps/web/test-results -name error-context.md -print -exec cat {} \; || true
+      - name: Upload Playwright traces and report
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-${{ github.run_id }}
+          path: |
+            apps/web/test-results/
+            apps/web/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore

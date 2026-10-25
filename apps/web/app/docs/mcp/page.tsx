@@ -22,14 +22,14 @@ export default function McpDocs() {
 # Transport: Streamable HTTP · URL: ${url}/api/mcp
 # Header: Authorization: Bearer eng_XXXX_...`}</code></pre>
       <h2>Tools</h2>
-      <table><thead><tr><th>Tool</th><th>Input</th><th>Returns</th></tr></thead><tbody>
+      <div className="overflow-x-auto"><table><thead><tr><th>Tool</th><th>Input</th><th>Returns</th></tr></thead><tbody>
         <tr><td><code>remember</code></td><td>text, kind?, subject?, importance?, confidence?, source?, validFrom?, idempotencyKey?</td><td>id, seq, hash, status (created | duplicate), relations</td></tr>
         <tr><td><code>recall</code></td><td>query, k?, asOf?, kinds?, subject?, agent?, includeSuperseded?, verify?</td><td>memories with author, time, validity, conflicts and checkpoint</td></tr>
         <tr><td><code>forget</code></td><td>id, reason</td><td>forgetEntryId, seq, target, status</td></tr>
         <tr><td><code>timeline</code></td><td>subject, limit?</td><td>every entry about a subject, oldest first</td></tr>
         <tr><td><code>verify</code></td><td>id?, mode?</td><td>integrity status; with an id, an inclusion proof</td></tr>
         <tr><td><code>resolve</code></td><td>winnerId, loserId, action?, reason?</td><td>the link entry recording the decision</td></tr>
-      </tbody></table>
+      </tbody></table></div>
       <p>Each tool returns <code>structuredContent</code> and a short text block written for a model, for example:</p>
       <pre><code>{`3 memories (as of now). 2 in conflict.
 [#47 valid, conflicts with #49] Ada downgraded from Pro to Basic on 22 Oct. (support-agent, 22 Oct 11:15)
