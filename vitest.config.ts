@@ -9,10 +9,11 @@ export default defineConfig({
       "@engram/core": r("./packages/core/src/index.ts"),
       "@engram/server": r("./packages/server/src/index.ts"),
       "engram-sdk": r("./packages/sdk/src/index.ts"),
+      "@/": r("./apps/web/"),
     },
   },
   test: {
-    include: ["packages/*/test/**/*.test.ts", "scripts/test/**/*.test.ts"],
+    include: ["packages/*/test/**/*.test.ts", "scripts/test/**/*.test.ts", "apps/web/test/**/*.test.ts"],
     testTimeout: 30_000,
   },
 });
