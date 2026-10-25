@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { AuthCard } from "@/components/auth-card";
 import { Button, ErrorNote, Skeleton } from "@/components/ui";
@@ -9,9 +9,8 @@ import { when } from "@/lib/format";
 
 interface Preview { spaceName: string; invitedBy: string; email: string | null; expiresAt: string }
 
-export function InviteView() {
+export function InviteView({ token }: { token: string }) {
   const router = useRouter();
-  const token = useSearchParams().get("token") ?? "";
   const here = `/invite?token=${encodeURIComponent(token)}`;
   const preview = useQuery({ queryKey: ["invite", token], queryFn: () => api<Preview>(`/api/invites?token=${encodeURIComponent(token)}`), enabled: !!token, retry: false });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ user: { email: string } | null }>("/api/auth/me") });

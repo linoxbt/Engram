@@ -36,7 +36,7 @@ export function Feed({ items, onOpen, fresh }: { items: FeedItem[]; onOpen?: (id
                 <span>{ago(it.createdAt)}</span>
                 {it.subject && <span className="truncate">· {it.subject}</span>}
               </span>
-              <span className={clsx("mt-0.5 block text-sm", it.status === "superseded" && "text-muted line-through decoration-muted/60", it.status === "forgotten" && "italic text-muted")}>
+              <span className={clsx("mt-0.5 block text-sm", it.status === "superseded" && "strike text-muted", it.status === "forgotten" && "italic text-muted")}>
                 {it.op === "forget" ? `Forgot #${it.target}${it.text ? `: ${it.text}` : ""}` : it.op === "link" ? `Resolved: ${it.kind} #${it.target}${it.text ? ` (${it.text})` : ""}` : it.text ?? "Content erased. Receipt kept."}
               </span>
               <span className="mt-1 flex flex-wrap items-center gap-1">

@@ -7,7 +7,7 @@ import { e2eKeys } from "../../scripts/lib/e2e-keys";
 // Throwaway Ed25519 keys (shared with the build through scripts/e2e-keys.ts, so a build made after that script pins
 // the same public key) and a fresh data directory for this run.
 const keys = e2eKeys();
-const PORT = 3100;
+const PORT = Number(process.env.E2E_PORT ?? 3100);
 const dir = mkdtempSync(join(tmpdir(), "engram-e2e-"));
 
 export default defineConfig({
@@ -26,10 +26,12 @@ export default defineConfig({
     { name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },
   ],
   webServer: {
-    command: `npx next start -p ${PORT}`,
+    // Browsers check signatures only with keys built into the bundle (NEXT_PUBLIC_* is inlined at build time), so
+    // the app is built with this run's throwaway key before it starts.
+    command: `npx next build && npx next start -p ${PORT}`,
     url: `http://localhost:${PORT}/api/v1/health`,
     reuseExistingServer: false,
-    timeout: 120_000,
+    timeout: 400_000,
     env: {
       ENGRAM_BACKEND: "local",
       ENGRAM_DEV_LINKS: "true",
@@ -38,6 +40,7 @@ export default defineConfig({
       CP_KEY_ID: keys.keyId,
       CP_PUBLIC_KEYS: `${keys.keyId}:${keys.publicKey}`,
       NEXT_PUBLIC_CP_PUBLIC_KEY: keys.publicKey,
+      NEXT_PUBLIC_CP_PUBLIC_KEYS: `${keys.keyId}:${keys.publicKey}`,
       NEXT_PUBLIC_CP_KEY_ID: keys.keyId,
       NEXT_PUBLIC_APP_URL: `http://localhost:${PORT}`,
       NEXT_TELEMETRY_DISABLED: "1",

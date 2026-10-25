@@ -5,6 +5,8 @@ import { WaveMesh } from "@/components/landing/wave-mesh";
 import { CookieSettingsLink } from "@/components/cookie-settings-link";
 import { ProofPlayground } from "@/components/landing/proof-playground";
 import { SessionLink } from "@/components/landing/session-link";
+import { DemoButton } from "@/components/landing/demo-button";
+import { LandingMenu, SignInLink } from "@/components/landing/landing-nav";
 import { Reveal } from "@/components/landing/reveal";
 import { TimeScrubber } from "@/components/landing/time-scrubber";
 
@@ -29,9 +31,9 @@ const APPWRITE = [
   ["VectorsDB", "memories · concepts · agents · recalls, HNSW cosine"],
   ["Embeddings", "nomic-embed-text 768 · all-minilm 384, built in"],
   ["Unique IDs", "the chain's lock-free concurrency control"],
-  ["Transactions", "atomic, conditional derived updates"],
+  ["Conditional writes", "derived updates as compare-and-swap on each document's $updatedAt, so concurrent writers never overwrite each other"],
   ["Permissions", "every memory readable only by its space's team"],
-  ["Realtime", "new memories arrive in the console as they're written"],
+  ["Realtime", "the console updates live over Realtime where it is available, and falls back to polling every few seconds"],
   ["Storage + Functions", "signed checkpoints, scheduled sealing, sentinel"],
   ["Auth + Teams", "one team per space; settings in team preferences"],
 ];
@@ -39,18 +41,22 @@ const APPWRITE = [
 export default function Landing() {
   const url = process.env.NEXT_PUBLIC_APP_URL ?? "https://engram.example";
   const demo = process.env.NEXT_PUBLIC_DEMO_SPACE ?? null;
+  // The guest demo needs a demo space on the server (DEMO_SPACE, falling back to NEXT_PUBLIC_DEMO_SPACE).
+  const guestDemo = !!(process.env.DEMO_SPACE || demo);
   return (
     <div className="prose-sans relative min-h-screen overflow-x-clip bg-bg">
       {/* Floating navigation */}
       <header className="fixed inset-x-0 top-4 z-40 flex justify-center px-4">
-        <nav className="l-glass flex h-14 w-full max-w-5xl items-center justify-between !rounded-full !bg-bg/90 px-4 sm:px-6" aria-label="Main">
+        <nav className="l-glass relative flex h-14 w-full max-w-5xl items-center justify-between !rounded-full !bg-bg/90 px-4 sm:px-6" aria-label="Main">
           <Link href="/" aria-label="Engram home"><Wordmark /></Link>
           <div className="flex items-center gap-1 text-[13px] sm:gap-2">
             <a href="#proof" className="hidden rounded-full px-3 py-1.5 text-muted hover:text-text md:inline">Proof</a>
             <a href="#time" className="hidden rounded-full px-3 py-1.5 text-muted hover:text-text md:inline">Time</a>
             <Link href="/docs" className="hidden rounded-full px-3 py-1.5 text-muted hover:text-text sm:inline">Docs</Link>
             <Link href="/verify" className="hidden rounded-full px-3 py-1.5 text-muted hover:text-text sm:inline">Verify</Link>
+            <SignInLink className="rounded-full px-2 py-1.5 text-muted hover:text-text sm:px-3" />
             <SessionLink signedIn="Console" signedOut="Begin" className="l-btn l-btn-primary !h-9 !px-4 !text-[13px]" />
+            <LandingMenu demo={demo} />
           </div>
         </nav>
       </header>
@@ -71,6 +77,7 @@ export default function Landing() {
           </p>
           <div className="mt-10 flex flex-wrap gap-3">
             <SessionLink signedIn="Open the console" signedOut="Create a memory space" className="l-btn l-btn-primary"> <span aria-hidden>→</span></SessionLink>
+            {guestDemo && <DemoButton className="l-btn l-btn-ghost disabled:opacity-60" />}
             <a href="#proof" className="l-btn l-btn-ghost">Try to break it</a>
             {demo && <Link href={`/verify/${demo}`} className="l-btn l-btn-ghost">Verify the live chain</Link>}
           </div>

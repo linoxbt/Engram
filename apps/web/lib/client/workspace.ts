@@ -41,13 +41,14 @@ export const storageDown = (h: Health | undefined) => !!h?.database && !h.databa
  * Runs one query per space with the same key the space pages use, so the caches are shared.
  * Results keep the space beside the data; failures stay per space instead of failing the page.
  */
-export function useEachSpace<T>(spaces: SpaceRow[] | undefined, part: string, path: (key: string) => string, enabled = true) {
+export function useEachSpace<T>(spaces: SpaceRow[] | undefined, part: string, path: (key: string) => string, enabled = true, refetchInterval: number | false = false) {
   const results = useQueries({
     queries: (spaces ?? []).map((s) => ({
       queryKey: ["space", s.key, part],
       queryFn: () => api<T>(path(s.key)),
       enabled,
       retry: 1,
+      refetchInterval,
     })),
   });
   return {

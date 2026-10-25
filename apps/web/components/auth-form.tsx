@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/client/api";
@@ -13,11 +13,10 @@ import { CookieNotice } from "./cookie-notice";
 import { IconKey } from "./icons";
 import { Button, ErrorNote, Field, Input } from "./ui";
 
-export function AuthForm({ mode }: { mode: "login" | "signup" }) {
+/** `next` comes from the server page, so the form is in the server-rendered HTML. */
+export function AuthForm({ mode, next = null }: { mode: "login" | "signup"; next?: string | null }) {
   const router = useRouter();
   const qc = useQueryClient();
-  const params = useSearchParams();
-  const next = params.get("next");
   const consent = useConsent();
   const [error, setError] = useState<unknown>(null);
   // The terms box gates the button; read its real state on mount in case it was ticked before hydration.

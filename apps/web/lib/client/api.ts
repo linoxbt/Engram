@@ -34,10 +34,16 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
   try {
     return await readOk<T>(res);
   } catch (e) {
-    // An account that never accepted the Terms (made directly against Appwrite) is sent to accept them first.
-    if (e instanceof ApiError && e.code === "terms_required" && typeof window !== "undefined" && window.location.pathname !== "/accept-terms") {
-      window.location.href = `/accept-terms?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+    // Accounts created outside the sign-up form must accept the terms before using the app.
+    if (e instanceof ApiError && e.code === "terms_required" && typeof window !== "undefined" && !window.location.pathname.startsWith(ACCEPT_TERMS)) {
+      window.location.href = `${ACCEPT_TERMS}?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
     }
     throw e;
   }
 }
+
+/** The accept-terms screen (built by the auth team). */
+export const ACCEPT_TERMS = "/accept-terms";
+
+/** A write refused because the signed-in account is a read-only guest. */
+export const isReadOnly = (e: unknown) => e instanceof ApiError && e.code === "read_only";

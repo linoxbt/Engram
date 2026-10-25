@@ -37,7 +37,7 @@ export function View() {
     <>
       <PageHeader title="Connect an agent">Give any MCP client a memory it can prove. One key per agent, one line of config.</PageHeader>
       <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
-        <div className="space-y-5">
+        <div className="min-w-0 space-y-5">
           <Card title="1 · Create an agent key">
             <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
               <label className="flex-1 text-xs">
@@ -51,7 +51,7 @@ export function View() {
                 ? <Link href={`/app/${target}/agents`} className="inline-flex h-9 items-center justify-center gap-2 rounded-[2px] bg-accent px-4 text-xs text-bg"><IconKey /> Create key in this space</Link>
                 : <Link href="/app" className="inline-flex h-9 items-center justify-center gap-2 rounded-[2px] bg-accent px-4 text-xs text-bg">Create a space <IconArrow /></Link>}
             </div>
-            <p className="border-t border-line px-4 py-3 text-2xs text-muted">Keys are scoped (remember, recall, forget, verify) and shown once. Engram stores only a hash.</p>
+            <p className="border-t border-line px-4 py-3 text-2xs text-muted">Keys are scoped (remember, recall, forget, verify, resolve) and shown once. Engram stores only a hash.</p>
           </Card>
           <Card title="2 · Add it to your client">
             <div className="space-y-3 p-4">

@@ -1,10 +1,15 @@
-"use client";
-import { useParams, useRouter } from "next/navigation";
-import { MemoryDrawer } from "@/components/memory-drawer";
+import { spaceTitle } from "../../titles";
+import { MemoriesView } from "../view";
+import { MemoryDeepLink } from "./drawer";
 
-/** Deep link to a memory: opens the detail as a drawer over the explorer. */
-export default function MemoryPage() {
-  const { space, id } = useParams<{ space: string; id: string }>();
-  const router = useRouter();
-  return <MemoryDrawer spaceKey={space} id={id} onClose={() => router.push(`/app/${space}/memories`)} onNavigate={(next) => router.push(`/app/${space}/memories/${next}`)} />;
+export const generateMetadata = spaceTitle("Memory");
+
+/** Deep link to a memory: the explorer renders underneath and the memory opens over it as a drawer. */
+export default function Page() {
+  return (
+    <>
+      <MemoriesView />
+      <MemoryDeepLink />
+    </>
+  );
 }

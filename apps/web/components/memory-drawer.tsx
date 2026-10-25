@@ -1,13 +1,16 @@
 "use client";
 import clsx from "clsx";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Checkpoint } from "@engram/core";
 import { api } from "@/lib/client/api";
 import { useSpaceInfo } from "@/lib/client/hooks";
-import { walkProof, type ProofStep } from "@/lib/client/proof";
+import { pollInterval } from "@/lib/client/live";
+import { useCanWrite, useLiveMode } from "./space-context";
+import { walkProof, type ProofStep, type SigCheck } from "@/lib/client/proof";
 import { when, shortHash } from "@/lib/format";
-import { IconCross, IconSeal, IconTick } from "./icons";
+import { IconSeal } from "./icons";
+import { ProofSteps, ProofVerdict } from "./proof-result";
 import { Button, Drawer, ErrorNote, Field, Hash, Modal, Pill, Skeleton, Tabs, Textarea, useToast } from "./ui";
 
 interface Detail {
@@ -26,10 +29,12 @@ type Tab = "memory" | "provenance" | "relations" | "proof" | "timeline";
 export function MemoryDrawer({ spaceKey, id, onClose, onNavigate }: { spaceKey: string; id: string | null; onClose: () => void; onNavigate: (id: string) => void }) {
   const [tab, setTab] = useState<Tab>("memory");
   useEffect(() => setTab("memory"), [id]);
-  const q = useQuery({ enabled: !!id, queryKey: ["space", spaceKey, "memory", id], queryFn: () => api<Detail>(`/api/app/spaces/${spaceKey}/memories/${id}`) });
+  const live = useLiveMode();
+  // Refetch while open, so an erasure made elsewhere (an agent calling forget over MCP) shows up here.
+  const q = useQuery({ enabled: !!id, queryKey: ["space", spaceKey, "memory", id], queryFn: () => api<Detail>(`/api/app/spaces/${spaceKey}/memories/${id}`), refetchInterval: pollInterval(live) });
   const d = q.data;
   return (
-    <Drawer open={!!id} onClose={onClose} title={
+    <Drawer open={!!id} onClose={onClose} label={`Memory entry #${d?.seq ?? (id ? Number(id.slice(-12)) : "")}`} title={
       <div className="flex items-center gap-2">
         <span className="label">Entry</span>
         <span className="tabular text-accent">#{d?.seq ?? (id ? Number(id.slice(-12)) : "")}</span>
@@ -39,7 +44,8 @@ export function MemoryDrawer({ spaceKey, id, onClose, onNavigate }: { spaceKey: 
       <Tabs<Tab> value={tab} onChange={setTab} className="mx-4 mt-2" panelClassName="p-4" tabs={[{ id: "memory", label: "Memory" }, { id: "provenance", label: "Provenance" }, { id: "relations", label: "Relations" }, { id: "proof", label: "Proof" }, { id: "timeline", label: "Timeline" }]}>
         {q.isLoading && <div className="space-y-2"><Skeleton className="h-6 w-3/4" /><Skeleton className="h-4 w-1/2" /><Skeleton className="h-24" /></div>}
         <ErrorNote error={q.error} />
-        {d && tab === "memory" && <MemoryTab d={d} spaceKey={spaceKey} onNavigate={onNavigate} />}
+        {/* Keyed by entry: the next memory opened must not inherit this one's forget dialog or dissolve state. */}
+        {d && tab === "memory" && <MemoryTab key={d.id} d={d} spaceKey={spaceKey} onNavigate={onNavigate} />}
         {d && tab === "provenance" && <ProvenanceTab d={d} />}
         {d && tab === "relations" && <RelationsTab d={d} onNavigate={onNavigate} />}
         {d && tab === "proof" && <ProofTab d={d} spaceKey={spaceKey} />}
@@ -56,10 +62,18 @@ function Row({ k, children }: { k: string; children: React.ReactNode }) {
 /** The forget motion: characters dissolve one by one, leaving a dashed outline and the receipt. */
 export function Dissolve({ text, run }: { text: string; run: boolean }) {
   const order = useMemo(() => text.split("").map((_, i) => ({ i, d: Math.random() * 900 })), [text]);
+  // Mount visible, then fade on the next frame: a transition never plays on an element that starts invisible.
+  const [go, setGo] = useState(false);
+  useEffect(() => {
+    if (!run) { setGo(false); return; }
+    let b = 0;
+    const a = requestAnimationFrame(() => { b = requestAnimationFrame(() => setGo(true)); });
+    return () => { cancelAnimationFrame(a); cancelAnimationFrame(b); };
+  }, [run]);
   return (
     <span aria-label={run ? "Content erased" : text}>
       {text.split("").map((ch, i) => (
-        <span key={i} className="transition-all duration-500" style={{ opacity: run ? 0 : 1, filter: run ? "blur(3px)" : "none", transitionDelay: run ? `${order[i].d}ms` : "0ms" }}>{ch}</span>
+        <span key={i} aria-hidden className="transition-all duration-500" style={{ opacity: go ? 0 : 1, filter: go ? "blur(3px)" : "none", transitionDelay: go ? `${order[i].d}ms` : "0ms" }}>{ch}</span>
       ))}
     </span>
   );
@@ -68,32 +82,41 @@ export function Dissolve({ text, run }: { text: string; run: boolean }) {
 function MemoryTab({ d, spaceKey, onNavigate }: { d: Detail; spaceKey: string; onNavigate: (id: string) => void }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const canWrite = useCanWrite();
   const [confirm, setConfirm] = useState(false);
   const [reason, setReason] = useState("Erasure requested by the customer");
-  const [dissolving, setDissolving] = useState(false);
+  // The text being dissolved: set by our own forget, or when a refetch finds the text erased by someone else.
+  const [ghost, setGhost] = useState<string | null>(null);
+  const lastText = useRef(d.text);
+  useEffect(() => {
+    if (lastText.current != null && d.text == null) setGhost((g) => g ?? lastText.current);
+    lastText.current = d.text;
+  }, [d.text]);
+  const dissolving = ghost != null;
   const forget = useMutation({
     mutationFn: () => api<{ seq: number; forgetEntryId: string }>(`/api/app/spaces/${spaceKey}/memories/${d.id}/forget`, { method: "POST", json: { reason } }),
     onSuccess: (r) => {
       setConfirm(false);
-      setDissolving(true);
+      setGhost(d.text ?? "");
       toast(`Content erased. The record of erasure is entry #${r.seq}.`, "ok");
       setTimeout(() => { qc.invalidateQueries({ queryKey: ["space", spaceKey] }); qc.invalidateQueries({ queryKey: ["conflicts"] }); }, 1500);
     },
   });
   const isMemory = d.op === "remember" || d.op === "reflect";
   const erased = d.status === "forgotten" || (isMemory && d.text == null);
+  const eraser = d.forgottenBy ? d.related.find((r) => r.id === d.forgottenBy)?.agentName : undefined;
   return (
     <div className="space-y-4">
       <div className={clsx("rounded-[2px] border p-4", erased || dissolving ? "border-dashed border-line-2" : "border-line bg-bg")}>
         {isMemory ? (
           erased && !dissolving ? (
             <div className="space-y-1 text-sm text-muted">
-              <p>Content erased on {when(d.forgottenAt)}. Receipt kept.</p>
+              <p>Content erased on {when(d.forgottenAt)}{eraser ? ` by ${eraser}` : ""}. Receipt kept.</p>
               <p className="text-2xs">Salted fingerprint: <code>{shortHash(d.contentHash, 10, 6)}</code>{d.forgottenBy && <> · erased by <button className="text-accent hover:underline" onClick={() => onNavigate(d.forgottenBy!)}>#{Number(d.forgottenBy.slice(-12))}</button></>}</p>
             </div>
           ) : (
             <p className={clsx("text-base leading-relaxed", d.status === "superseded" && "text-muted")}>
-              {dissolving ? <Dissolve text={d.text ?? ""} run /> : d.text}
+              {dissolving ? <Dissolve text={ghost} run /> : d.text}
             </p>
           )
         ) : (
@@ -103,7 +126,7 @@ function MemoryTab({ d, spaceKey, onNavigate }: { d: Detail; spaceKey: string; o
             {d.text && <span className="mt-1 block text-xs text-muted">Reason: {d.text}</span>}
           </p>
         )}
-        {dissolving && <p className="mt-3 text-xs text-muted anim-fade" style={{ animationDelay: "1.1s" }}>Content erased. Receipt kept.</p>}
+        {dissolving && <p className="mt-3 text-xs text-muted anim-fade" style={{ animationDelay: "1.1s" }}>Content erased{eraser ? ` by ${eraser}` : ""}. Receipt kept.</p>}
       </div>
       <div>
         <Row k="Kind">{d.kind}</Row>
@@ -116,7 +139,7 @@ function MemoryTab({ d, spaceKey, onNavigate }: { d: Detail; spaceKey: string; o
         <Row k="Recalled">{d.access} times{d.lastAccessAt ? `, last ${when(d.lastAccessAt)}` : ""}</Row>
         {d.relateStatus === "pending" && <Row k="Check"><Pill tone="pending">contradiction check pending</Pill></Row>}
       </div>
-      {isMemory && !erased && !dissolving && (
+      {canWrite && isMemory && !erased && !dissolving && (
         <div className="flex justify-end">
           <Button variant="danger" size="sm" onClick={() => setConfirm(true)}>Forget this memory</Button>
         </div>
@@ -205,43 +228,29 @@ function RelationsTab({ d, onNavigate }: { d: Detail; onNavigate: (id: string) =
 
 function ProofTab({ d, spaceKey }: { d: Detail; spaceKey: string }) {
   const info = useSpaceInfo(spaceKey);
-  const [state, setState] = useState<{ steps: ProofStep[]; shown: number; rootOk: boolean | null; sigOk: boolean | null; error: string | null; running: boolean }>({ steps: [], shown: 0, rootOk: null, sigOk: null, error: null, running: false });
+  const [state, setState] = useState<{ steps: ProofStep[]; shown: number; rootOk: boolean | null; sig: SigCheck | null; error: string | null; running: boolean }>({ steps: [], shown: 0, rootOk: null, sig: null, error: null, running: false });
   const run = async () => {
-    setState({ steps: [], shown: 0, rootOk: null, sigOk: null, error: null, running: true });
+    setState({ steps: [], shown: 0, rootOk: null, sig: null, error: null, running: true });
     try {
       const p = await api<{ leaf: string; index: number; path: string[]; checkpoint: Checkpoint & { file: string }; publicKey: string | null }>(`/api/app/spaces/${spaceKey}/memories/${d.id}/proof`);
-      const res = await walkProof({ leaf: p.leaf, index: p.index, size: Number(p.checkpoint.size), path: p.path, checkpoint: p.checkpoint, publicKey: info.data?.publicKey ?? p.publicKey });
+      const res = await walkProof({ leaf: p.leaf, index: p.index, path: p.path, checkpoint: p.checkpoint, serverKey: info.data?.publicKey ?? p.publicKey });
+      // Steps appear one by one, but nothing ticks until the root and signature verdict is in.
       for (let i = 1; i <= res.steps.length; i++) {
         setState((s) => ({ ...s, steps: res.steps, shown: i }));
         await new Promise((r) => setTimeout(r, 160));
       }
-      setState((s) => ({ ...s, rootOk: res.rootOk, sigOk: res.sigOk, running: false }));
+      setState((s) => ({ ...s, steps: res.steps, shown: res.steps.length, rootOk: res.rootOk, sig: res.sig, running: false }));
     } catch (e) {
       setState((s) => ({ ...s, error: e instanceof Error ? e.message : String(e), running: false }));
     }
   };
   return (
     <div className="space-y-3">
-      <p className="text-xs text-muted">Fetches the Merkle path from this entry to the latest signed checkpoint and recomputes every step in your browser, then checks the Ed25519 signature with the public key.</p>
+      <p className="text-xs text-muted">Fetches the Merkle path from this entry to the latest signed checkpoint and recomputes every step in your browser, then checks the Ed25519 signature with the public key built into this site.</p>
       <Button variant="gold" onClick={run} loading={state.running}><IconSeal /> Verify this memory</Button>
       {state.error && <p className="text-xs text-warn">{state.error}</p>}
-      <ol className="space-y-1.5">
-        {state.steps.slice(0, state.shown).map((s, i) => (
-          <li key={i} className="panel flex items-center gap-2 px-3 py-1.5 text-2xs anim-slide-in">
-            <IconTick size={11} className="text-valid" />
-            <span className="w-16 text-muted">{s.label}</span>
-            {s.sibling && <span className="text-muted">{s.side === "L" ? "← " : "→ "}{shortHash(s.sibling)}</span>}
-            <span className="ml-auto tabular">{shortHash(s.hash)}</span>
-          </li>
-        ))}
-      </ol>
-      {state.rootOk != null && (
-        <div className={clsx("rounded-[2px] border px-3 py-2 text-xs", state.rootOk && state.sigOk !== false ? "border-gold/60 text-gold anim-stamp" : "border-tamper/60 text-tamper")}>
-          {state.rootOk ? <IconTick className="mr-1 inline" /> : <IconCross className="mr-1 inline" />}
-          {state.rootOk ? "Root matches the signed checkpoint. " : "Root does not match the checkpoint. "}
-          {state.sigOk == null ? "No public key configured to check the signature." : state.sigOk ? "Signature valid." : "Signature INVALID."}
-        </div>
-      )}
+      <ProofSteps steps={state.steps} shown={state.shown} rootOk={state.rootOk} />
+      {state.rootOk != null && state.sig && <ProofVerdict rootOk={state.rootOk} sig={state.sig} />}
     </div>
   );
 }
@@ -249,6 +258,9 @@ function ProofTab({ d, spaceKey }: { d: Detail; spaceKey: string }) {
 function TimelineTab({ d, spaceKey, onNavigate }: { d: Detail; spaceKey: string; onNavigate: (id: string) => void }) {
   const q = useQuery({ enabled: !!d.subject, queryKey: ["space", spaceKey, "timeline", d.subject], queryFn: () => api<{ entries: { id: string; seq: number; op: string; kind: string; text: string | null; status: string; createdAt: string; agentName: string; target: string | null }[] }>(`/api/app/spaces/${spaceKey}/timeline?subject=${encodeURIComponent(d.subject!)}`) });
   if (!d.subject) return <p className="py-8 text-center text-xs text-muted">This memory has no subject, so it has no timeline.</p>;
+  if (q.isLoading) return <div className="space-y-2"><Skeleton className="h-10" /><Skeleton className="h-10" /><Skeleton className="h-10" /></div>;
+  if (q.error) return <ErrorNote error={q.error} />;
+  if (!q.data?.entries.length) return <p className="py-8 text-center text-xs text-muted">Nothing else is recorded about {d.subject}.</p>;
   return (
     <ol className="relative ml-2 border-l border-line-2">
       {q.data?.entries.map((e) => (

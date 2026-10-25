@@ -57,6 +57,22 @@ export function ChainStrip({
     return () => ro.disconnect();
   }, [narrow]);
 
+  // Blocks that arrive after the first render slide in (once; the mark clears after the motion).
+  const known = useRef<number | null>(null);
+  const [fresh, setFresh] = useState<Set<number>>(new Set());
+  useEffect(() => {
+    if (!blocks.length) return;
+    const max = blocks[blocks.length - 1].seq;
+    if (known.current == null) { known.current = max; return; }
+    if (max <= known.current) return;
+    const since = known.current;
+    const added = new Set(blocks.filter((b) => b.seq > since).map((b) => b.seq));
+    known.current = max;
+    setFresh(added);
+    const t = setTimeout(() => setFresh(new Set()), 700);
+    return () => clearTimeout(t);
+  }, [blocks]);
+
   // Keep the newest blocks in view as the chain grows.
   const lastLen = useRef(0);
   useEffect(() => {
@@ -107,7 +123,7 @@ export function ChainStrip({
         className={clsx("overflow-y-auto rounded-[2px] border border-line bg-bg", compact ? "max-h-56" : "max-h-[60vh]")}>
         {list.map((b) => (
           <button key={b.seq} id={`blk-${b.seq}`} data-seq={b.seq} role="option" aria-selected={active === b.seq} onClick={() => onOpen?.(b.seq)}
-            className={clsx("flex w-full items-center gap-2 border-b border-line px-3 py-2 text-left text-xs", active === b.seq && "bg-panel-2")}>
+            className={clsx("flex w-full items-center gap-2 border-b border-line px-3 py-2 text-left text-xs", active === b.seq && "bg-panel-2", fresh.has(b.seq) && "anim-slide-in")}>
             <Block b={b} state={states?.get(b.seq)} flag={flags.has(b.seq)} small />
             <span className="w-12 shrink-0 tabular text-muted">#{b.seq}</span>
             <span className="truncate">{b.text === undefined ? <span className="text-muted">{b.op} · {shortHash(b.hash)}</span> : b.op === "forget" ? "forget entry" : b.op === "link" ? "link entry" : b.text ?? "content erased"}</span>
@@ -132,7 +148,7 @@ export function ChainStrip({
             const i = first + k;
             return (
               <div key={b.seq} id={`blk-${b.seq}`} role="option" aria-selected={active === b.seq} aria-label={`Entry ${b.seq}, ${b.op}${states?.get(b.seq) === "fail" ? ", failed verification" : states?.get(b.seq) === "ok" ? ", verified" : ""}`}
-                className="absolute" style={{ left: 8 + i * STEP, top: compact ? 14 : 22 }}
+                className={clsx("absolute", fresh.has(b.seq) && "anim-slide-in")} style={{ left: 8 + i * STEP, top: compact ? 14 : 22 }}
                 onMouseEnter={(e) => setHover({ b, x: (e.currentTarget as HTMLElement).offsetLeft - scroll })} onMouseLeave={() => setHover(null)}>
                 {i > 0 && <span className={clsx("absolute top-1/2 h-px", states?.get(b.seq) === "fail" ? "bg-tamper" : "bg-line-2")} style={{ left: -GAP, width: GAP }} />}
                 <button tabIndex={-1} onClick={() => { setActive(b.seq); onOpen?.(b.seq); }} className={clsx("block", active === b.seq && "outline outline-2 outline-offset-2 outline-accent")}>
