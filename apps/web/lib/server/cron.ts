@@ -1,10 +1,9 @@
 import "server-only";
-import { timingSafeEqualHex } from "@engram/core";
-import { EngramError, getConfig } from "@engram/server";
+import { bearerMatches, EngramError, getConfig } from "@engram/server";
 
-/** Netlify Scheduled Functions call these routes with `Authorization: Bearer $CRON_SECRET`. */
-export function requireCron(req: Request) {
+/** Netlify Scheduled Functions call these routes with `Authorization: Bearer $CRON_SECRET`. Without the secret they do not exist. */
+export async function requireCron(req: Request) {
   const secret = getConfig().cronSecret;
-  if (!secret) throw new EngramError("forbidden", "Set CRON_SECRET to enable cron routes.");
-  if (!timingSafeEqualHex(req.headers.get("authorization") ?? "", `Bearer ${secret}`)) throw new EngramError("unauthorized", "Bad cron secret.");
+  if (!secret) throw new EngramError("not_found", "Not found.");
+  if (!(await bearerMatches(req.headers.get("authorization"), secret))) throw new EngramError("unauthorized", "Bad cron secret.");
 }

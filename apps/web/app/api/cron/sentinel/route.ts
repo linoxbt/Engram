@@ -5,6 +5,6 @@ import { requireCron } from "@/lib/server/cron";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 export const GET = route(async (req) => {
-  requireCron(req);
+  await requireCron(req);
   return runSentinel(getBackend());
 });

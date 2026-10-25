@@ -7,7 +7,7 @@ export const maxDuration = 300;
 
 /** Fallback scheduler for deployments without the Appwrite checkpoint Function. */
 export const GET = route(async (req) => {
-  requireCron(req);
+  await requireCron(req);
   const key = getConfig().checkpoint.privateKey;
   if (!key) throw new EngramError("unavailable", "CP_PRIVATE_KEY is not set in this deployment; the checkpoint Function signs instead.");
   const b = getBackend();

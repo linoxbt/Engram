@@ -1,5 +1,5 @@
 /** Agent registry: the vector is the agent's description, so agents can be found by capability. */
-import { agentId, count8, iso, keyHash, timingSafeEqualHex } from "@engram/core";
+import { agentId, count8, iso, keyHash, sha256Hex, timingSafeEqualHex } from "@engram/core";
 import type { Backend, VDoc } from "./backend/types";
 import { ALL_SCOPES, backgroundDefer, type Ctx, type Scope, type SpaceInfo } from "./context";
 import { getConfig } from "./config";
@@ -135,6 +135,12 @@ export async function authAgent(b: Backend, bearer: string | null | undefined, d
   const ctx: Omit<Ctx, "defer"> = { b, cfg: getConfig(), space, actor: doc.$id, actorName: doc.metadata.name, scopes: doc.metadata.scopes };
   authCache.set(key, { ctx, at: Date.now() });
   return { ...ctx, defer };
+}
+
+/** Operator secrets (cron, seed) in `Authorization: Bearer`: hashed first, so the compare is fixed-length and leaks no length. */
+export async function bearerMatches(header: string | null | undefined, secret: string): Promise<boolean> {
+  const [a, b] = await Promise.all([sha256Hex(header ?? ""), sha256Hex(`Bearer ${secret}`)]);
+  return timingSafeEqualHex(a, b);
 }
 
 export function requireScope(ctx: Ctx, scope: Scope) {

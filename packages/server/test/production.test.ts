@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildCheckpoint, checkpointFileId, signCheckpoint, type EntryMeta } from "@engram/core";
 import {
-  append, createSpace, getConfig, getEntry, getSpace, labelConcept, latestCheckpoint, linkFound, listAllSpaces, loadChain, loadCheckpoints, recall,
+  append, bearerMatches, createSpace, getConfig, getEntry, getSpace, labelConcept, latestCheckpoint, linkFound, listAllSpaces, loadChain, loadCheckpoints, recall,
   reflect, remember, repairSpace, runCheckpoint, runSentinel, updateSettings, verifyStoredSpace, ConflictError, RememberInput, type Collection,
 } from "../src/index";
 import { setup } from "./helpers";
@@ -193,6 +193,13 @@ describe("space isolation of id-taking calls", () => {
     await expect(reflect(ctx, concept.$id)).rejects.toThrow(/not found/);
     await expect(linkFound(ctx, { target: m.id, other: m.id, kind: "contradict", reason: "" })).rejects.toThrow(/not found/);
     expect((await other.b.vectors.get<{ label: string }>("concepts", concept.$id))!.metadata.label).toBe(concept.metadata.label);
+  });
+});
+
+describe("operator secrets", () => {
+  it("match only the exact bearer secret", async () => {
+    expect(await bearerMatches("Bearer s3cret-value", "s3cret-value")).toBe(true);
+    for (const h of [null, "", "Bearer s3cret-valu", "Bearer s3cret-value ", "bearer s3cret-value", "s3cret-value"]) expect(await bearerMatches(h, "s3cret-value")).toBe(false);
   });
 });
 
