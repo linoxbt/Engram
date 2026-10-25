@@ -50,9 +50,10 @@ export function View() {
       {spaces.isLoading && <Skeleton className="h-40" />}
       {spaces.data && !list.length ? <NoSpaces /> : list.length > 0 && (
         <>
-          <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-5">
+          <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <Stat label="Spaces" value={list.length} />
             <Stat label="Verified" value={count("valid")} tone="valid" />
+            <Stat label="With warnings" value={count("warning")} tone={count("warning") ? "warn" : "muted"} hint="Hashes verify, but something was flagged (for example derived fields that disagree with the chain)" />
             <Stat label="Tampered" value={count("tampered")} tone={count("tampered") ? "tamper" : "muted"} />
             <Stat label="Not checked" value={unchecked} tone="muted" />
             <Stat label="Sealed entries" value={sealed} tone="gold" hint="Entries covered by the latest signed checkpoint of each space" />
