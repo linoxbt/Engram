@@ -6,6 +6,8 @@ Agents connect over MCP and call `remember`, `recall` and `forget`. Every memory
 
 > Built solo for the [Appwrite Databases Hackathon](https://hackathon.appwrite.io/), 19–31 October 2026. Database type: **VectorsDB**.
 
+**Live:** [engram-os.netlify.app](https://engram-os.netlify.app) · **Public verifier for the demo space, no login needed:** [engram-os.netlify.app/verify/e6gwreir](https://engram-os.netlify.app/verify/e6gwreir)
+
 ## The problem
 
 Agents now remember things between sessions, but nobody can prove what an agent knew when it made a decision. Memory can be poisoned or edited without anyone noticing, and every later decision inherits the lie. Memory never reconciles itself: old and new facts both come back in recall, and "forget me" means either losing the audit trail or breaking the promise.
@@ -26,7 +28,7 @@ Agents now remember things between sessions, but nobody can prove what an agent 
 2. Add Engram to your MCP client:
 
 ```bash
-claude mcp add --transport http engram https://<your-app>/api/mcp \
+claude mcp add --transport http engram https://engram-os.netlify.app/api/mcp \
   --header "Authorization: Bearer eng_XXXX_..."
 ```
 
@@ -123,6 +125,9 @@ The labeler's event trigger in `appwrite.json` (`databases.engram.collections.co
 | d3-force | ISC | Concept map layout |
 | Tailwind CSS | MIT | Styling with design tokens |
 | clsx | MIT | Class names |
+| @simplewebauthn/server, @simplewebauthn/browser | MIT | Passkeys (WebAuthn) in the local backend and the browser |
+| server-only | MIT | Keeps server modules out of client bundles |
+| @netlify/plugin-nextjs | MIT | Next.js runtime on Netlify |
 | Vitest, Playwright, esbuild, tsx, TypeScript | MIT / Apache-2.0 | Tests, bundling Functions, scripts |
 
 ## Limitations and roadmap

@@ -4,8 +4,8 @@ Record at 1080p, browser zoom 125 %, notifications off. One slide only.
 
 ## Before recording
 
-1. `pnpm seed -- --owner you@example.com --variant demo --key <demo-key> --public` (production) and create a sandbox from the dashboard.
-2. Connect Claude Code as support-agent: `claude mcp add --transport http engram https://<app>/api/mcp --header "Authorization: Bearer <support-agent key>"`.
+1. The demo space is `e6gwreir` ("Northwind support", owner engramdb@gmail.com; set its password with "Forgot password"). Create a sandbox from the dashboard for the Tamper Lab part.
+2. Connect Claude Code as support-agent: `claude mcp add --transport http engram https://engram-os.netlify.app/api/mcp --header "Authorization: Bearer <support-agent key>"`.
 3. Open tabs: Claude Code, Overview, Conflicts, Time Machine, the sandbox Tamper Lab, the public verifier on a phone.
 4. Record the live MCP part twice and keep the better take.
 
@@ -17,7 +17,7 @@ Record at 1080p, browser zoom 125 %, notifications off. One slide only.
 | 0:48–1:10 | Time Machine: drag to Tuesday 20 October (Pro), then to now (Basic); press Prove it | "Now the question every team gets after an AI makes a mistake: what did it know at the time? On Tuesday, Pro. Today, Basic. And I can prove it." |
 | 1:10–1:28 | Claude Code calls forget on the address; the drawer text dissolves; Verify stays green | "Ada asks us to delete her address. The content is gone for good, but the chain still verifies, because we keep a salted receipt of what was erased." |
 | 1:28–2:05 | Tamper Lab: Edit the text (level 1), Edit and fix the entry's own hash (level 3), Rewrite all later history (level 4) | "Now an attacker with database access changes one memory to approve a ninety percent discount. The verifier finds the exact entry. A smarter attacker rewrites everything after it. The signed checkpoint catches that too." |
-| 2:05–2:20 | One slide: Appwrite features used | "Engram runs on Appwrite VectorsDB: built-in embeddings, cosine search with metadata filters, unique IDs and transactions that make the chain safe without locks, document permissions, realtime, and backups." |
+| 2:05–2:20 | One slide: Appwrite features used | "Engram runs on Appwrite VectorsDB: built-in embeddings, cosine search with metadata filters, unique IDs and conditional writes that make the chain safe without locks, document permissions, realtime, Functions that sign checkpoints, and backups." |
 | 2:20–2:30 | Public verifier on a phone, then the logo | "Anyone can verify it, no login needed. Engram. Memory you can prove." |
 
 ## Judge questions
