@@ -61,10 +61,10 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     >
       {/* method="post" so a submit before hydration can never put the password in the URL. */}
       <form method="post" className="space-y-3" onSubmit={(e) => { e.preventDefault(); void submit(e.currentTarget); }}>
-        {mode === "signup" && <Field label="Name"><Input name="name" autoComplete="name" required /></Field>}
-        <Field label="Email"><Input name="email" type="email" autoComplete="email" required /></Field>
+        {mode === "signup" && <Field label="Name"><Input name="name" autoComplete="name" required maxLength={80} /></Field>}
+        <Field label="Email"><Input name="email" type="email" autoComplete="email" required maxLength={254} /></Field>
         <Field label="Password" help={mode === "signup" ? "At least 8 characters." : undefined}>
-          <Input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required minLength={mode === "signup" ? 8 : 1} name="password" />
+          <Input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required minLength={mode === "signup" ? 8 : 1} maxLength={256} name="password" />
         </Field>
         {mode === "login" && (
           <div className="-mt-1 text-right"><Link href="/forgot-password" className="text-2xs text-muted underline-offset-2 hover:text-text hover:underline">Forgot password?</Link></div>
