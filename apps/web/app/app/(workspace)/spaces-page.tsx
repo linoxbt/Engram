@@ -1,15 +1,17 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
-import { finishSeeding, type SeedState } from "@/lib/client/seed";
+import { finishSeeding, seedErrorReason, type SeedState } from "@/lib/client/seed";
 import { useHealth, useSpaces } from "@/lib/client/workspace";
 import { ago } from "@/lib/format";
 import { IconLab, IconPlus, IconShield } from "@/components/icons";
 import { IntegrityBadge } from "@/components/integrity-badge";
 import { Button, Card, Empty, ErrorNote, Field, Input, Modal, Pill, Skeleton, Textarea, Toggle, CopyButton } from "@/components/ui";
+
+interface Created { key: string; agentKeys: Record<string, string>; seeding: SeedState | null }
 
 export function SpacesPage() {
   const router = useRouter();
@@ -23,25 +25,51 @@ export function SpacesPage() {
   const [demo, setDemo] = useState(false);
   const [keys, setKeys] = useState<{ key: string; agentKeys: Record<string, string> } | null>(null);
   const [seedProgress, setSeedProgress] = useState<{ done: number; total: number } | null>(null);
+  // The space created by this dialog. Once it exists, the button resumes its seeding: it never creates a second space.
+  const [created, setCreated] = useState<Created | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const finish = (r: Created) => {
+    setMode(null);
+    setCreated(null);
+    if (Object.keys(r.agentKeys).length) setKeys(r);
+    else router.push(`/app/${r.key}`);
+  };
   const create = useMutation({
     mutationFn: async () => {
-      setSeedProgress(null);
-      const r = await api<{ key: string; agentKeys: Record<string, string>; seeding: SeedState | null }>("/api/app/spaces", { method: "POST", json: { name, description, publicVerify, sandbox: mode === "sandbox", seed: demo ? "demo" : "none" } });
-      await finishSeeding(r.key, r.seeding, setSeedProgress);
+      let r = created;
+      if (!r) {
+        r = await api<Created>("/api/app/spaces", { method: "POST", json: { name, description, publicVerify, sandbox: mode === "sandbox", seed: demo ? "demo" : "none" } });
+        setCreated(r);
+        qc.invalidateQueries({ queryKey: ["spaces"] });
+      }
+      await finishSeeding(r.key, r.seeding, { onProgress: setSeedProgress });
       return r;
     },
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["spaces"] });
-      setMode(null);
-      if (Object.keys(r.agentKeys).length) setKeys(r);
-      else router.push(`/app/${r.key}`);
+      // Only move on if the person is still here: seeding can take a while.
+      if (mounted.current) finish(r);
     },
   });
+  const seeding = create.isPending && !!created;
+  const failed = !!created && !!create.error && !create.isPending;
   const openModal = (m: "space" | "sandbox") => {
     setMode(m);
     setName(m === "sandbox" ? "Tamper Lab sandbox" : "");
     setDescription(m === "sandbox" ? "A disposable copy of the demo story for attacking and verifying." : "");
+    setPublicVerify(false);
     setDemo(false);
+    setCreated(null);
+    setSeedProgress(null);
+    create.reset();
+  };
+  // While the story is being written the dialog stays open, so nothing redirects later by surprise. After a failure,
+  // closing keeps the space (it can be resumed from its page) and still shows agent keys that are shown only once.
+  const closeModal = () => {
+    if (create.isPending) return;
+    if (created) finish(created);
+    else setMode(null);
   };
   return (
     <>
@@ -94,25 +122,38 @@ export function SpacesPage() {
         </div>
       </div>
 
-      <Modal open={mode != null} onClose={() => setMode(null)} title={mode === "sandbox" ? "New sandbox" : "New space"}>
+      <Modal open={mode != null} onClose={closeModal} title={mode === "sandbox" ? "New sandbox" : "New space"}>
         <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); create.mutate(); }}>
-          <Field label="Name"><Input required minLength={2} maxLength={64} value={name} onChange={(e) => setName(e.target.value)} placeholder="Northwind support" /></Field>
-          <Field label="Description"><Textarea rows={2} maxLength={300} value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
-          <div className="flex items-center justify-between gap-4">
-            <div><div className="text-xs">Public verification</div><div className="text-2xs text-muted">Anyone with the key can verify integrity. Memory text is never exposed.</div></div>
-            <Toggle checked={publicVerify} onChange={setPublicVerify} label="Public verification" />
-          </div>
-          {mode === "space" && (
+          <fieldset disabled={!!created} className="space-y-4">
+            <Field label="Name"><Input required minLength={2} maxLength={64} value={name} onChange={(e) => setName(e.target.value)} placeholder="Northwind support" /></Field>
+            <Field label="Description"><Textarea rows={2} maxLength={300} value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
             <div className="flex items-center justify-between gap-4">
-              <div><div className="text-xs">Load the demo story</div><div className="text-2xs text-muted">Northwind, Ada Okafor and 120 background memories, seeded with past timestamps.</div></div>
-              <Toggle checked={demo} onChange={setDemo} label="Load demo story" />
+              <div><div className="text-xs">Public verification</div><div className="text-2xs text-muted">Anyone with the key can verify integrity. Memory text is never exposed.</div></div>
+              <Toggle checked={publicVerify} onChange={setPublicVerify} label="Public verification" disabled={!!created} />
+            </div>
+            {mode === "space" && (
+              <div className="flex items-center justify-between gap-4">
+                <div><div className="text-xs">Load the demo story</div><div className="text-2xs text-muted">Northwind, Ada Okafor and 120 background memories, seeded with past timestamps.</div></div>
+                <Toggle checked={demo} onChange={setDemo} label="Load demo story" disabled={!!created} />
+              </div>
+            )}
+          </fieldset>
+          {mode === "sandbox" && <p className="text-2xs text-muted">Sandboxes are seeded with the demo story and unlock the Tamper Lab, where you can deliberately corrupt the chain and watch the verifier catch it.</p>}
+          {(seeding || failed) && (
+            <div role="status" className="space-y-1.5">
+              <div className="flex justify-between text-2xs text-muted"><span>{failed ? "Seeding stopped" : "Writing the demo story"}</span><span className="tabular">{seedProgress ? `${seedProgress.done}/${seedProgress.total}` : "…"}</span></div>
+              <div className="h-1 w-full overflow-hidden rounded-full bg-line"><div className={failed ? "h-full bg-warn" : "h-full bg-accent transition-[width]"} style={{ width: `${seedProgress ? Math.round((seedProgress.done / Math.max(1, seedProgress.total)) * 100) : 4}%` }} /></div>
+              {seeding && <p className="text-2xs text-muted">Space {created?.key} is created. Keep this dialog open while the story is written; each request writes a few memories.</p>}
             </div>
           )}
-          {mode === "sandbox" && <p className="text-2xs text-muted">Sandboxes are seeded with the demo story and unlock the Tamper Lab, where you can deliberately corrupt the chain and watch the verifier catch it.</p>}
-          <ErrorNote error={create.error} />
+          {failed ? (
+            <div role="alert" className="rounded-[2px] border border-warn/50 bg-warn/5 px-3 py-2 text-xs text-warn">
+              Space {created?.key} was created, but the demo story could not be finished{seedProgress ? ` (stopped at ${seedProgress.done}/${seedProgress.total})` : ""}: {seedErrorReason(create.error)}. Resume continues where it stopped and does not create another space.
+            </div>
+          ) : <ErrorNote error={create.error} />}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => setMode(null)}>Cancel</Button>
-            <Button type="submit" variant="primary" loading={create.isPending}>{create.isPending && (mode === "sandbox" || demo) ? (seedProgress ? `Writing the story… ${seedProgress.done}/${seedProgress.total}` : "Seeding…") : "Create"}</Button>
+            <Button type="button" variant="ghost" onClick={closeModal} disabled={create.isPending}>{created ? "Open the space" : "Cancel"}</Button>
+            <Button type="submit" variant="primary" loading={create.isPending}>{create.isPending && (mode === "sandbox" || demo) ? (seedProgress ? `Writing the story… ${seedProgress.done}/${seedProgress.total}` : "Seeding…") : failed ? "Resume seeding" : "Create"}</Button>
           </div>
         </form>
       </Modal>
