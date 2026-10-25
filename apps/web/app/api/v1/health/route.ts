@@ -1,4 +1,4 @@
-import { getBackend, getConfig } from "@engram/server";
+import { checkClassifier, getBackend, getConfig } from "@engram/server";
 import { json } from "@/lib/server/api";
 import { currentUser } from "@/lib/server/session";
 
@@ -34,10 +34,12 @@ async function run(): Promise<{ status: number; body: Record<string, unknown> }>
   let b;
   try { b = getBackend(); } catch (e) { backendError = e instanceof Error ? e.message : String(e); }
   if (!b) return { status: 503, body: { ok: false, backend: cfg.backend, error: backendError } };
-  const [database, embeddings, storage] = await Promise.all([
+  const [database, embeddings, storage, classifierCheck] = await Promise.all([
     check(() => b.vectors.query("memories", { limit: 1, withVectors: false })),
     check(() => b.embedder.embed(["health check"], "nomic-embed-text")),
     check(() => b.files.list(cfg.appwrite.checkpointsBucket, "cp_health_")),
+    // Reported but not part of `ok`: writes fall back to the rule-based classifier when the model is down.
+    checkClassifier(cfg),
   ]);
   const ok = database.ok && embeddings.ok && storage.ok;
   return {
@@ -46,6 +48,7 @@ async function run(): Promise<{ status: number; body: Record<string, unknown> }>
       ok, backend: b.kind, database, embeddings, storage,
       signing: { checkpointFunction: !!cfg.appwrite.checkpointFunctionId, inlineKey: !!cfg.checkpoint.privateKey, publicKey: !!cfg.checkpoint.publicKey },
       classifier: cfg.classifierModel ?? "heuristic",
+      classifierCheck,
     },
   };
 }

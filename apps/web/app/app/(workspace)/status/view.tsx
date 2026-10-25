@@ -57,9 +57,14 @@ export function View() {
                 fix={d.signing && !d.signing.checkpointFunction && !d.signing.inlineKey ? <>Deploy the checkpoint Function with <code>pnpm functions:deploy</code> and set <code>CHECKPOINT_FUNCTION_ID</code>.</> : undefined} />
               <Row name="Public verification key" what="Browsers use it to check checkpoint signatures without trusting the server." ok={d.signing ? d.signing.publicKey : null} detail={d.signing?.publicKey ? "published" : "missing"}
                 fix={d.signing && !d.signing.publicKey ? <>Set <code>NEXT_PUBLIC_CP_PUBLIC_KEY</code> to the checkpoint public key and redeploy.</> : undefined} />
-              <Row name="Relation classifier" what="Decides whether a new memory duplicates, supersedes, contradicts or refines its neighbours." ok
-                detail={d.classifier === "heuristic" ? "rule-based" : d.classifier}
-                fix={d.classifier === "heuristic" ? <>Using built-in rules. Set <code>CLASSIFIER_MODEL</code> and <code>MODEL_API_KEY</code> for model-based classification.</> : undefined} />
+              <Row name="Relation classifier" what="Decides whether a new memory duplicates, supersedes, contradicts or refines its neighbours."
+                ok={d.classifier === "heuristic" ? true : d.classifierCheck?.ok ?? null}
+                detail={d.classifier === "heuristic" ? "rule-based" : d.classifierCheck ? `${d.classifier} · ${d.classifierCheck.ok ? `${d.classifierCheck.ms} ms` : "unavailable"}` : d.classifier}
+                fix={d.classifier === "heuristic"
+                  ? <>Using built-in rules. Set <code>CLASSIFIER_MODEL</code> and <code>MODEL_API_KEY</code> for model-based classification.</>
+                  : d.classifierCheck && !d.classifierCheck.ok
+                    ? <>{d.classifierCheck.error} Until this is fixed, new memories are classified with the built-in rules in the background. If the message mentions a workspace, set <code>ANTHROPIC_WORKSPACE_ID</code>.</>
+                    : undefined} />
             </ul>
           </Card>
         </>

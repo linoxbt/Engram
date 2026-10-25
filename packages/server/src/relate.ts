@@ -9,7 +9,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import type { Ctx } from "./context";
-import { getConfig } from "./config";
+import { getConfig, type EngramConfig } from "./config";
 
 export type RelationKind = "duplicate" | "supersedes" | "contradicts" | "refines" | "unrelated";
 export interface Neighbour {
@@ -77,6 +77,23 @@ export function resolveModel(spec: string | null, apiKey: string | null) {
     return key ? createOpenAI({ apiKey: key })(id) : null;
   }
   return null;
+}
+
+/**
+ * One tiny live call to the deployment's classifier model, for the Status page. Without it a bad key or a missing
+ * workspace ID only shows up as every write quietly falling back to the rule-based classifier.
+ */
+export async function checkClassifier(cfg: EngramConfig): Promise<{ ok: boolean; ms: number; error?: string } | null> {
+  if (!cfg.classifierModel) return null;
+  const model = resolveModel(cfg.classifierModel, cfg.modelApiKey);
+  if (!model) return { ok: false, ms: 0, error: "No API key for this model. Set MODEL_API_KEY." };
+  const t = Date.now();
+  try {
+    await generateText({ model, prompt: "Reply with the single word OK.", maxOutputTokens: 64, maxRetries: 0, abortSignal: AbortSignal.timeout(10_000) });
+    return { ok: true, ms: Date.now() - t };
+  } catch (e) {
+    return { ok: false, ms: Date.now() - t, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /** The space's chosen model only when the operator allows it; otherwise the operator's default. */

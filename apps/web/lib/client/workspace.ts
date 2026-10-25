@@ -15,6 +15,7 @@ export interface Health {
   storage?: { ok: boolean; ms: number; error?: string };
   signing?: { checkpointFunction: boolean; inlineKey: boolean; publicKey: boolean };
   classifier?: string;
+  classifierCheck?: { ok: boolean; ms: number; error?: string } | null;
 }
 
 export const useSpaces = () => useQuery({ queryKey: ["spaces"], queryFn: () => api<{ spaces: SpaceRow[] }>("/api/app/spaces") });
