@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
+import { finishSeeding, type SeedState } from "@/lib/client/seed";
 import { useHealth, useSpaces } from "@/lib/client/workspace";
 import { ago } from "@/lib/format";
 import { IconLab, IconPlus, IconShield } from "@/components/icons";
@@ -21,8 +22,14 @@ export function SpacesPage() {
   const [publicVerify, setPublicVerify] = useState(false);
   const [demo, setDemo] = useState(false);
   const [keys, setKeys] = useState<{ key: string; agentKeys: Record<string, string> } | null>(null);
+  const [seedProgress, setSeedProgress] = useState<{ done: number; total: number } | null>(null);
   const create = useMutation({
-    mutationFn: () => api<{ key: string; agentKeys: Record<string, string> }>("/api/app/spaces", { method: "POST", json: { name, description, publicVerify, sandbox: mode === "sandbox", seed: demo ? "demo" : "none" } }),
+    mutationFn: async () => {
+      setSeedProgress(null);
+      const r = await api<{ key: string; agentKeys: Record<string, string>; seeding: SeedState | null }>("/api/app/spaces", { method: "POST", json: { name, description, publicVerify, sandbox: mode === "sandbox", seed: demo ? "demo" : "none" } });
+      await finishSeeding(r.key, r.seeding, setSeedProgress);
+      return r;
+    },
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["spaces"] });
       setMode(null);
@@ -105,7 +112,7 @@ export function SpacesPage() {
           <ErrorNote error={create.error} />
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={() => setMode(null)}>Cancel</Button>
-            <Button type="submit" variant="primary" loading={create.isPending}>{create.isPending && (mode === "sandbox" || demo) ? "Seeding…" : "Create"}</Button>
+            <Button type="submit" variant="primary" loading={create.isPending}>{create.isPending && (mode === "sandbox" || demo) ? (seedProgress ? `Writing the story… ${seedProgress.done}/${seedProgress.total}` : "Seeding…") : "Create"}</Button>
           </div>
         </form>
       </Modal>

@@ -34,6 +34,19 @@ export interface SpaceSettings {
   people: Record<string, string>;
   /** Pending invite links. Only a hash of each token is kept; the link is shown once, to the owner. */
   invites?: SpaceInvite[];
+  /** A demo story being written in slices (hosts cut long requests short); null when idle. */
+  seeding?: SeedProgress | null;
+}
+
+export interface SeedProgress {
+  variant: "demo" | "sandbox";
+  background: number | null;
+  next: number;
+  total: number;
+  byKey: Record<string, string>;
+  entries: number;
+  duplicates: number;
+  createdBy: string;
 }
 
 export interface SpaceInvite { id: string; tokenHash: string; email: string | null; createdAt: string; expiresAt: string; createdBy: string }

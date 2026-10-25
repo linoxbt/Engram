@@ -4,6 +4,8 @@ import { defer, readJson, route } from "@/lib/server/api";
 import { requireUser } from "@/lib/server/session";
 
 export const runtime = "nodejs";
+/** Hosts cut requests off after ~10 s; seeding writes for this long per request. */
+const SEED_SLICE_MS = 6_000;
 export const maxDuration = 120;
 
 export const GET = route(async () => {
@@ -31,10 +33,13 @@ export const POST = route(async (req) => {
   const b = getBackend();
   const space = await createSpace(b, { name: body.name, description: body.description, ownerId: user.id, ownerName: user.name, publicVerify: body.publicVerify, sandbox: body.sandbox });
   let keys: Record<string, string> = {};
+  let seeding: { done: boolean; progress: { done: number; total: number } } | null = null;
   if (body.sandbox || body.seed === "demo") {
-    const res = await seedStory(personCtx(b, space, user, defer), { variant: body.sandbox ? "sandbox" : "demo", createdBy: `user:${user.id}` });
+    // The first slice only: the page continues through /seed until the story is written.
+    const res = await seedStory(personCtx(b, space, user, defer), { variant: body.sandbox ? "sandbox" : "demo", createdBy: `user:${user.id}`, budgetMs: SEED_SLICE_MS });
     keys = res.keys;
+    seeding = { done: res.done, progress: res.progress };
   }
   const fresh = (await getSpace(b, space.key)) ?? space;
-  return { key: fresh.key, name: fresh.settings.name, agentKeys: keys };
+  return { key: fresh.key, name: fresh.settings.name, agentKeys: keys, seeding };
 });

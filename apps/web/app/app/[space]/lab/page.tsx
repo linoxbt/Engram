@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ATTACKS, type AttackInfo, type ChainEntry, type Checkpoint, type Report } from "@engram/core";
 import { api } from "@/lib/client/api";
+import { finishSeeding, type SeedState } from "@/lib/client/seed";
 import { useSpaceInfo } from "@/lib/client/hooks";
 import { runVerification } from "@/lib/client/verify";
 import { ChainStrip, type BlockState } from "@/components/chain-strip";
@@ -43,9 +44,15 @@ export default function LabPage() {
   const target = useMemo(() => chain.data?.find((e) => /downgraded/i.test(e.metadata.c?.text ?? ""))?.metadata.seq, [chain.data]);
 
   const refresh = () => Promise.all([qc.invalidateQueries({ queryKey: ["space", space, "chain-all"] }), qc.invalidateQueries({ queryKey: ["space", space, "checkpoints"] })]);
+  const [resetProgress, setResetProgress] = useState<{ done: number; total: number } | null>(null);
   const reset = useMutation({
-    mutationFn: () => api<{ entries: number; note: string | null }>(`/api/app/spaces/${space}/lab`, { method: "POST", json: { action: "reset" } }),
-    onSuccess: async (r) => { setCards({}); setStates(new Map()); await refresh(); qc.invalidateQueries({ queryKey: ["space", space] }); toast(`Sandbox restored: ${r.entries} entries, sealed.${r.note ? ` ${r.note}` : ""}`, "ok"); },
+    mutationFn: async () => {
+      setResetProgress(null);
+      const r = await api<SeedState & { note: string | null }>(`/api/app/spaces/${space}/lab`, { method: "POST", json: { action: "reset" } });
+      await finishSeeding(space, r, setResetProgress);
+      return r;
+    },
+    onSuccess: async (r) => { setCards({}); setStates(new Map()); await refresh(); qc.invalidateQueries({ queryKey: ["space", space] }); toast(`Sandbox restored.${r.note ? ` ${r.note}` : ""}`, "ok"); },
   });
   const seal = useMutation({ mutationFn: () => api<{ created: boolean; reason?: string }>(`/api/app/spaces/${space}/lab`, { method: "POST", json: { action: "seal" } }), onSuccess: async (r) => { await refresh(); toast(r.created ? "Checkpoint signed at the head." : r.reason ?? "Nothing to seal."); } });
 
@@ -104,7 +111,7 @@ export default function LabPage() {
     <div className="space-y-4">
       <PageHeader title="Tamper Lab" actions={<>
         <Button variant="gold" onClick={() => seal.mutate()} loading={seal.isPending} disabled={!info.data?.signing.inline}><IconSeal /> Seal head</Button>
-        <Button onClick={() => reset.mutate()} loading={reset.isPending}><IconLab /> Reset sandbox</Button>
+        <Button onClick={() => reset.mutate()} loading={reset.isPending}><IconLab /> {reset.isPending && resetProgress ? `Restoring… ${resetProgress.done}/${resetProgress.total}` : "Reset sandbox"}</Button>
       </>}>
         Each attacker has full database access and is smarter than the last. Attack, then verify in your browser and see which layer caught it. Reset restores the seeded story and signs a fresh checkpoint.
       </PageHeader>

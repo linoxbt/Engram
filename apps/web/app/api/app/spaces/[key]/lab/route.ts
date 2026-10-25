@@ -15,7 +15,7 @@ const Body = z.object({
 export const GET = spaceRoute(async (ctx) => { requireSandbox(ctx); return { attacks: ATTACKS }; });
 export const POST = spaceRoute(async (ctx, access, req) => {
   const body = Body.parse(await readJson(req));
-  if (body.action === "reset") return resetSandbox(ctx, `user:${access.user.id}`);
+  if (body.action === "reset") return resetSandbox(ctx, `user:${access.user.id}`, 6_000);
   if (body.action === "seal") return sealSandbox(ctx);
   return attack(ctx, body.attack as Parameters<typeof attack>[1], body.params);
 });

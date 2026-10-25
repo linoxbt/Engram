@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { verifySpace, type EntryMeta } from "@engram/core";
 import {
   append, applyPending, authAgent, bumpAgentStats, createAgent, deleteSpace, forget, getConfig, getEntry, getSpace, heuristicRelate,
-  loadChain, loadCheckpoints, recall, remember, resetConfig, revokeAgent, runCheckpoint, updateSettings, verifyStoredSpace, type ConceptMeta,
+  loadChain, loadCheckpoints, recall, remember, resetConfig, revokeAgent, runCheckpoint, seedStory, updateSettings, verifyStoredSpace, type ConceptMeta,
 } from "../src/index";
 import { setup } from "./helpers";
 
@@ -174,5 +174,25 @@ describe("sign-in lockout", () => {
     await b.auth.signUp("lock@example.com", "password123", "Lock");
     for (let i = 0; i < 8; i++) await expect(b.auth.signIn("lock@example.com", "wrong-password")).rejects.toThrow(/Invalid/);
     await expect(b.auth.signIn("lock@example.com", "password123")).rejects.toThrow(/Too many failed sign-ins/);
+  });
+});
+
+describe("resumable seeding", () => {
+  it("a story written in slices matches one written in one go", async () => {
+    const whole = await setup({ sandbox: true });
+    const all = await seedStory(whole.ctx, { variant: "sandbox" });
+    expect(all.done).toBe(true);
+
+    const sliced = await setup({ sandbox: true });
+    let r = await seedStory(sliced.ctx, { variant: "sandbox", budgetMs: 1 });
+    const keys = r.keys;
+    let calls = 1;
+    while (!r.done) { r = await seedStory(sliced.ctx, { variant: "sandbox", budgetMs: 1 }); calls++; }
+    expect(calls).toBeGreaterThan(1);
+    expect(Object.keys(keys).sort()).toEqual(Object.keys(all.keys).sort());
+    const [a, b] = await Promise.all([loadChain(whole.b, whole.space.key), loadChain(sliced.b, sliced.space.key)]);
+    expect(b.map((e) => [e.metadata.op, e.metadata.c.text, e.metadata.d.status])).toEqual(a.map((e) => [e.metadata.op, e.metadata.c.text, e.metadata.d.status]));
+    expect((await getSpace(sliced.b, sliced.space.key))!.settings.seeding).toBeNull();
+    expect((await verifyStoredSpace(sliced.b, sliced.space)).status).toBe("valid");
   });
 });
