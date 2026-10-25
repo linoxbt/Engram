@@ -36,10 +36,9 @@ export async function attack(ctx: Ctx, id: AttackId, params: AttackParams = {}) 
 /** Purge and start re-seeding. With a budget, `done: false` means: call seedStory again to continue. */
 export async function resetSandbox(ctx: Ctx, createdBy: string, budgetMs?: number) {
   requireSandbox(ctx);
+  // purgeSpaceData also clears integrity and seeding in the state store and the checkpoint pointer in prefs.
   await purgeSpaceData(ctx.b, ctx.space.key);
-  const fresh = (await getSpace(ctx.b, ctx.space.key)) ?? ctx.space;
-  await ctx.b.teams.updatePrefs(fresh.teamId, { ...fresh.settings, latestCheckpoint: null, integrity: null, seeding: null });
-  const space = (await getSpace(ctx.b, ctx.space.key)) ?? fresh;
+  const space = (await getSpace(ctx.b, ctx.space.key)) ?? ctx.space;
   const seeded = await seedStory({ ...ctx, space }, { variant: "sandbox", createdBy, budgetMs });
   if (!ctx.cfg.checkpoint.privateKey) {
     const queued = await ctx.b.jobs.triggerCheckpoint(ctx.space.key);
