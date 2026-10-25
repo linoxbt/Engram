@@ -2,7 +2,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildCheckpoint, checkpointFileId, signCheckpoint } from "@engram/core";
 import {
-  append, createSpace, getConfig, getSpace, latestCheckpoint, listAllSpaces, loadChain, loadCheckpoints, runCheckpoint, runSentinel, updateSettings, verifyStoredSpace,
+  append, createSpace, getConfig, getSpace, latestCheckpoint, listAllSpaces, loadChain, loadCheckpoints, recall, remember, runCheckpoint, runSentinel,
+  updateSettings, verifyStoredSpace,
 } from "../src/index";
 import { setup } from "./helpers";
 
@@ -99,6 +100,26 @@ describe("checkpoint lock reclaim", () => {
     const bucket = getConfig().appwrite.checkpointsBucket;
     await b.files.put(bucket, `cpl_${ctx.space.key}_genesis`, "x", stale(), []);
     expect((await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey })).created).toBe(true);
+  });
+});
+
+describe("recall access bumps", () => {
+  it("bumps at most the top three, and a memory at most once per ten minutes", async () => {
+    const { b, ctx, drain } = await setup();
+    for (let i = 0; i < 6; i++) await remember(ctx, { text: `Northwind invoice ${i} was paid by Kestrel Foods in October`, subject: `customer:k${i}` });
+    await drain();
+    const access = async () => (await loadChain(b, ctx.space.key)).map((e) => Number(e.metadata.d.access));
+    const r = await recall(ctx, { query: "Kestrel Foods invoice paid", k: 6 });
+    expect(r.memories.length).toBeGreaterThan(3);
+    await drain();
+    expect((await access()).reduce((a, n) => a + n, 0)).toBe(3);
+    await recall(ctx, { query: "Kestrel Foods invoice paid", k: 6 });
+    await drain();
+    // The three already bumped are skipped; the next three get theirs.
+    expect((await access()).filter((n) => n === 1).length).toBe(Math.min(6, r.memories.length));
+    await recall(ctx, { query: "Kestrel Foods invoice paid", k: 6 });
+    await drain();
+    expect(Math.max(...(await access()))).toBe(1);
   });
 });
 
