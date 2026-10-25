@@ -1,6 +1,6 @@
 /** Helpers the API routes use: query parameters, quotas and throttles. */
 import { describe, expect, it } from "vitest";
-import { assertSpaceQuota, createSpace, getSpace, parseEntryCursor, parseLimit, parseSeqParam, remember, toErrorBody, verifyThrottled, type Backend } from "../src/index";
+import { assertSpaceQuota, createSpace, exportSpace, exportSpaceStream, getSpace, loadChain, parseEntryCursor, parseLimit, parseSeqParam, remember, toErrorBody, verifyThrottled, type Backend } from "../src/index";
 import { setup } from "./helpers";
 
 const status = (fn: () => unknown) => { try { fn(); return 200; } catch (e) { return toErrorBody(e).status; } };
@@ -47,6 +47,36 @@ describe("agent verification budget", () => {
     // A standard request inside the deep run's window reuses it.
     expect(await verifyThrottled(vctx, {}, t + 62_000)).toEqual(later);
     expect(writes).toBe(2);
+  });
+});
+
+describe("export", () => {
+  it("streams the space page by page as one valid JSON document", async () => {
+    const { b, space, ctx } = await setup();
+    await remember(ctx, { text: "Payroll runs on Fridays.", kind: "fact" });
+    for (let i = 1; i <= 450; i++) {
+      const id = `m_${space.key}_${String(i).padStart(12, "0")}`;
+      await b.vectors.create("memories", id, { embeddings: [1], metadata: { space: space.key, seq: String(i).padStart(12, "0"), n: String(i) } });
+    }
+    let queries = 0;
+    const counting = { ...b, vectors: Object.assign(Object.create(b.vectors), { query: (...a: Parameters<Backend["vectors"]["query"]>) => { queries++; return b.vectors.query(...a); } }) as Backend["vectors"] };
+    const { stream, exportedAt } = exportSpaceStream({ ...ctx, b: counting });
+    const reader = stream.getReader();
+    const dec = new TextDecoder();
+    const first = await reader.read();
+    let text = dec.decode(first.value);
+    expect(text).toContain('"entries": [');
+    expect(queries).toBeLessThanOrEqual(1); // pages are read as the client reads, not all up front
+    for (let r = await reader.read(); !r.done; r = await reader.read()) text += dec.decode(r.value);
+    const doc = JSON.parse(text);
+    expect(queries).toBe(3); // 451 entries in pages of 200
+    expect(doc).toMatchObject({ format: "engram-export-v1", exportedAt, space: space.key });
+    expect(doc.entries).toHaveLength(451);
+    expect(doc.entries.map((e: { id: string }) => e.id)).toEqual((await loadChain(b, space.key)).map((e) => e.$id));
+    expect(doc.settings).not.toHaveProperty("people");
+
+    const empty = await setup();
+    expect((await exportSpace(empty.ctx)).entries).toEqual([]);
   });
 });
 
