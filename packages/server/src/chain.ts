@@ -278,27 +278,55 @@ export async function patchDerived(b: Backend, id: string, patch: Partial<EntryM
 /**
  * Rebuild derived state for a whole space from the chain and erase content of
  * forgotten memories. Run by people from Settings, never silently.
+ *
+ * Writers keep appending meanwhile: before each write, entries appended since the snapshot are folded in, and
+ * the write is conditional on the document read, so a neighbour update that lands first is re-read, never
+ * overwritten. A document still contended after a few tries is counted and skipped.
  */
-export async function repairSpace(ctx: Ctx): Promise<{ fixed: number; erased: number }> {
+export async function repairSpace(ctx: Ctx): Promise<{ fixed: number; erased: number; conflicts: number }> {
   const { b } = ctx;
   const entries = await loadChain(b, ctx.space.key);
   const state = new Map<string, DerivedState>();
   for (const e of entries) applyEntry(state, e.$id, e.metadata.h);
-  let fixed = 0, erased = 0;
+  let lastId = entries[entries.length - 1]?.$id;
+  const catchUp = async () => {
+    for (;;) {
+      const more = await b.vectors.query<EntryMeta>("memories", {
+        filters: [{ op: "eq", path: "metadata.space", values: [ctx.space.key] }], order: { field: "$id", dir: "asc" }, cursorAfter: lastId, limit: 100, withVectors: false,
+      });
+      for (const d of more) { applyEntry(state, d.$id, d.metadata.h); lastId = d.$id; }
+      if (more.length < 100) return;
+    }
+  };
+  const needs = (m: EntryMeta, st: DerivedState) =>
+    JSON.stringify(toState(m)) !== JSON.stringify(st) || (st.status === "forgotten" && m.c.text != null) || m.status !== m.d.status || m.applied === "false";
+
+  let fixed = 0, erased = 0, conflicts = 0;
   for (const e of entries) {
-    const st = state.get(e.$id);
-    if (!st) continue;
-    const m = e.metadata;
-    const erase = st.status === "forgotten" && m.c.text != null;
-    if (JSON.stringify(toState(m)) === JSON.stringify(st) && !erase && m.status === m.d.status && m.applied !== "false") continue;
-    const cur = await b.vectors.get<EntryMeta>("memories", e.$id);
-    if (!cur) continue;
-    await b.vectors.update("memories", e.$id, {
-      metadata: { ...patchMeta(cur.metadata, { ...st }, erase ? { text: null, salt: null } : undefined), applied: "true" },
-      ...(erase ? { embeddings: tombstoneVector(COLLECTION_DIMS.memories) } : {}),
-    }, undefined, { ifUpdatedAt: cur.$updatedAt });
-    fixed++;
-    if (erase) erased++;
+    if (!state.has(e.$id) || !needs(e.metadata, state.get(e.$id)!)) continue;
+    let done = false;
+    for (let attempt = 0; attempt < 5 && !done; attempt++) {
+      const cur = await b.vectors.get<EntryMeta>("memories", e.$id);
+      if (!cur) { done = true; break; }
+      await catchUp();
+      const st = state.get(e.$id)!;
+      const m = cur.metadata;
+      if (!needs(m, st)) { done = true; break; }
+      const erase = st.status === "forgotten" && m.c.text != null;
+      try {
+        await b.vectors.update("memories", e.$id, {
+          metadata: { ...patchMeta(m, { ...st, contradictedBy: [...st.contradictedBy] }, erase ? { text: null, salt: null } : undefined), applied: "true" },
+          ...(erase ? { embeddings: tombstoneVector(COLLECTION_DIMS.memories) } : {}),
+        }, undefined, { ifUpdatedAt: cur.$updatedAt });
+        fixed++;
+        if (erase) erased++;
+        done = true;
+      } catch (err) {
+        if (!isConflict(err)) throw err;
+        await jitter();
+      }
+    }
+    if (!done) conflicts++;
   }
-  return { fixed, erased };
+  return { fixed, erased, conflicts };
 }

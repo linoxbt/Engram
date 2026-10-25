@@ -1,9 +1,9 @@
 /** Production-readiness: cost bounds on scheduled work and races found in the second audit. */
 import { describe, expect, it, vi } from "vitest";
-import { buildCheckpoint, checkpointFileId, signCheckpoint } from "@engram/core";
+import { buildCheckpoint, checkpointFileId, signCheckpoint, type EntryMeta } from "@engram/core";
 import {
   append, createSpace, getConfig, getEntry, getSpace, latestCheckpoint, listAllSpaces, loadChain, loadCheckpoints, recall, remember, runCheckpoint, runSentinel,
-  RememberInput, updateSettings, verifyStoredSpace,
+  RememberInput, repairSpace, updateSettings, verifyStoredSpace, ConflictError, type Collection,
 } from "../src/index";
 import { setup } from "./helpers";
 
@@ -141,6 +141,41 @@ describe("sentinel time budget", () => {
     const short = await runSentinel(b, { spaces, budgetMs: 20 });
     expect(short.results.map((r) => r.space)).toEqual([spaces[1].key]);
     expect(short.skipped).toEqual([spaces[2].key, spaces[0].key]);
+  });
+});
+
+describe("repair under concurrent writers", () => {
+  it("re-reads and recomputes on a conflict, never overwrites a newer neighbour update, and continues past contention", async () => {
+    const { b, ctx } = await setup();
+    const x = await append(ctx, { op: "remember", kind: "fact", subject: null, text: "X" });
+    const y = await append(ctx, { op: "remember", kind: "fact", subject: null, text: "Y" });
+    const w = await append(ctx, { op: "remember", kind: "fact", subject: null, text: "W" });
+    // Searchable copies disagree with derived state on all three, so repair has work for each.
+    for (const id of [x.id, y.id, w.id]) {
+      const d = (await getEntry(b, id))!;
+      await b.vectors.update<EntryMeta>("memories", id, { metadata: { ...d.metadata, status: "superseded" } });
+    }
+    const update = b.vectors.update.bind(b.vectors);
+    let raced = false;
+    b.vectors.update = (async (coll: Collection, id: string, data: never, perms?: string[], opts?: { ifUpdatedAt?: string }) => {
+      if (id === w.id) throw new ConflictError("always contended");
+      if (id === x.id && !raced) {
+        raced = true;
+        b.vectors.update = update; // the writer below uses the real store
+        await append(ctx, { op: "remember", kind: "fact", subject: null, text: "Z replaces X", refs: { supersedes: [x.id] } });
+        b.vectors.update = wrapped;
+      }
+      return update(coll, id, data, perms, opts);
+    }) as typeof update;
+    const wrapped = b.vectors.update;
+    const r = await repairSpace(ctx);
+    b.vectors.update = update;
+    expect(r.conflicts).toBe(1);
+    const xd = (await getEntry(b, x.id))!.metadata;
+    expect(xd.d.status).toBe("superseded");
+    expect(xd.d.supersededBy).toBe(`m_${ctx.space.key}_000000000003`);
+    expect((await getEntry(b, y.id))!.metadata.d.status).toBe("active");
+    expect(r.fixed).toBe(1);
   });
 });
 
