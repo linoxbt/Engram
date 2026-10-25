@@ -1,7 +1,10 @@
 /** Who may hold agent keys, single-use invites, and paging of the agent registry. */
 import { describe, expect, it } from "vitest";
 import { agentId, count8, iso } from "@engram/core";
-import { acceptInvite, authAgent, createAgent, createInvite, createSpace, listAgents, removeMember, revokeAgentsCreatedBy, type AgentMeta } from "../src/index";
+import {
+  acceptInvite, authAgent, createAgent, createInvite, createSpace, exportSpace, getSpace, listAgents, listInvites, listMembers, removeMember, revokeAgentsCreatedBy, revokeInvite,
+  type AgentMeta, type Backend,
+} from "../src/index";
 import { setup } from "./helpers";
 
 describe("agent registry", () => {
@@ -48,5 +51,53 @@ describe("offboarding revokes keys", () => {
     await expect(authAgent(b, `Bearer ${a1.key}`)).rejects.toThrow(/revoked/);
     await expect(authAgent(b, `Bearer ${a2.key}`)).rejects.toThrow(/revoked/);
     expect(await revokeAgentsCreatedBy(b, space.key, `user:${hal.id}`)).toBe(0);
+  });
+});
+
+describe("invites are single use, atomically", () => {
+  it("two concurrent accepts of one link (in two processes): exactly one succeeds", async () => {
+    const { b, space, user } = await setup();
+    const { token } = await createInvite(b, space.key, { email: null, createdBy: user.id });
+    const ida = await b.auth.signUp("ida@example.com", "password123", "Ida");
+    const jo = await b.auth.signUp("jo@example.com", "password123", "Jo");
+    const res = await Promise.allSettled([acceptInvite(b, token, ida), acceptInvite({ ...b }, token, jo)]);
+    expect(res.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(String((res.find((r) => r.status === "rejected") as PromiseRejectedResult).reason)).toMatch(/invalid, used or expired/);
+    const members = (await listMembers(b, space.key)).map((m) => m.email);
+    expect(members.filter((e) => e === "ida@example.com" || e === "jo@example.com")).toHaveLength(1);
+    expect(await listInvites(b, space.key)).toEqual([]);
+  });
+
+  it("an accept never brings back an invite revoked meanwhile, and a revoke mid-accept wins", async () => {
+    const { b, space, user } = await setup();
+    const a = await createInvite(b, space.key, { email: null, createdBy: user.id });
+    const c = await createInvite(b, space.key, { email: null, createdBy: user.id });
+    const kim = await b.auth.signUp("kim@example.com", "password123", "Kim");
+    await Promise.all([acceptInvite(b, a.token, kim), revokeInvite({ ...b }, space.key, c.invite.id)]);
+    expect(await listInvites(b, space.key)).toEqual([]);
+
+    const d = await createInvite(b, space.key, { email: null, createdBy: user.id });
+    const lou = await b.auth.signUp("lou@example.com", "password123", "Lou");
+    // The owner revokes after the accept has looked the invite up but before it is spent.
+    const teams = Object.assign(Object.create(b.teams), {
+      membership: async (t: string, u: string) => { await revokeInvite(b, space.key, d.invite.id); return b.teams.membership(t, u); },
+    }) as Backend["teams"];
+    await expect(acceptInvite({ ...b, teams }, d.token, lou)).rejects.toThrow(/invalid, used or expired/);
+    expect(await b.teams.membership(space.teamId, lou.id)).toBeNull();
+  });
+
+  it("an export shows pending invites to the owner only", async () => {
+    const { b, space, user, ctx } = await setup();
+    await createInvite(b, space.key, { email: null, createdBy: user.id });
+    const fresh = { ...ctx, space: (await getSpace(b, space.key))! };
+    expect((await exportSpace(fresh)).settings).not.toHaveProperty("invites");
+    expect((await exportSpace(fresh, { owner: true })).settings).toHaveProperty("invites", [expect.objectContaining({ createdBy: user.id })]);
+  });
+
+  it("read-only guests are not listed as members", async () => {
+    const { b, space } = await setup();
+    const guest = await b.auth.signUp("guest@example.com", "password123", "Guest");
+    await b.teams.addMember(space.teamId, guest.id, ["viewer"]);
+    expect((await listMembers(b, space.key)).map((m) => m.email)).not.toContain("guest@example.com");
   });
 });
