@@ -2,8 +2,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildCheckpoint, checkpointFileId, signCheckpoint } from "@engram/core";
 import {
-  append, createSpace, getConfig, getSpace, latestCheckpoint, listAllSpaces, loadChain, loadCheckpoints, recall, remember, runCheckpoint, runSentinel,
-  updateSettings, verifyStoredSpace,
+  append, createSpace, getConfig, getEntry, getSpace, latestCheckpoint, listAllSpaces, loadChain, loadCheckpoints, recall, remember, runCheckpoint, runSentinel,
+  RememberInput, updateSettings, verifyStoredSpace,
 } from "../src/index";
 import { setup } from "./helpers";
 
@@ -141,5 +141,24 @@ describe("sentinel time budget", () => {
     const short = await runSentinel(b, { spaces, budgetMs: 20 });
     expect(short.results.map((r) => r.space)).toEqual([spaces[1].key]);
     expect(short.skipped).toEqual([spaces[2].key, spaces[0].key]);
+  });
+});
+
+describe("input normalisation", () => {
+  it("stores validFrom in the canonical 24-char form and rejects impossible dates", async () => {
+    const { ctx } = await setup();
+    const r = await remember(ctx, { text: "Ada moved to the Basic plan.", validFrom: "2026-10-20T10:00:00+01:00" });
+    expect((await getEntry(ctx.b, r.id))!.metadata.h.validFrom).toBe("2026-10-20T09:00:00.000Z");
+    expect(RememberInput.safeParse({ text: "Ada moved.", validFrom: "2026-02-30T00:00:00Z" }).success).toBe(false);
+    expect(RememberInput.safeParse({ text: "Ada moved.", validFrom: "yesterday" }).success).toBe(false);
+  });
+
+  it("refuses an explicit createdAt far in the future, which would freeze the chain's clock", async () => {
+    const { ctx } = await setup();
+    const at = new Date(Date.now() + 10 * 60_000).toISOString();
+    await expect(append(ctx, { op: "remember", kind: "fact", subject: null, text: "x", createdAt: at })).rejects.toThrow(/future/);
+    await expect(append(ctx, { op: "remember", kind: "fact", subject: null, text: "x", createdAt: "2026-10-20" })).rejects.toThrow(/ISO/);
+    const ok = await append(ctx, { op: "remember", kind: "fact", subject: null, text: "x", createdAt: new Date(Date.now() + 60_000).toISOString() });
+    expect(ok.seq).toBe(0);
   });
 });

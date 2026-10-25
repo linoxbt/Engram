@@ -20,6 +20,8 @@ export type MemDoc = VDoc<EntryMeta>;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const jitter = () => sleep(20 + Math.random() * 60);
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const MAX_FUTURE_MS = 5 * 60_000;
 export const emptyRefs = (): Refs => ({ supersedes: [], contradicts: [], related: [], target: null, derivedFrom: [] });
 
 export async function chainHead(b: Backend, space: string): Promise<MemDoc | null> {
@@ -110,6 +112,14 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
   const salt = randomSalt();
   const evh = await embHash(vector, draft.vector && draft.text != null ? salt : null);
   const perms = b.teamRead(space.teamId);
+  if (draft.createdAt !== undefined) {
+    // A far-future timestamp would freeze every later entry at it: createdAt never decreases.
+    if (!ISO_RE.test(draft.createdAt) || !Number.isFinite(Date.parse(draft.createdAt))) throw new EngramError("bad_request", `Explicit createdAt ${draft.createdAt} is not a 24-character ISO time.`);
+    if (Date.parse(draft.createdAt) > Date.now() + MAX_FUTURE_MS) throw new EngramError("bad_request", `Explicit createdAt ${draft.createdAt} is in the future.`);
+  }
+  // Hashed into the header, so one canonical form: 24-char UTC ISO.
+  const validFrom = draft.validFrom ? Date.parse(draft.validFrom) : null;
+  if (validFrom !== null && !(Number.isFinite(validFrom) && validFrom >= 0 && validFrom < 253402300800000)) throw new EngramError("bad_request", `validFrom ${draft.validFrom} is not a valid date.`);
 
   for (let attempt = 0; attempt < 8; attempt++) {
     await applyPending(ctx);
@@ -141,7 +151,7 @@ export async function append(ctx: Ctx, draft: Draft): Promise<Appended> {
       importance: score(draft.importance ?? 5),
       confidence: score(draft.confidence ?? 7),
       source: draft.source ?? null,
-      validFrom: draft.validFrom ?? createdAt,
+      validFrom: validFrom === null ? createdAt : iso(validFrom),
       createdAt,
       refs,
     };
