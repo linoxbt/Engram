@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, 
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
 import { readConsent } from "@/lib/client/consent";
-import { storageDown, useEachSpace, useHealth, useSpaces } from "@/lib/client/workspace";
+import { storageDown, useConflictCounts, useHealth } from "@/lib/client/workspace";
 import {
   IconBolt, IconBook, IconChevron, IconCross, IconGrid, IconInbox, IconKey, IconLogo, IconMenu, IconPlug, IconPulse, IconSeal, IconShield, IconSidebar, IconUser, Wordmark,
 } from "./icons";
@@ -57,9 +57,8 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
   useLayer(menu && !desktop, () => setMenu(false), leftRef, { trap: false, focus: "first" });
   useLayer(spaceMenu && !desktop, () => setSpaceMenu(false), rightRef, { trap: false, focus: "first" });
   const health = useHealth();
-  const spaces = useSpaces();
-  const conflicts = useEachSpace<{ pairs: unknown[] }>(spaces.data?.spaces, "conflicts", (k) => `/api/app/spaces/${k}/conflicts`, !storageDown(health.data) && !!health.data);
-  const openConflicts = conflicts.rows.reduce((n, r) => n + (r.data?.pairs.length ?? 0), 0);
+  const conflicts = useConflictCounts(!storageDown(health.data) && !!health.data);
+  const openConflicts = Object.values(conflicts.data?.conflicts ?? {}).reduce<number>((n, c) => n + (c ?? 0), 0);
 
   useEffect(() => { setMenu(false); setSpaceMenu(false); }, [pathname]);
   useEffect(() => {

@@ -77,7 +77,7 @@ function MemoryTab({ d, spaceKey, onNavigate }: { d: Detail; spaceKey: string; o
       setConfirm(false);
       setDissolving(true);
       toast(`Content erased. The record of erasure is entry #${r.seq}.`, "ok");
-      setTimeout(() => qc.invalidateQueries({ queryKey: ["space", spaceKey] }), 1500);
+      setTimeout(() => { qc.invalidateQueries({ queryKey: ["space", spaceKey] }); qc.invalidateQueries({ queryKey: ["conflicts"] }); }, 1500);
     },
   });
   const isMemory = d.op === "remember" || d.op === "reflect";

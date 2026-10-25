@@ -26,6 +26,14 @@ export const useHealth = () => useQuery({
   staleTime: 30_000,
 });
 
+/** Open conflict pairs per space key (null where a space could not be read), for the Inbox badge. */
+export const useConflictCounts = (enabled = true) => useQuery({
+  queryKey: ["conflicts", "counts"],
+  queryFn: () => api<{ conflicts: Record<string, number | null> }>("/api/app/conflicts"),
+  enabled,
+  staleTime: 30_000,
+});
+
 /** Memory storage is unavailable: per-space data calls would only fail, so pages skip them. */
 export const storageDown = (h: Health | undefined) => !!h?.database && !h.database.ok;
 
