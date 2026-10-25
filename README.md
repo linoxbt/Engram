@@ -90,6 +90,8 @@ With no Appwrite variables, Engram runs on a local file-backed backend with a de
 
 **On Appwrite:** `pnpm setup:appwrite`, then `pnpm experiments` (writes `docs/verified.md`), `pnpm functions:deploy` (builds and deploys the Functions from `appwrite.json`, with the signing key as a Function secret), then `pnpm seed -- --owner you@example.com --public`. Deploy to Netlify (`netlify.toml` at the root builds `apps/web`) with the variables in `.env.example`; `pnpm functions:deploy` deploys the Appwrite Functions that sign checkpoints and run the sentinel.
 
+The labeler's event trigger in `appwrite.json` (`databases.engram.collections.concepts.documents.*.create`) names the database, so keep `APPWRITE_DB_ID=engram` (the default) or change that event path to match; otherwise the labeler never fires and a new concept keeps its rule-based label until the app relabels it at 3 members.
+
 | Command | What it does |
 |---------|--------------|
 | `pnpm test` | Core and engine tests: hashes, Merkle proofs (sizes 1–70), every Tamper Lab attack, 20 parallel writers, supersede/conflict/forget/as-of, the seeded demo story |
