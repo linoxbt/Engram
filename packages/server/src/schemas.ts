@@ -18,10 +18,15 @@ export const RememberInput = z.object({
 });
 export type RememberInput = z.infer<typeof RememberInput>;
 
+/** Runs even after a failed format check (zod continues), so it must leave unparseable input alone. */
+const toIso = (v: string) => { const t = Date.parse(v); return Number.isFinite(t) ? new Date(t).toISOString() : v; };
+
 export const RecallInput = z.object({
   query: z.string().trim().min(2).max(500),
   k: z.number().int().min(1).max(20).default(5),
-  asOf: z.string().datetime().optional(),
+  // Offsets are accepted like validFrom's and normalised to the chain's 24-char UTC form, which string comparisons
+  // against createdAt rely on. overwrite() keeps the type a string, so the published JSON Schema is unchanged.
+  asOf: z.string().datetime({ offset: true }).overwrite(toIso).optional(),
   kinds: z.array(z.enum(RECALL_KINDS)).optional(),
   subject: z.string().trim().toLowerCase().optional(),
   agent: z.string().optional(),

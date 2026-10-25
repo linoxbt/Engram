@@ -17,7 +17,13 @@ export async function attack(ctx: Ctx, id: AttackId, params: AttackParams = {}) 
   if (!info) throw new EngramError("bad_request", `Unknown attack ${id}.`);
   const entries = await loadChain(ctx.b, ctx.space.key, { withVectors: true });
   if (!entries.length) throw new EngramError("bad_request", "The sandbox is empty. Reset it first.");
-  const res = await runAttack(id, entries, params);
+  let res: Awaited<ReturnType<typeof runAttack>>;
+  try {
+    res = await runAttack(id, entries, params);
+  } catch (e) {
+    // runAttack is pure: anything it throws is about the parameters or the sandbox's contents, not a server fault.
+    throw new EngramError("bad_request", e instanceof Error ? e.message : String(e));
+  }
   const byId = new Map(res.entries.map((e) => [e.$id, e]));
   for (const changed of res.changed) {
     const e = byId.get(changed)!;
