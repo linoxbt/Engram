@@ -22,7 +22,7 @@ import type { Ctx, SpaceInfo } from "./context";
 import { isConflict } from "./errors";
 import type { IntegrityStatus } from "./settings";
 import { getSpace, updateSettings } from "./spaces";
-import { integrityOf, recordIntegrity } from "./verify";
+import { integrityOf, recordIntegrity, verifyStoredSpace } from "./verify";
 
 const dec = new TextDecoder();
 const enc = new TextEncoder();
@@ -172,7 +172,9 @@ const tamperedStatus = (message: string, entries: number, validThrough: number):
  *  - settings.latestCheckpoint (team prefs, which database and storage access cannot edit) names the newest
  *    checkpoint it signed; stored checkpoints that are missing, older or different mean files were deleted or replaced;
  *  - a malformed checkpoint file, an invalid signature on the previous checkpoint, or new entries that do not verify;
- *  - the space's recorded integrity is "tampered" (a full verification found a problem; it stays refused until one passes).
+ *  - the space's recorded integrity is "tampered": then it first runs the same full verification as the sentinel
+ *    (every checkpoint file, malformed ones included, and the trust anchor), records the result, and signs only if
+ *    that passes. This catches problems inside signed history and in older files, which incremental signing skips.
  * It also refuses, without blaming the data, when it cannot check the previous checkpoint's signature (fail closed).
  *
  * Incremental signing (soundness): the previous checkpoint P is accepted only after its signature verifies with the
@@ -193,7 +195,12 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
   // Cheap exit for scheduled runs: settings record the latest checkpoint, so an idle space costs no file reads.
   if (!opts.force && trusted?.size === size) return { created: false, reason: "no new entries" };
   if (space.settings.integrity?.status === "tampered") {
-    return { created: false, refused: true, reason: `refusing to sign: the last verification found tampering (${space.settings.integrity.firstFinding ?? "see the chain page"}). A verification that passes lifts this.` };
+    const report = await verifyStoredSpace(b, space);
+    await recordIntegrity(b, space, integrityOf(report)).catch((e) => console.error("[engram] could not record integrity", e));
+    if (report.status === "tampered") {
+      const first = report.findings.find((f) => f.severity === "critical")?.message ?? "see the chain page";
+      return { created: false, refused: true, reason: `refusing to sign: the chain does not verify (${first})` };
+    }
   }
   const keyId = opts.keyId ?? cfg.checkpoint.keyId;
   const ring = await signerKeyring(cfg, opts.privateKey, keyId);

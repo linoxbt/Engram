@@ -135,6 +135,17 @@ describe("malformed checkpoint files", () => {
   });
 });
 
+describe("recorded tampering", () => {
+  it("a stale tampered badge is re-checked in full, and signing resumes once the chain verifies", async () => {
+    const { b, ctx, keys } = await setup();
+    await fill(ctx, 3);
+    await updateSettings(b, ctx.space.key, { integrity: { status: "tampered", validThrough: 0, entries: 3, findings: 1, critical: 1, checkedAt: new Date().toISOString(), firstFinding: "old" } });
+    const run = await runCheckpoint(b, await fresh(b, ctx.space.key), { privateKey: keys.privateKey });
+    expect(run.created).toBe(true);
+    expect((await fresh(b, ctx.space.key)).settings.integrity?.status).toBe("valid");
+  });
+});
+
 describe("checkpoint keyring on the server", () => {
   it("verifies across a key rotation, and the signer fails closed on a predecessor it cannot check", async () => {
     const { b, ctx, keys } = await setup();
