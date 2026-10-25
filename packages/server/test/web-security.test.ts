@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { safeNextFor } from "../../../apps/web/lib/client/safe-next";
 import { errorLine, requestIdFor } from "../../../apps/web/lib/server/log";
 import { clientKey, WindowCounter } from "../../../apps/web/lib/server/limits";
+import { cleanDisplayName } from "../../../apps/web/lib/server/names";
 import { EngramError, errorLogFields } from "../src/index";
 
 const ORIGIN = "https://engram.example";
@@ -52,6 +53,32 @@ describe("rate-limit keys and counters", () => {
     }
     expect(c.size).toBeLessThanOrEqual(100);
     expect(c.hit("victim", 3, 60_000, now)).not.toBeNull();
+  });
+});
+
+describe("telemetry forwarding budget", () => {
+  it("one address cannot spend the shared budget, and the shared cap still holds", () => {
+    const c = new WindowCounter();
+    const now = 5_000_000;
+    const loud = Array.from({ length: 100 }, () => c.allow("hook", "1.1.1.1", 5, 60, 600_000, now)).filter(Boolean).length;
+    expect(loud).toBe(5);
+    // Others still get through after one client tried to flood.
+    expect(c.allow("hook", "2.2.2.2", 5, 60, 600_000, now)).toBe(true);
+    let total = 6;
+    for (let i = 0; i < 200; i++) if (c.allow("hook", `10.0.${i}.1`, 5, 60, 600_000, now)) total++;
+    expect(total).toBe(60);
+  });
+});
+
+describe("display names", () => {
+  it("are one plain line of bounded length", () => {
+    expect(cleanDisplayName("Ada\nLovelace")).toBe("Ada Lovelace");
+    expect(cleanDisplayName("  Ada \t\r\n  L.  ")).toBe("Ada L.");
+    expect(cleanDisplayName("Eve\u202egnp.exe")).toBe("Eve gnp.exe");
+    expect(cleanDisplayName("Zero\u200bWidth\u0007Bell")).toBe("Zero Width Bell");
+    expect(cleanDisplayName("x".repeat(200))).toHaveLength(80);
+    expect(cleanDisplayName("\n\t\u200b")).toBe("");
+    expect(cleanDisplayName("José Müller-Łukasz")).toBe("José Müller-Łukasz");
   });
 });
 

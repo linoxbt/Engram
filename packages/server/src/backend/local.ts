@@ -11,6 +11,7 @@ import { normalize } from "@engram/core";
 import { ConflictError, EngramError, REAUTH_WINDOW_MS, reauthRequired } from "../errors";
 import { evaluate } from "./query";
 import { clearAttempts, guardedSignIn, type AttemptStore } from "./login-guard";
+import { SIGNUP_CONFLICT } from "./types";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamMember, TeamStore, TxOp,
   User, VDoc, VectorStore,
@@ -207,7 +208,7 @@ class LocalAuth implements AuthStore {
   constructor(private s: LocalState) {}
   async signUp(email: string, password: string, name: string): Promise<User> {
     email = email.toLowerCase();
-    if (Object.values(this.s.db.users).some((u) => u.email === email)) throw new EngramError("conflict", "An account with this email already exists.");
+    if (Object.values(this.s.db.users).some((u) => u.email === email)) throw new EngramError("conflict", SIGNUP_CONFLICT);
     if (password.length < 8) throw new EngramError("bad_request", "Password must be at least 8 characters.");
     const id = "u" + randomBytes(9).toString("hex");
     const salt = randomBytes(16).toString("hex");

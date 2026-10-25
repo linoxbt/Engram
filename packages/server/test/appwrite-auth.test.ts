@@ -1,7 +1,7 @@
 /** The Appwrite auth adapter against stubbed SDK calls: sign-in limits, session checks and session clean-up. */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Account, AppwriteException, Storage, Users } from "node-appwrite";
-import { createAppwriteBackend, getConfig } from "../src/index";
+import { Account, AppwriteException, Messaging, Storage, Users } from "node-appwrite";
+import { createAppwriteBackend, getConfig, SIGNUP_CONFLICT } from "../src/index";
 import { LOGIN_LIMITS } from "../src/backend/login-guard";
 
 const backend = () => createAppwriteBackend({ ...getConfig(), appwrite: { ...getConfig().appwrite, endpoint: "https://appwrite.invalid/v1", projectId: "p", apiKey: "k" } });
@@ -47,6 +47,27 @@ describe("Appwrite sign-in", () => {
     const b = backend();
     for (let i = 0; i < 3; i++) await b.auth.signIn("bo@example.com", "pw").catch(() => undefined);
     expect(files.size).toBe(0);
+  });
+});
+
+describe("Appwrite sign-up and alerts", () => {
+  it("does not confirm that an address already has an account", async () => {
+    vi.spyOn(Account.prototype, "create").mockRejectedValue(new AppwriteException("A user with the same id, email, or phone already exists", 409, "user_already_exists"));
+    await expect(backend().auth.signUp("taken@example.com", "password123", "T")).rejects.toMatchObject({ code: "conflict", message: SIGNUP_CONFLICT });
+  });
+
+  it("reads ENGRAM_ALERT_EMAILS with the same parser as every other flag", async () => {
+    const send = vi.spyOn(Messaging.prototype, "createEmail").mockResolvedValue({} as never);
+    const prev = process.env.ENGRAM_ALERT_EMAILS;
+    try {
+      for (const [v, sent] of [["TRUE", 1], ["1", 2], ["yes", 3], ["false", 3], ["", 3]] as const) {
+        process.env.ENGRAM_ALERT_EMAILS = v;
+        await backend().jobs.notifyTamper({ spaceKey: "abcd1234", spaceName: "S", ownerId: "u1", message: "m" });
+        expect(send).toHaveBeenCalledTimes(sent);
+      }
+    } finally {
+      if (prev === undefined) delete process.env.ENGRAM_ALERT_EMAILS; else process.env.ENGRAM_ALERT_EMAILS = prev;
+    }
   });
 });
 

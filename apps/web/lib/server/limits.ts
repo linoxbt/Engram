@@ -61,6 +61,15 @@ export class WindowCounter {
     return w.count > max ? w.resetAt - now : null;
   }
 
+  /**
+   * A per-key budget inside a shared cap: true while `key` is under `perKey` AND everyone together is under
+   * `total`. A key that is over its own budget does not spend the shared one.
+   */
+  allow(bucket: string, key: string, perKey: number, total: number, windowMs: number, now = Date.now()): boolean {
+    if (this.hit(`${bucket}:key:${key}`, perKey, windowMs, now) !== null) return false;
+    return this.hit(`${bucket}:all`, total, windowMs, now) === null;
+  }
+
   private sweep(now: number) { for (const [k, w] of this.windows) if (w.resetAt <= now) this.windows.delete(k); }
 
   private evict(now: number) {

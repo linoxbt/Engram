@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { deleteSpace, EngramError, getBackend, isEngramError, isOwnerRole, listSpacesForUser, membership } from "@engram/server";
 import { readJson, route } from "@/lib/server/api";
+import { cleanDisplayName } from "@/lib/server/names";
 import { MINUTE, rateLimit } from "@/lib/server/rate-limit";
 import { clearSession, currentUser, requireUser, sessionSecret } from "@/lib/server/session";
 
@@ -9,7 +10,7 @@ export const maxDuration = 60;
 
 export const GET = route(async () => ({ user: await currentUser() }));
 
-const Patch = z.object({ name: z.string().trim().min(1).max(80) });
+const Patch = z.object({ name: z.string().max(500).transform((s) => cleanDisplayName(s)).pipe(z.string().min(1, "Enter your name.")) });
 export const PATCH = route(async (req) => {
   await requireUser();
   const body = Patch.parse(await readJson(req));

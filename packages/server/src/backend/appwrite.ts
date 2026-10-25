@@ -3,11 +3,12 @@ import {
   Account, AppwriteException, Client, Embeddings, EmbeddingModel, Functions, ID, Messaging, Query, Storage, Teams, Users, VectorsDB,
 } from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
-import type { EngramConfig } from "../config";
+import { bool, type EngramConfig } from "../config";
 import { ConflictError, EngramError, isEngramError, REAUTH_WINDOW_MS, reauthRequired } from "../errors";
 import { evaluate } from "./query";
 import { clearAttempts, guardedSignIn, type AttemptStore } from "./login-guard";
 import { cosine } from "@engram/core";
+import { SIGNUP_CONFLICT } from "./types";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Filter, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamMember, TeamStore, TxOp,
   User, VDoc, VectorStore,
@@ -343,7 +344,7 @@ class AppwriteAuth implements AuthStore {
       return { id: u.$id, email: u.email, name: u.name };
     } catch (e) {
       // Same messages as the local backend; a bare 409 would otherwise read as a chain conflict.
-      if (e instanceof AppwriteException && e.code === 409) throw new EngramError("conflict", "An account with this email already exists.");
+      if (e instanceof AppwriteException && e.code === 409) throw new EngramError("conflict", SIGNUP_CONFLICT);
       if (e instanceof AppwriteException && e.code === 400) throw new EngramError("bad_request", e.message);
       throw mapError(e);
     }
@@ -522,7 +523,7 @@ class AppwriteJobs implements Jobs {
     return true;
   }
   async notifyTamper(args: { spaceKey: string; spaceName: string; ownerId?: string; message: string }) {
-    if (!args.ownerId || process.env.ENGRAM_ALERT_EMAILS !== "true") return;
+    if (!args.ownerId || !bool("ENGRAM_ALERT_EMAILS", false)) return;
     try {
       // Addressed to the user, so Appwrite Messaging sends it to the account's email target.
       await new Messaging(this.admin).createEmail({

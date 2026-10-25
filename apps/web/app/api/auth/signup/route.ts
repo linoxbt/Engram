@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getBackend, getConfig } from "@engram/server";
 import { readJson, route } from "@/lib/server/api";
 import { appOrigin, requireCookieConsent } from "@/lib/server/consent";
+import { cleanDisplayName } from "@/lib/server/names";
 import { clientIp, HOUR, rateLimit } from "@/lib/server/rate-limit";
 import { setSession } from "@/lib/server/session";
 
@@ -9,7 +10,7 @@ export const runtime = "nodejs";
 const Body = z.object({
   email: z.string().email(),
   password: z.string().min(8).max(256),
-  name: z.string().trim().min(1).max(80),
+  name: z.string().max(500).transform((s) => cleanDisplayName(s)).pipe(z.string().min(1, "Enter your name.")),
   acceptTerms: z.literal(true, { message: "Agree to the Terms of Service and Privacy Policy to create an account." }),
 });
 

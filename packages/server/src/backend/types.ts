@@ -82,6 +82,12 @@ export interface FileStore {
 }
 
 export interface User { id: string; email: string; name: string; emailVerified?: boolean }
+
+/**
+ * Sign-up with an address that already has an account. Worded so it does not confirm the account to whoever is
+ * asking; the request still fails, so a determined prober learns as much as from any sign-up form (rate-limited).
+ */
+export const SIGNUP_CONFLICT = "If you already have an account, sign in or reset your password.";
 export interface AuthStore {
   signUp(email: string, password: string, name: string): Promise<User>;
   /**
