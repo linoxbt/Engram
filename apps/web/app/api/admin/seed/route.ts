@@ -3,7 +3,6 @@ import { bearerMatches, createSpace, getBackend, getConfig, getSpace, isConflict
 import { defer, readJson, route } from "@/lib/server/api";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
 
 const Body = z.object({
   ownerEmail: z.string().email(),

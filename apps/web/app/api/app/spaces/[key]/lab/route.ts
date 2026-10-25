@@ -4,7 +4,6 @@ import { attack, resetSandbox, sealSandbox, requireSandbox } from "@engram/serve
 import { readJson, requireOwner, spaceRoute } from "@/lib/server/api";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
 
 const Body = z.object({
   action: z.enum(["attack", "reset", "seal"]),

@@ -6,7 +6,6 @@ import { requireUser } from "@/lib/server/session";
 export const runtime = "nodejs";
 /** Hosts cut requests off after ~10 s; seeding writes for this long per request. */
 const SEED_SLICE_MS = 6_000;
-export const maxDuration = 120;
 
 export const GET = route(async () => {
   const user = await requireUser();
