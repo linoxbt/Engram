@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, 
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
 import { readConsent } from "@/lib/client/consent";
-import { storageDown, useEachSpace, useHealth, useSpaces } from "@/lib/client/workspace";
+import { storageDown, useConflictCounts, useHealth } from "@/lib/client/workspace";
 import {
   IconBolt, IconBook, IconChevron, IconCross, IconGrid, IconInbox, IconKey, IconLogo, IconMenu, IconPlug, IconPulse, IconSeal, IconShield, IconSidebar, IconUser, Wordmark,
 } from "./icons";
@@ -53,13 +53,24 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
   const desktop = useDesktop();
   const leftRef = useRef<HTMLElement>(null);
   const rightRef = useRef<HTMLElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
+  // The phone space drawer opens just below the space row, which moves with the verify banner and with scrolling.
+  const [spaceTop, setSpaceTop] = useState<number | null>(null);
+  useEffect(() => {
+    if (!spaceMenu || desktop) return;
+    const measure = () => { const el = headerRef.current; if (el) setSpaceTop(Math.max(0, el.getBoundingClientRect().bottom)); };
+    measure();
+    window.addEventListener("scroll", measure, { passive: true });
+    window.addEventListener("resize", measure);
+    return () => { window.removeEventListener("scroll", measure); window.removeEventListener("resize", measure); };
+  }, [spaceMenu, desktop]);
+  const belowSpaceRow = !desktop && spaceTop != null ? { top: spaceTop } : undefined;
   // Phone drawers: focus moves in on open, Escape closes (only when no modal sits above), and closed ones are inert.
   useLayer(menu && !desktop, () => setMenu(false), leftRef, { trap: false, focus: "first" });
   useLayer(spaceMenu && !desktop, () => setSpaceMenu(false), rightRef, { trap: false, focus: "first" });
   const health = useHealth();
-  const spaces = useSpaces();
-  const conflicts = useEachSpace<{ pairs: unknown[] }>(spaces.data?.spaces, "conflicts", (k) => `/api/app/spaces/${k}/conflicts`, !storageDown(health.data) && !!health.data);
-  const openConflicts = conflicts.rows.reduce((n, r) => n + (r.data?.pairs.length ?? 0), 0);
+  const conflicts = useConflictCounts(!storageDown(health.data) && !!health.data);
+  const openConflicts = Object.values(conflicts.data?.conflicts ?? {}).reduce<number>((n, c) => n + (c ?? 0), 0);
 
   useEffect(() => { setMenu(false); setSpaceMenu(false); }, [pathname]);
   useEffect(() => {
@@ -149,6 +160,7 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
         <aside
           ref={rightRef}
           inert={!desktop && !spaceMenu}
+          style={belowSpaceRow}
           className={clsx(
             // Phones: a drawer from the left, beneath the space header row. Desktop: the right-hand sidebar.
             "fixed bottom-0 left-0 top-[6.5rem] z-30 flex w-60 max-w-[78vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:left-auto lg:right-0 lg:top-0 lg:max-w-none lg:translate-x-0 lg:border-l lg:border-r-0",
@@ -185,7 +197,7 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
         </aside>
       )}
 
-      {(menu || spaceMenu) && <div className={clsx("fixed inset-x-0 bottom-0 z-20 bg-black/30 lg:hidden", spaceMenu ? "top-[6.5rem]" : "top-14")} onClick={() => { setMenu(false); setSpaceMenu(false); }} />}
+      {(menu || spaceMenu) && <div className={clsx("fixed inset-x-0 bottom-0 z-20 bg-black/30 lg:hidden", spaceMenu ? "top-[6.5rem]" : "top-14")} style={spaceMenu ? belowSpaceRow : undefined} onClick={() => { setMenu(false); setSpaceMenu(false); }} />}
       <div className={clsx(
         "flex min-w-0 flex-1 flex-col transition-[padding] duration-200",
         mini ? "lg:pl-[60px]" : "lg:pl-60",
@@ -200,7 +212,7 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
         </header>
         {user.emailVerified === false && <VerifyBanner email={user.email} />}
         {header && (
-          <div className="sticky top-14 z-10 border-b border-line bg-bg/90 backdrop-blur lg:top-0">{header}</div>
+          <div ref={headerRef} className="sticky top-14 z-10 border-b border-line bg-bg/90 backdrop-blur lg:top-0">{header}</div>
         )}
         <main className={clsx("mx-auto w-full flex-1 p-4", wide ? "max-w-[1400px] md:p-6" : "max-w-6xl md:p-8")}>
           {/* Phones: the space's pages open from this button, just below the space row. */}

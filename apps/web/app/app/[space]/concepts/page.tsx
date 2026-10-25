@@ -107,7 +107,7 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
         ctx.fillStyle = n.id === selected ? "rgba(10,10,10,0.9)" : "rgba(255,255,255,1)";
         ctx.fill();
         ctx.lineWidth = (n.id === selected || hit ? 2.5 : 1.2) / k;
-        ctx.strokeStyle = hit ? "#9a7200" : "#0a0a0a";
+        ctx.strokeStyle = hit ? "#946d00" : "#0a0a0a";
         ctx.stroke();
         if (k > 0.6 || n.members > 4) {
           ctx.fillStyle = "#0a0a0a";

@@ -102,9 +102,9 @@ export function View() {
                 if (pw.next !== pw.confirm) { setPwError(new Error("The new passwords do not match.")); return; }
                 changePw.mutate();
               }}>
-                <Field label="Current password"><Input type="password" autoComplete="current-password" required value={pw.old} onChange={(e) => setPw({ ...pw, old: e.target.value })} /></Field>
-                <Field label="New password"><Input type="password" autoComplete="new-password" required minLength={8} value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} /></Field>
-                <Field label="Confirm new password"><Input type="password" autoComplete="new-password" required minLength={8} value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} /></Field>
+                <Field label="Current password"><Input type="password" autoComplete="current-password" required maxLength={256} value={pw.old} onChange={(e) => setPw({ ...pw, old: e.target.value })} /></Field>
+                <Field label="New password"><Input type="password" autoComplete="new-password" required minLength={8} maxLength={256} value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} /></Field>
+                <Field label="Confirm new password"><Input type="password" autoComplete="new-password" required minLength={8} maxLength={256} value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} /></Field>
                 <div className="flex flex-wrap items-center gap-3 sm:col-span-3">
                   <Button type="submit" variant="primary" loading={changePw.isPending}>Change password</Button>
                   <Link href="/forgot-password" className="text-2xs text-muted underline-offset-2 hover:text-text hover:underline">Forgot your current password?</Link>
@@ -167,7 +167,7 @@ export function View() {
               {owned.map((s) => <li key={s.key}>{s.name} <span className="text-muted tabular">{s.key}</span></li>)}
             </ul>
           )}
-          <Field label="Your password"><Input type="password" autoComplete="current-password" required value={del.password} onChange={(e) => setDel({ ...del, password: e.target.value })} /></Field>
+          <Field label="Your password"><Input type="password" autoComplete="current-password" required maxLength={256} value={del.password} onChange={(e) => setDel({ ...del, password: e.target.value })} /></Field>
           <Field label="Type DELETE to confirm"><Input required value={del.confirm} onChange={(e) => setDel({ ...del, confirm: e.target.value })} /></Field>
           <ErrorNote error={remove.error} />
           <div className="flex justify-end gap-2">

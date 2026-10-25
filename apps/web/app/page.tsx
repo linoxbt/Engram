@@ -1,14 +1,12 @@
 import Link from "next/link";
-import { currentUser } from "@/lib/server/session";
 import { IconLogo, Wordmark } from "@/components/icons";
 import { CopyCommand } from "@/components/landing/copy-command";
 import { WaveMesh } from "@/components/landing/wave-mesh";
 import { CookieSettingsLink } from "@/components/cookie-settings-link";
 import { ProofPlayground } from "@/components/landing/proof-playground";
+import { SessionLink } from "@/components/landing/session-link";
 import { Reveal } from "@/components/landing/reveal";
 import { TimeScrubber } from "@/components/landing/time-scrubber";
-
-export const dynamic = "force-dynamic";
 
 const PROMISES = [
   { n: "01", title: "Meaning-addressed", body: "Memories are found by what they mean. Appwrite's built-in embeddings and cosine search, re-ranked by recency, importance and use." },
@@ -38,8 +36,7 @@ const APPWRITE = [
   ["Auth + Teams", "one team per space; settings in team preferences"],
 ];
 
-export default async function Landing() {
-  const user = await currentUser();
+export default function Landing() {
   const url = process.env.NEXT_PUBLIC_APP_URL ?? "https://engram.example";
   const demo = process.env.NEXT_PUBLIC_DEMO_SPACE ?? null;
   return (
@@ -53,7 +50,7 @@ export default async function Landing() {
             <a href="#time" className="hidden rounded-full px-3 py-1.5 text-muted hover:text-text md:inline">Time</a>
             <Link href="/docs" className="hidden rounded-full px-3 py-1.5 text-muted hover:text-text sm:inline">Docs</Link>
             <Link href="/verify" className="hidden rounded-full px-3 py-1.5 text-muted hover:text-text sm:inline">Verify</Link>
-            <Link href={user ? "/app" : "/signup"} className="l-btn l-btn-primary !h-9 !px-4 !text-[13px]">{user ? "Console" : "Begin"}</Link>
+            <SessionLink signedIn="Console" signedOut="Begin" className="l-btn l-btn-primary !h-9 !px-4 !text-[13px]" />
           </div>
         </nav>
       </header>
@@ -73,7 +70,7 @@ export default async function Landing() {
             Engram is where AI agents keep what they know. Every memory is stored by meaning, chained by hash and replayable in time, so you can always answer the question that matters after a mistake: <em className="text-text">what did it know, and when?</em>
           </p>
           <div className="mt-10 flex flex-wrap gap-3">
-            <Link href={user ? "/app" : "/signup"} className="l-btn l-btn-primary">{user ? "Open the console" : "Create a memory space"} <span aria-hidden>→</span></Link>
+            <SessionLink signedIn="Open the console" signedOut="Create a memory space" className="l-btn l-btn-primary"> <span aria-hidden>→</span></SessionLink>
             <a href="#proof" className="l-btn l-btn-ghost">Try to break it</a>
             {demo && <Link href={`/verify/${demo}`} className="l-btn l-btn-ghost">Verify the live chain</Link>}
           </div>
@@ -214,7 +211,7 @@ export default async function Landing() {
         <Reveal className="relative mx-auto max-w-4xl px-5 text-center sm:px-8">
           <h2 className="l-display text-5xl sm:text-7xl lg:text-8xl">The past,<br /><span className="l-serif l-glow-text">provable.</span></h2>
           <div className="mt-12 flex flex-wrap justify-center gap-3">
-            <Link href={user ? "/app" : "/signup"} className="l-btn l-btn-primary">{user ? "Open the console" : "Start free"} <span aria-hidden>→</span></Link>
+            <SessionLink signedIn="Open the console" signedOut="Start free" className="l-btn l-btn-primary"> <span aria-hidden>→</span></SessionLink>
             <Link href="/docs" className="l-btn l-btn-ghost">Read the docs</Link>
           </div>
         </Reveal>

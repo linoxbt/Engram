@@ -13,7 +13,7 @@ const RANGES = [
   { key: "neighbourDistance", label: "Neighbour distance", min: 0.05, max: 0.9, step: 0.01, help: "How close an existing memory must be before Engram checks it for duplicates, supersessions and conflicts. Lower is stricter. Default 0.35." },
   { key: "duplicateDistance", label: "Duplicate distance", min: 0, max: 0.3, step: 0.005, help: "Below this distance, with the same kind and subject, a new memory is a duplicate without asking the model. Default 0.06." },
   { key: "conceptDistance", label: "Concept distance", min: 0.05, max: 0.9, step: 0.01, help: "How close a memory must be to a concept's centre to join it. Default 0.30." },
-  { key: "checkpointEvery", label: "Checkpoint interval", min: 1, max: 200, step: 1, help: "Sign a checkpoint after this many new entries, in addition to the scheduled run. Default 16." },
+  { key: "checkpointEvery", label: "Checkpoint interval", min: 1, max: 1000, step: 1, help: "Sign a checkpoint after this many new entries, in addition to the scheduled run. Default 16." },
 ] as const;
 
 type Num = { neighbourDistance: number; duplicateDistance: number; conceptDistance: number; checkpointEvery: number };
@@ -66,7 +66,7 @@ export default function SettingsPage() {
       <MembersCard space={space} owner={owner} sandbox={!!s?.sandbox} />
 
       <Card title="Thresholds">
-        <div className="grid gap-5 p-4 md:grid-cols-2">
+        <form className="grid gap-5 p-4 md:grid-cols-2" onSubmit={(e) => { e.preventDefault(); save.mutate({ ...nums, classifierModel: classifier.trim() || null, retentionDays: retention }); }}>
           {RANGES.map((r) => (
             <Field key={r.key} label={`${r.label}: ${nums[r.key]}`} help={r.help}>
               <input type="range" min={r.min} max={r.max} step={r.step} value={nums[r.key]} disabled={!owner} className="w-full accent-[#0a0a0a]"
@@ -74,13 +74,13 @@ export default function SettingsPage() {
             </Field>
           ))}
           <Field label="Classifier model" help='Provider and model, like "anthropic:claude-haiku-5-5" or "openai:gpt-5-mini". Empty uses the deployment default; with no model key, a rule-based classifier runs.'>
-            <Input value={classifier} onChange={(e) => setClassifier(e.target.value)} disabled={!owner} placeholder="deployment default" />
+            <Input value={classifier} onChange={(e) => setClassifier(e.target.value)} disabled={!owner} maxLength={100} placeholder="deployment default" />
           </Field>
           <Field label="Retention (days)" help="0 keeps everything. Otherwise the sentinel writes forget entries for older memories; nothing is ever deleted.">
-            <Input type="number" min={0} max={3650} value={retention} onChange={(e) => setRetention(Number(e.target.value))} disabled={!owner} />
+            <Input type="number" required min={0} max={3650} step={1} value={retention} onChange={(e) => setRetention(Number(e.target.value))} disabled={!owner} />
           </Field>
-          {owner && <div><Button variant="primary" loading={save.isPending} onClick={() => save.mutate({ ...nums, classifierModel: classifier || null, retentionDays: retention })}>Save thresholds</Button></div>}
-        </div>
+          {owner && <div><Button type="submit" variant="primary" loading={save.isPending}>Save thresholds</Button></div>}
+        </form>
       </Card>
 
       <Card title="Verification">

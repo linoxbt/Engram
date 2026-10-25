@@ -30,8 +30,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body className="min-h-screen">
         <AppwritePing />
-        <Providers>{children}</Providers>
-        <CookieBanner />
+        <Providers>
+          {children}
+          <CookieBanner />
+        </Providers>
         <ErrorReporter />
       </body>
     </html>

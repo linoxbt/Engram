@@ -22,7 +22,7 @@ export default function ConflictsPage() {
   const resolve = useMutation({
     mutationFn: (v: { pair: string; winnerId: string; loserId: string; action: "supersede" | "refine" | "dismiss" }) => api<{ seq: number }>(`/api/app/spaces/${space}/conflicts`, { method: "POST", json: { winnerId: v.winnerId, loserId: v.loserId, action: v.action, reason: v.action === "supersede" ? "Resolved in the conflict inbox" : v.action === "refine" ? "Both true" : "Not a real conflict" } }),
     onMutate: (v) => setPending((m) => ({ ...m, [v.pair]: v.action + v.winnerId })),
-    onSuccess: (r) => { toast(`Recorded as entry #${r.seq}.`, "ok"); return qc.invalidateQueries({ queryKey: ["space", space] }); },
+    onSuccess: (r) => { toast(`Recorded as entry #${r.seq}.`, "ok"); qc.invalidateQueries({ queryKey: ["conflicts"] }); return qc.invalidateQueries({ queryKey: ["space", space] }); },
     onSettled: (_r, _e, v) => { inFlight.current.delete(v.pair); setPending((m) => { const n = { ...m }; delete n[v.pair]; return n; }); },
   });
   const decide = (pair: string, action: "supersede" | "refine" | "dismiss", winnerId: string, loserId: string) => {

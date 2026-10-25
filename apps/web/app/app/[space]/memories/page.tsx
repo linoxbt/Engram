@@ -67,7 +67,7 @@ export default function MemoriesPage() {
       <form onSubmit={(e) => { e.preventDefault(); run(query); }} className="flex gap-2">
         <div className="relative flex-1">
           <IconSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-          <Input aria-label="Search memories" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Ask a question, e.g. What plan is Ada on?" className="h-10 pl-9 text-sm" />
+          <Input aria-label="Search memories" maxLength={500} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Ask a question, e.g. What plan is Ada on?" className="h-10 pl-9 text-sm" />
         </div>
         <Button type="submit" variant="primary" className="h-10">Recall</Button>
         {submitted && <Button type="button" variant="ghost" className="h-10" onClick={() => { setSubmitted(null); setQuery(""); }}>Clear</Button>}

@@ -55,11 +55,10 @@ export function View() {
           </Card>
           <Card title="2 · Add it to your client">
             <div className="space-y-3 p-4">
-              <Tabs value={tab} onChange={setTab} tabs={[{ id: "claude", label: "Claude Code" }, { id: "cursor", label: "Cursor / mcp.json" }, { id: "rest", label: "REST" }, { id: "sdk", label: "SDK" }]} />
-              <div className="relative">
+              <Tabs value={tab} onChange={setTab} tabs={[{ id: "claude", label: "Claude Code" }, { id: "cursor", label: "Cursor / mcp.json" }, { id: "rest", label: "REST" }, { id: "sdk", label: "SDK" }]} panelClassName="relative">
                 <pre className="overflow-x-auto rounded-[2px] border border-line bg-panel p-3 pr-16 text-2xs leading-relaxed"><code>{snippets[tab]}</code></pre>
                 <CopyButton value={snippets[tab]} className="absolute right-2 top-2" />
-              </div>
+              </Tabs>
               <p className="text-2xs text-muted">Replace <code className="text-text">{KEY}</code> with the key from step 1. The MCP endpoint is <code className="text-text">{origin}/api/mcp</code> (Streamable HTTP).</p>
             </div>
           </Card>

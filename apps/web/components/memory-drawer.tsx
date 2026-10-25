@@ -36,10 +36,7 @@ export function MemoryDrawer({ spaceKey, id, onClose, onNavigate }: { spaceKey: 
         {d && <Pill tone={d.conflict && d.status === "active" ? "conflict" : d.status}>{d.conflict && d.status === "active" ? "conflict" : d.status}</Pill>}
       </div>
     }>
-      <div className="px-4 pt-2">
-        <Tabs<Tab> value={tab} onChange={setTab} tabs={[{ id: "memory", label: "Memory" }, { id: "provenance", label: "Provenance" }, { id: "relations", label: "Relations" }, { id: "proof", label: "Proof" }, { id: "timeline", label: "Timeline" }]} />
-      </div>
-      <div className="p-4">
+      <Tabs<Tab> value={tab} onChange={setTab} className="mx-4 mt-2" panelClassName="p-4" tabs={[{ id: "memory", label: "Memory" }, { id: "provenance", label: "Provenance" }, { id: "relations", label: "Relations" }, { id: "proof", label: "Proof" }, { id: "timeline", label: "Timeline" }]}>
         {q.isLoading && <div className="space-y-2"><Skeleton className="h-6 w-3/4" /><Skeleton className="h-4 w-1/2" /><Skeleton className="h-24" /></div>}
         <ErrorNote error={q.error} />
         {d && tab === "memory" && <MemoryTab d={d} spaceKey={spaceKey} onNavigate={onNavigate} />}
@@ -47,7 +44,7 @@ export function MemoryDrawer({ spaceKey, id, onClose, onNavigate }: { spaceKey: 
         {d && tab === "relations" && <RelationsTab d={d} onNavigate={onNavigate} />}
         {d && tab === "proof" && <ProofTab d={d} spaceKey={spaceKey} />}
         {d && tab === "timeline" && <TimelineTab d={d} spaceKey={spaceKey} onNavigate={onNavigate} />}
-      </div>
+      </Tabs>
     </Drawer>
   );
 }
@@ -80,7 +77,7 @@ function MemoryTab({ d, spaceKey, onNavigate }: { d: Detail; spaceKey: string; o
       setConfirm(false);
       setDissolving(true);
       toast(`Content erased. The record of erasure is entry #${r.seq}.`, "ok");
-      setTimeout(() => qc.invalidateQueries({ queryKey: ["space", spaceKey] }), 1500);
+      setTimeout(() => { qc.invalidateQueries({ queryKey: ["space", spaceKey] }); qc.invalidateQueries({ queryKey: ["conflicts"] }); }, 1500);
     },
   });
   const isMemory = d.op === "remember" || d.op === "reflect";
@@ -179,7 +176,7 @@ function RelationsTab({ d, onNavigate }: { d: Detail; onNavigate: (id: string) =
           const x = 20 + (i % 3) * 140 + (i >= 3 ? 70 : 0) - (i >= 3 ? 70 : 0);
           const y = i < 3 ? 5 : 90;
           const rel = relOf(r.id);
-          const color = rel.tone === "conflict" ? "#d7263d" : rel.tone === "gold" ? "#9a7200" : rel.tone === "superseded" ? "#686868" : rel.tone === "violet" ? "#45454d" : "#0a0a0a";
+          const color = rel.tone === "conflict" ? "#d7263d" : rel.tone === "gold" ? "#946d00" : rel.tone === "superseded" ? "#686868" : rel.tone === "violet" ? "#45454d" : "#0a0a0a";
           return (
             <g key={r.id} className="cursor-pointer" onClick={() => onNavigate(r.id)}>
               <line x1="200" y1={y < 45 ? 45 : 75} x2={x + 40} y2={y < 45 ? y + 25 : y} stroke={color} strokeWidth="1" strokeDasharray={rel.tone === "superseded" ? "3 3" : undefined} />

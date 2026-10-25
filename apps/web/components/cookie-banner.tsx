@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { OPEN_COOKIE_SETTINGS, useConsent, writeConsent } from "@/lib/client/consent";
 
 /**
@@ -11,6 +12,7 @@ import { OPEN_COOKIE_SETTINGS, useConsent, writeConsent } from "@/lib/client/con
 export function CookieBanner() {
   const consent = useConsent();
   const router = useRouter();
+  const qc = useQueryClient();
   const pathname = usePathname();
   const [reopened, setReopened] = useState(false);
   useEffect(() => {
@@ -25,6 +27,7 @@ export function CookieBanner() {
     writeConsent("declined");
     setReopened(false);
     await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+    qc.clear();
     if (pathname.startsWith("/app")) router.push("/");
     router.refresh();
   };

@@ -38,8 +38,8 @@ export function ResetForm() {
         <Link href="/login" className="inline-flex h-9 w-full items-center justify-center rounded-[2px] bg-accent text-sm text-bg">Sign in</Link>
       ) : (
         <form method="post" className="space-y-3" onSubmit={(e) => { e.preventDefault(); void submit(e.currentTarget); }}>
-          <Field label="New password"><Input name="password" type="password" autoComplete="new-password" required minLength={8} /></Field>
-          <Field label="Confirm new password"><Input name="confirm" type="password" autoComplete="new-password" required minLength={8} /></Field>
+          <Field label="New password"><Input name="password" type="password" autoComplete="new-password" required minLength={8} maxLength={256} /></Field>
+          <Field label="Confirm new password"><Input name="confirm" type="password" autoComplete="new-password" required minLength={8} maxLength={256} /></Field>
           <ErrorNote error={error} />
           <Button type="submit" variant="primary" className="w-full" loading={loading} disabled={!hydrated}>Set new password</Button>
         </form>

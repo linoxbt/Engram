@@ -126,11 +126,10 @@ export function Snippets({ apiKey, url }: { apiKey: string; url: string }) {
     <div className="space-y-3">
       <div className="rounded-[2px] border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-warn">Copy this key now. It is shown once and only its hash is stored.</div>
       <div className="panel flex items-center gap-2 px-3 py-2"><code className="flex-1 break-all text-xs text-accent">{apiKey}</code><CopyButton value={apiKey} label="Copy key" /></div>
-      <Tabs value={tab} onChange={setTab} tabs={[{ id: "claude", label: "Claude Code" }, { id: "inspector", label: "MCP Inspector" }, { id: "rest", label: "REST" }, { id: "sdk", label: "SDK" }]} />
-      <div className="relative">
+      <Tabs value={tab} onChange={setTab} tabs={[{ id: "claude", label: "Claude Code" }, { id: "inspector", label: "MCP Inspector" }, { id: "rest", label: "REST" }, { id: "sdk", label: "SDK" }]} panelClassName="relative">
         <pre className="overflow-x-auto rounded-[2px] border border-line bg-bg p-3 text-2xs leading-relaxed"><code>{snippets[tab]}</code></pre>
         <CopyButton value={snippets[tab]} className="absolute right-2 top-2" />
-      </div>
+      </Tabs>
     </div>
   );
 }

@@ -27,7 +27,8 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [loading, setLoading] = useState(false);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
   const hydrated = useHydrated();
-  const needsCookies = consent === "declined" || (error instanceof ApiError && error.code === "cookies_required" && consent !== "accepted");
+  const cookieError = error instanceof ApiError && error.code === "cookies_required";
+  const needsCookies = consent === "declined" || (cookieError && consent !== "accepted");
   // Values come from the form itself, not React state: anything typed before hydration finished still counts.
   const submit = async (form: HTMLFormElement) => {
     const f = new FormData(form);
@@ -74,7 +75,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
             <span>I agree to the <Link href="/legal/terms" target="_blank" className="text-text underline underline-offset-2">Terms of Service</Link> and <Link href="/legal/privacy" target="_blank" className="text-text underline underline-offset-2">Privacy Policy</Link>, and to Engram&apos;s use of essential cookies.</span>
           </label>
         )}
-        {needsCookies ? <CookieNotice /> : <ErrorNote error={error} />}
+        {needsCookies ? <CookieNotice /> : <ErrorNote error={cookieError ? null : error} />}
         <Button type="submit" variant="primary" className="w-full" loading={loading} disabled={!hydrated || consent === "declined" || (mode === "signup" && !agree)}>
           {mode === "login" ? "Sign in" : "Create account"}
         </Button>
