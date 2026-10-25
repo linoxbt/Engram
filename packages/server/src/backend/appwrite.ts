@@ -6,7 +6,7 @@ import { InputFile } from "node-appwrite/file";
 import type { EngramConfig } from "../config";
 import { ConflictError, EngramError, isEngramError, REAUTH_WINDOW_MS, reauthRequired } from "../errors";
 import { evaluate } from "./query";
-import { afterFailure, assertNotLocked, type LoginFails } from "./login-guard";
+import { clearAttempts, guardedSignIn, type AttemptStore } from "./login-guard";
 import { cosine } from "@engram/core";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Filter, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamMember, TeamStore, TxOp,
@@ -326,7 +326,9 @@ const passkeyMessage = (e: AppwriteException) =>
   /expired/i.test(e.message) ? "The passkey request expired. Try again." : e.message || "The passkey could not be saved.";
 
 class AppwriteAuth implements AuthStore {
-  constructor(private cfg: EngramConfig, private admin: Client) {}
+  constructor(private cfg: EngramConfig, private admin: Client) {
+    this.attempts = { files: new AppwriteFiles(new Storage(admin)), bucket: cfg.appwrite.checkpointsBucket };
+  }
   private anon() { return new Client().setEndpoint(this.cfg.appwrite.endpoint).setProject(this.cfg.appwrite.projectId); }
   async signUp(email: string, password: string, name: string): Promise<User> {
     try {
@@ -339,23 +341,19 @@ class AppwriteAuth implements AuthStore {
       throw mapError(e);
     }
   }
-  async signIn(email: string, password: string) {
-    const users = new Users(this.admin);
-    const u = (await call(() => users.list({ queries: [Query.equal("email", [email.trim().toLowerCase()]), Query.limit(1)] }))).users[0];
-    const prefs = (u?.prefs ?? {}) as Record<string, unknown>;
-    const guard = prefs.engramLogin as LoginFails | undefined;
-    assertNotLocked(guard);
-    try {
-      const s = await new Account(this.admin).createEmailPasswordSession({ email, password });
-      if (u && guard) await users.updatePrefs({ userId: u.$id, prefs: { ...prefs, engramLogin: null } }).catch(() => undefined);
-      return { secret: s.secret, userId: s.userId, expire: s.expire };
-    } catch (e) {
-      if (e instanceof AppwriteException && (e.code === 401 || e.code === 400)) {
-        if (u) await users.updatePrefs({ userId: u.$id, prefs: { ...prefs, engramLogin: afterFailure(guard) } }).catch((err) => console.warn("[engram] could not record failed sign-in", err));
-        throw new EngramError("unauthorized", "Invalid email or password.");
+  /** Attempt slots live as server-only files in the checkpoints bucket (see login-guard.ts). */
+  private attempts: AttemptStore;
+  async signIn(email: string, password: string, opts: { client?: string } = {}) {
+    // No user lookup first: unknown and known addresses take the same path.
+    return guardedSignIn(this.attempts, email, opts.client, async () => {
+      try {
+        const s = await new Account(this.admin).createEmailPasswordSession({ email, password });
+        return { secret: s.secret, userId: s.userId, expire: s.expire };
+      } catch (e) {
+        if (e instanceof AppwriteException && (e.code === 401 || e.code === 400)) throw new EngramError("unauthorized", "Invalid email or password.");
+        throw mapError(e);
       }
-      throw mapError(e);
-    }
+    });
   }
   async getUser(secret: string): Promise<User | null> {
     try {
@@ -385,7 +383,7 @@ class AppwriteAuth implements AuthStore {
       await new Account(this.anon()).updateRecovery({ userId, secret, password });
       // A successful reset proves ownership of the email, so it lifts any sign-in lockout.
       const users = new Users(this.admin);
-      await users.getPrefs({ userId }).then((p) => (p as Record<string, unknown>).engramLogin ? users.updatePrefs({ userId, prefs: { ...p, engramLogin: null } }) : null).catch(() => undefined);
+      await users.get({ userId }).then((u) => clearAttempts(this.attempts, u.email, { all: true })).catch(() => undefined);
     } catch (e) {
       if (e instanceof AppwriteException && e.code === 400 && /password/i.test(e.message)) throw new EngramError("bad_request", e.message);
       if (e instanceof AppwriteException && (e.code === 401 || e.code === 404 || e.code === 400)) throw new EngramError("bad_request", "This reset link is invalid or has expired. Request a new one.");

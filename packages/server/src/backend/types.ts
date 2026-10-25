@@ -84,7 +84,12 @@ export interface FileStore {
 export interface User { id: string; email: string; name: string; emailVerified?: boolean }
 export interface AuthStore {
   signUp(email: string, password: string, name: string): Promise<User>;
-  signIn(email: string, password: string): Promise<{ secret: string; userId: string; expire: string }>;
+  /**
+   * Password sign-in under the shared attempt limits (backend/login-guard.ts). `client` identifies the caller's
+   * network (IP, or IPv6 /64) so one attacker cannot lock the account's owner out; server-side re-authentication
+   * passes none.
+   */
+  signIn(email: string, password: string, opts?: { client?: string }): Promise<{ secret: string; userId: string; expire: string }>;
   getUser(secret: string): Promise<User | null>;
   signOut(secret: string): Promise<void>;
   /** A short-lived JWT the browser SDK can use for Realtime. Null when unsupported. */

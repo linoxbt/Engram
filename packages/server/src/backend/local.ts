@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { normalize } from "@engram/core";
 import { ConflictError, EngramError, REAUTH_WINDOW_MS, reauthRequired } from "../errors";
 import { evaluate } from "./query";
-import { afterFailure, assertNotLocked, type LoginFails } from "./login-guard";
+import { clearAttempts, guardedSignIn, type AttemptStore } from "./login-guard";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamMember, TeamStore, TxOp,
   User, VDoc, VectorStore,
@@ -215,20 +215,18 @@ class LocalAuth implements AuthStore {
     this.s.save();
     return { id, email, name };
   }
-  private loginFails = new Map<string, LoginFails>();
-  async signIn(email: string, password: string) {
+  /** Sign-in attempt slots: the same create-first counter as Appwrite, kept in process (never written to disk). */
+  readonly attempts: AttemptStore = { files: new LocalFiles(new LocalState(null)), bucket: "login" };
+  async signIn(email: string, password: string, opts: { client?: string } = {}) {
     email = email.toLowerCase();
-    assertNotLocked(this.loginFails.get(email));
-    const entry = Object.entries(this.s.db.users).find(([, u]) => u.email === email);
-    // Hash even for unknown addresses, so response time does not reveal which accounts exist.
-    const derived = scryptSync(password, entry?.[1].salt ?? "engram-timing-pad", 32);
-    const ok = entry && timingSafeEqual(Buffer.from(entry[1].hash, "hex"), derived);
-    if (!entry || !ok) {
-      if (entry) this.loginFails.set(email, afterFailure(this.loginFails.get(email)));
-      throw new EngramError("unauthorized", "Invalid email or password.");
-    }
-    this.loginFails.delete(email);
-    return this.newSession(entry[0]);
+    return guardedSignIn(this.attempts, email, opts.client, async () => {
+      const entry = Object.entries(this.s.db.users).find(([, u]) => u.email === email);
+      // Hash even for unknown addresses, so response time does not reveal which accounts exist.
+      const derived = scryptSync(password, entry?.[1].salt ?? "engram-timing-pad", 32);
+      const ok = entry && timingSafeEqual(Buffer.from(entry[1].hash, "hex"), derived);
+      if (!entry || !ok) throw new EngramError("unauthorized", "Invalid email or password.");
+      return this.newSession(entry[0]);
+    });
   }
   private newSession(userId: string) {
     const secret = randomBytes(32).toString("hex");
@@ -276,7 +274,7 @@ class LocalAuth implements AuthStore {
     if (!u) throw new EngramError("bad_request", "This reset link is invalid or has expired. Request a new one.");
     u.salt = randomBytes(16).toString("hex");
     u.hash = scryptSync(password, u.salt, 32).toString("hex");
-    this.loginFails.delete(u.email);
+    await clearAttempts(this.attempts, u.email, { all: true });
     // A reset signs the account out everywhere.
     for (const [k, v] of Object.entries(this.s.db.sessions)) if (v.userId === userId) delete this.s.db.sessions[k];
     this.s.save();

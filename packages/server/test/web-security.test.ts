@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { safeNextFor } from "../../../apps/web/lib/client/safe-next";
 import { errorLine, requestIdFor } from "../../../apps/web/lib/server/log";
+import { clientKey, WindowCounter } from "../../../apps/web/lib/server/limits";
 import { EngramError, errorLogFields } from "../src/index";
 
 const ORIGIN = "https://engram.example";
@@ -20,6 +21,37 @@ describe("safeNext", () => {
     expect(safeNextFor("/invite?token=abc.def#x", ORIGIN)).toBe("/invite?token=abc.def#x");
     expect(safeNextFor("/a/../app", ORIGIN)).toBe("/app");
     expect(safeNextFor(null, ORIGIN, "/fallback")).toBe("/fallback");
+  });
+});
+
+describe("rate-limit keys and counters", () => {
+  it("groups IPv6 by /64 and normalises address forms", () => {
+    expect(clientKey("2001:db8:1:2:aaaa:bbbb:cccc:dddd")).toBe("2001:db8:1:2::/64");
+    expect(clientKey("2001:DB8:1:2::1")).toBe("2001:db8:1:2::/64");
+    expect(clientKey("[2001:db8:1:2::99]:443")).toBe("2001:db8:1:2::/64");
+    expect(clientKey("fe80::1%eth0")).toBe("fe80:0:0:0::/64");
+    expect(clientKey("::ffff:203.0.113.9")).toBe("203.0.113.9");
+    expect(clientKey("203.0.113.9:5555")).toBe("203.0.113.9");
+    expect(clientKey("203.0.113.9")).toBe("203.0.113.9");
+    for (const bad of [null, undefined, "", "unknown", "not an ip", "999.1.1.1", "1:2:3", "1::2::3"]) expect(clientKey(bad), String(bad)).toBe("unknown");
+  });
+
+  it("counts addresses without a known IP in one shared bucket instead of letting them through", () => {
+    const c = new WindowCounter();
+    const hits = Array.from({ length: 5 }, () => c.hit("login:" + clientKey(undefined), 3, 60_000));
+    expect(hits.filter((h) => h !== null)).toHaveLength(2);
+  });
+
+  it("evicts the least recently used keys instead of clearing every counter when full", () => {
+    const c = new WindowCounter(100);
+    const now = 1_000_000;
+    for (let i = 0; i < 3; i++) c.hit("victim", 3, 60_000, now);
+    for (let i = 0; i < 500; i++) {
+      c.hit(`flood${i}`, 3, 60_000, now);
+      if (i % 50 === 0) c.hit("victim", 1000, 60_000, now); // still in use, so it stays
+    }
+    expect(c.size).toBeLessThanOrEqual(100);
+    expect(c.hit("victim", 3, 60_000, now)).not.toBeNull();
   });
 });
 
