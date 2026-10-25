@@ -18,6 +18,9 @@ const env: Record<string, string | undefined> = { ...process.env, FORCE_COLOR: "
 const owner = process.env.ENGRAM_DEMO_OWNER ?? "engramdb@gmail.com";
 const demoName = process.env.ENGRAM_DEMO_NAME ?? "Northwind support";
 const report: Record<string, unknown> = { run, startedAt: new Date().toISOString(), steps: [] as unknown[] };
+// ENGRAM_PROVISION_STEPS limits a run to some steps (comma-separated: setup, experiments, functions, seed, diagnose).
+const only = (env.ENGRAM_PROVISION_STEPS ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+const wants = (name: string) => !only.length || only.includes(name);
 
 const redact = (text: string) => {
   let out = text;
@@ -41,9 +44,10 @@ function step(name: string, script: string, args: string[] = [], timeoutMin = 10
 const client = new Client().setEndpoint(env.APPWRITE_ENDPOINT ?? "").setProject(env.APPWRITE_PROJECT_ID ?? "").setKey(env.APPWRITE_API_KEY ?? "");
 
 try {
-  const setup = step("setup", "scripts/setup.ts", [], 20);
-  if (setup.ok) {
-    step("experiments", "scripts/experiments.ts");
+  if (wants("diagnose")) report.diagnose = step("diagnose", "scripts/diagnose.ts", [], 3).raw.slice(-20_000);
+  const setup = wants("setup") ? step("setup", "scripts/setup.ts", [], 20) : { ok: true };
+  if (setup.ok && (wants("experiments") || wants("functions") || wants("seed"))) {
+    if (wants("experiments")) step("experiments", "scripts/experiments.ts");
     if (existsSync("docs/verified.md")) report.verifiedMd = readFileSync("docs/verified.md", "utf8");
 
     // Signing key: keep the one the checkpoint Function already holds; otherwise make a new pair here.
@@ -61,7 +65,7 @@ try {
       report.checkpointKey = { generated: false, functionHasKey };
     }
 
-    step("functions", "scripts/deploy-functions.ts", [], 15);
+    if (wants("functions")) step("functions", "scripts/deploy-functions.ts", [], 15);
 
     // The demo space belongs to the project's own account; its owner can set a password with "Forgot password".
     const users = new Users(client);
@@ -74,8 +78,8 @@ try {
       const del = step("demo reset", "scripts/delete-space.ts", [existing.teamId.slice(3)]);
       if (del.ok) existing = undefined;
     }
-    if (existing) {
-      report.demo = { spaceKey: existing.teamId.slice(3), seeded: false, note: "already present" };
+    if (existing || !wants("seed")) {
+      report.demo = { spaceKey: existing?.teamId.slice(3) ?? null, seeded: false, note: existing ? "already present" : "seed skipped" };
     } else {
       const seed = step("seed", "scripts/seed.ts", ["--owner", owner, "--public", "--name", demoName], 15);
       const key = /Seeded space ([a-z0-9]{8})/.exec(seed.raw)?.[1] ?? null;

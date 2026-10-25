@@ -29,7 +29,9 @@ export function boot(ctx: FnContext): Backend {
 }
 
 export function body(ctx: FnContext): Record<string, unknown> {
-  const raw = ctx.req.bodyJson ?? ctx.req.body ?? ctx.req.bodyText;
+  // Scheduled runs have an empty body, and the runtime's bodyJson getter throws on it: read the text first.
+  let raw: unknown = ctx.req.bodyText ?? ctx.req.body;
+  if (raw === undefined) { try { raw = ctx.req.bodyJson; } catch { raw = undefined; } }
   if (!raw) return {};
   if (typeof raw === "object") return raw as Record<string, unknown>;
   try { return JSON.parse(String(raw)); } catch { return {}; }

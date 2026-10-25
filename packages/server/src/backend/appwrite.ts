@@ -271,7 +271,7 @@ class AppwriteFiles implements FileStore {
     await call(() => this.storage.createFile({ bucketId: bucket, fileId, file: InputFile.fromBuffer(bytes, name), permissions: perms }));
   }
   async get(bucket: string, fileId: string) {
-    try { return new Uint8Array(await this.storage.getFileDownload({ bucketId: bucket, fileId })); }
+    try { return await toBytes(await this.storage.getFileView({ bucketId: bucket, fileId })); }
     catch (e) { if (isNotFound(e)) return null; throw mapError(e); }
   }
   async list(bucket: string, namePrefix: string): Promise<FileInfo[]> {
@@ -296,6 +296,28 @@ class AppwriteFiles implements FileStore {
   async delete(bucket: string, fileId: string) {
     try { await this.storage.deleteFile({ bucketId: bucket, fileId }); } catch (e) { if (!isNotFound(e)) throw mapError(e); }
   }
+}
+
+/**
+ * File bodies arrive as different binary types across SDK versions and runtimes (ArrayBuffer, Buffer, Blob, a
+ * stream). `new Uint8Array(x)` on the wrong one silently yields zero bytes, which once hid every checkpoint.
+ */
+async function toBytes(x: unknown): Promise<Uint8Array> {
+  if (x instanceof Uint8Array) return x;
+  if (x instanceof ArrayBuffer) return new Uint8Array(x);
+  if (ArrayBuffer.isView(x)) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
+  if (typeof x === "string") return new TextEncoder().encode(x);
+  if (x && typeof (x as Blob).arrayBuffer === "function") return new Uint8Array(await (x as Blob).arrayBuffer());
+  if (x && typeof (x as ReadableStream<Uint8Array>).getReader === "function") {
+    const reader = (x as ReadableStream<Uint8Array>).getReader();
+    const parts: Uint8Array[] = [];
+    for (let r = await reader.read(); !r.done; r = await reader.read()) parts.push(r.value);
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+  }
+  throw new EngramError("internal", `Unexpected file body type: ${Object.prototype.toString.call(x)}`);
 }
 
 const toPasskeyInfo = (p: { $id: string; $createdAt: string; name: string; accessedAt: string }): PasskeyInfo =>
