@@ -32,20 +32,21 @@ export function CookieBanner() {
     router.refresh();
   };
 
+  // Compact, and on wide screens in the bottom-right corner, so it never covers the hero's calls to action.
   return (
     <div role="dialog" aria-modal="false" aria-labelledby="cookie-title" aria-describedby="cookie-text"
-      className="fixed inset-x-3 bottom-3 z-[70] sm:inset-x-auto sm:bottom-5 sm:left-5 sm:max-w-sm">
-      <div className="rounded-2xl border border-line-2 bg-bg p-5 shadow-[0_24px_60px_-20px_rgba(10,10,10,.35)]">
+      className="fixed inset-x-2 bottom-2 z-[70] sm:inset-x-auto sm:bottom-4 sm:right-4 sm:max-w-sm">
+      <div className="rounded-2xl border border-line-2 bg-bg px-4 py-3 shadow-[0_24px_60px_-20px_rgba(10,10,10,.35)] sm:p-5">
         <p id="cookie-title" className="font-sans text-sm font-semibold text-text">Engram uses cookies</p>
-        <p id="cookie-text" className="mt-2 font-sans text-[13px] leading-relaxed text-muted">
-          We use a few essential cookies to keep you signed in and remember this choice. No advertising or tracking cookies. Engram needs them to sign you in; if you decline, you can still browse, but signing in stays off until you accept.
+        <p id="cookie-text" className="mt-1 font-sans text-[12.5px] leading-snug text-muted sm:mt-2 sm:text-[13px] sm:leading-relaxed">
+          Only essential cookies: one keeps you signed in, one remembers this choice. No advertising or tracking. Declining still lets you browse, but signing in stays off until you accept.
         </p>
-        <p className="mt-2 font-sans text-[12px] text-muted">
-          Read our <Link href="/legal/cookies" className="text-text underline underline-offset-2">Cookie Policy</Link>, <Link href="/legal/privacy" className="text-text underline underline-offset-2">Privacy Policy</Link> and <Link href="/legal/terms" className="text-text underline underline-offset-2">Terms of Service</Link>.
+        <p className="mt-1 font-sans text-[12px] text-muted sm:mt-2">
+          <Link href="/legal/cookies" className="text-text underline underline-offset-2">Cookie Policy</Link> · <Link href="/legal/privacy" className="text-text underline underline-offset-2">Privacy Policy</Link> · <Link href="/legal/terms" className="text-text underline underline-offset-2">Terms of Service</Link>
         </p>
-        <div className="mt-4 flex gap-2">
-          <button onClick={() => void decline()} className="h-9 flex-1 rounded-full border border-line-2 font-sans text-[13px] font-medium text-text hover:border-accent">Decline</button>
-          <button onClick={accept} className="h-9 flex-1 rounded-full bg-accent font-sans text-[13px] font-medium text-bg hover:bg-accent/85">Accept</button>
+        <div className="mt-2.5 flex gap-2 sm:mt-4">
+          <button onClick={() => void decline()} className="h-8 flex-1 rounded-full border border-line-2 font-sans text-[13px] font-medium text-text hover:border-accent sm:h-9">Decline</button>
+          <button onClick={accept} className="h-8 flex-1 rounded-full bg-accent font-sans text-[13px] font-medium text-bg hover:bg-accent/85 sm:h-9">Accept</button>
         </div>
       </div>
     </div>

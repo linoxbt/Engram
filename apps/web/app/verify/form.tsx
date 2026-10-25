@@ -5,7 +5,7 @@ import { IconShield } from "@/components/icons";
 import { SiteFooter, SiteHeader } from "@/components/site-header";
 import { Button, Input } from "@/components/ui";
 
-export default function VerifyIndex() {
+export function VerifyIndex() {
   const router = useRouter();
   const [key, setKey] = useState("");
   return (
