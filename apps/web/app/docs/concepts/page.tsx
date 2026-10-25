@@ -20,7 +20,7 @@ export default function Concepts() {
       </ul>
       <p>Status, validity windows, conflicts and access counts are <em>derived</em>: they are recomputed by replaying the chain, and the verifier flags any disagreement.</p>
       <h2>Lock-free writes</h2>
-      <p>Two writers that read the same head compute the same next ID. VectorsDB accepts only one create for that ID; the other gets a conflict and rebuilds on the new head. No queue, no lock document. Derived updates on neighbours then commit in one transaction, and they are idempotent, so a retry is always safe.</p>
+      <p>Two writers that read the same head compute the same next ID. VectorsDB accepts only one create for that ID; the other gets a conflict and rebuilds on the new head. No queue, no lock document. Derived updates on neighbours (status, validity, conflicts) are then applied one conditional compare-and-swap write at a time, each only if the document is unchanged since it was read, because VectorsDB transactions do not work on this project. They are idempotent, and the new entry stays marked as pending until all of them land, so the next writer finishes a batch an instance left half done.</p>
       <h2>Checkpoints</h2>
       <p>A scheduled Function builds an RFC 6962 Merkle tree over the header hashes, signs the root, head and size with Ed25519, and stores the checkpoint as a file. Each checkpoint links to the previous one. Optionally the root is committed to a public GitHub repository, an outside timestamp the operator cannot rewrite. Inclusion proofs show that one memory is part of a signed checkpoint.</p>
       <h2>Contradictions</h2>

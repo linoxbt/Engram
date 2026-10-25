@@ -67,7 +67,7 @@ More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corre
 | **Functions** | checkpoint (5 min), sentinel (15 min), labeler (concept events), reflect (daily) |
 | **Realtime** | Live feed via a short-lived JWT, with 3-second polling as fallback |
 | **Messaging** | Optional tamper alert emails from the sentinel |
-| **Backups** | Daily backup policy on the `engram` database |
+| **Backups** | `pnpm setup:appwrite` creates a daily backup policy for the `engram` database where the plan allows it (and says so when it cannot); `pnpm backup` exports what database backups do not cover |
 
 ## Security model
 
@@ -109,6 +109,12 @@ With no Appwrite variables, Engram runs on a local file-backed backend with a de
 `ENGRAM_DEMO_RESET=<same id>` re-seeds the demo space once. Remove `ENGRAM_PROVISION` afterwards; without it the step does nothing.
 
 The labeler's event trigger in `appwrite.json` (`databases.engram.collections.concepts.documents.*.create`) names the database, so keep `APPWRITE_DB_ID=engram` (the default) or change that event path to match; otherwise the labeler never fires and a new concept keeps its rule-based label until the app relabels it at 3 members.
+
+**Backups and restore.** Appwrite's database backup covers the VectorsDB collections only. Space settings live in team preferences and signed checkpoints in Storage, so export those too: `pnpm backup` writes every space team (name, preferences, members) and every file in the checkpoints bucket to `~/engram-backups/` (keep the file private). To restore after a loss:
+
+1. Restore the database from its backup in the Appwrite console (Databases → `engram` → Backups → Restore), into the same database ID.
+2. `pnpm backup -- --restore <file> --dry-run`, then without `--dry-run`. Missing teams are recreated with their preferences and missing files with their original IDs and permissions. Existing spaces and files are left alone, so a newer `latestCheckpoint` is never moved backwards. Members are listed, not re-created: re-invite them.
+3. Verify every restored space (Chain page, or the sentinel's next run). A checkpoint newer than the restored database shows up as truncation, which is the honest answer: entries written after the backup are gone.
 
 | Command | What it does |
 |---------|--------------|

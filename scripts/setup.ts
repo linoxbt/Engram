@@ -1,11 +1,12 @@
 /**
  * Provision Appwrite for Engram. Idempotent: safe to run again.
  *   pnpm setup:appwrite
- * Creates the VectorsDB database, four collections with HNSW cosine indexes,
- * and the checkpoints and exports buckets.
+ * Creates the VectorsDB database, four collections with HNSW cosine indexes, the checkpoints bucket (and a
+ * separate exports bucket only if APPWRITE_EXPORTS_BUCKET names one; exports are streamed, never stored), and a
+ * daily backup policy for the database where the plan allows it.
  */
 import "./env";
-import { AppwriteException, Client, Storage, VectorsDB, VectorsDBIndexType } from "node-appwrite";
+import { AppwriteException, BackupServices, Backups, Client, Storage, VectorsDB, VectorsDBIndexType } from "node-appwrite";
 
 const endpoint = process.env.APPWRITE_ENDPOINT, project = process.env.APPWRITE_PROJECT_ID, key = process.env.APPWRITE_API_KEY;
 if (!endpoint || !project || !key) { console.error("Set APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID and APPWRITE_API_KEY."); process.exit(1); }
@@ -94,14 +95,46 @@ await ensureBucket("bucket checkpoints", process.env.APPWRITE_CHECKPOINTS_BUCKET
 // Exports share the checkpoints bucket unless a separate one is configured (the Free plan allows one bucket).
 if (process.env.APPWRITE_EXPORTS_BUCKET && process.env.APPWRITE_EXPORTS_BUCKET !== (process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints")) await ensureBucket("bucket exports", process.env.APPWRITE_EXPORTS_BUCKET!, () => storage.createBucket({ bucketId: process.env.APPWRITE_EXPORTS_BUCKET!, name: "Space exports", permissions: [], fileSecurity: true, maximumFileSize: 100_000_000, allowedFileExtensions: ["json"] }));
 
-// The HNSW index builds in the background; wait until it is available before benchmarking.
+// The HNSW index builds in the background; wait until it is available before benchmarking. Not available after
+// 3 minutes is an error: recall would silently fall back to slow scans or fail.
 for (const c of dbReady ? COLLECTIONS : []) {
-  for (let i = 0; i < 60; i++) {
-    const idx = await vdb.getIndex({ databaseId: DB, collectionId: c.id, key: "emb_cosine" });
-    if (idx.status === "available") { console.log(`✓ index ${c.id} available`); break; }
-    if (idx.status === "failed" || idx.status === "stuck") throw new Error(`index ${c.id} is ${idx.status}`);
-    await new Promise((r) => setTimeout(r, 2000));
+  let status = "unknown";
+  for (let i = 0; i < 90 && status !== "available"; i++) {
+    status = (await vdb.getIndex({ databaseId: DB, collectionId: c.id, key: "emb_cosine" })).status;
+    if (status === "failed" || status === "stuck") throw new Error(`index ${c.id} is ${status}`);
+    if (status !== "available") await sleep(2000);
   }
+  if (status !== "available") throw new Error(`index ${c.id}.emb_cosine is still "${status}" after 3 minutes; run setup again once it is available`);
+  console.log(`✓ index ${c.id} available`);
+}
+
+// Daily backup of the database (Appwrite Backups). Idempotent; a plan without backups is reported, not fatal.
+let backup = "not attempted";
+if (dbReady) {
+  const backups = new Backups(client);
+  const policyId = `${DB}-daily`.slice(0, 36);
+  const retention = Number(process.env.ENGRAM_BACKUP_RETENTION_DAYS) || 7;
+  try {
+    const p = await backups.getPolicy({ policyId });
+    backup = `policy ${p.$id} already exists (${p.schedule}, ${p.retention} days)`;
+  } catch (e) {
+    if (!(e instanceof AppwriteException && e.code === 404)) backup = `could not read backup policies: ${e instanceof Error ? e.message : e}`;
+    else {
+      // VectorsDB runs on a dedicated database; which service name the Backups API wants for it is tried in order.
+      for (const service of [BackupServices.Vectorsdb, BackupServices.DedicatedDatabases]) {
+        try {
+          await backups.createPolicy({ policyId, name: `Daily backup of ${DB}`, services: [service], resourceId: DB, retention, schedule: "17 3 * * *", enabled: true });
+          backup = `created policy ${policyId} (${service}, daily at 03:17 UTC, ${retention} days)`;
+          break;
+        } catch (err) {
+          const why = err instanceof AppwriteException ? `${err.code} ${err.type}: ${err.message}` : String(err);
+          backup = `NOT created (${why}). Backups need a paid plan; create one in the console (Databases → ${DB} → Backups) and keep \`pnpm backup\` exports.`;
+          if (!(err instanceof AppwriteException && err.code === 400)) break;
+        }
+      }
+    }
+  }
+  console.log(`${backup.startsWith("NOT") || backup.startsWith("could") ? "!" : "✓"} backup: ${backup}`);
 }
 if (!dbReady) process.exitCode = 2;
-console.log(dbReady ? "\nDone. Next:" : "\nPartially done (no VectorsDB yet). Next: add your hostnames as web platforms, set a daily backup policy on the database, and deploy the Functions.");
+console.log(dbReady ? "\nDone. Next: add your hostnames as web platforms and deploy the Functions." : "\nPartially done (no VectorsDB yet). Next: add your hostnames as web platforms, run setup again for the backup policy, and deploy the Functions.");
