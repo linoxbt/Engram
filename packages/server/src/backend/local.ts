@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { normalize } from "@engram/core";
 import { ConflictError, EngramError, REAUTH_WINDOW_MS, reauthRequired } from "../errors";
 import { evaluate } from "./query";
-import { afterFailure, assertNotLocked, type LoginFails } from "./login-guard";
+import { clearAttempts, guardedSignIn, type AttemptStore } from "./login-guard";
+import { GUEST_EMAIL_DOMAIN, GUEST_TTL_MS, isGuestEmail, SIGNUP_CONFLICT } from "./types";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamMember, TeamStore, TxOp,
   User, VDoc, VectorStore,
@@ -20,7 +21,7 @@ interface Db {
   docs: Record<Collection, Record<string, VDoc>>;
   teams: Record<string, { name: string; prefs: object; members: Record<string, string[]> }>;
   files: Record<string, Record<string, { name: string; createdAt: string; b64: string }>>;
-  users: Record<string, { email: string; name: string; hash: string; salt: string; verified?: boolean }>;
+  users: Record<string, { email: string; name: string; hash: string; salt: string; verified?: boolean; createdAt?: string; prefs?: { termsAcceptedAt?: string; guest?: boolean } }>;
   /** One-time recovery and verification tokens, keyed by secret. */
   tokens?: Record<string, { userId: string; kind: "recovery" | "verify"; expire: string }>;
   sessions: Record<string, { userId: string; expire: string; createdAt?: string }>;
@@ -207,32 +208,30 @@ class LocalAuth implements AuthStore {
   constructor(private s: LocalState) {}
   async signUp(email: string, password: string, name: string): Promise<User> {
     email = email.toLowerCase();
-    if (Object.values(this.s.db.users).some((u) => u.email === email)) throw new EngramError("conflict", "An account with this email already exists.");
+    if (Object.values(this.s.db.users).some((u) => u.email === email)) throw new EngramError("conflict", SIGNUP_CONFLICT);
     if (password.length < 8) throw new EngramError("bad_request", "Password must be at least 8 characters.");
     const id = "u" + randomBytes(9).toString("hex");
     const salt = randomBytes(16).toString("hex");
-    this.s.db.users[id] = { email, name, salt, hash: scryptSync(password, salt, 32).toString("hex") };
+    this.s.db.users[id] = { email, name, salt, hash: scryptSync(password, salt, 32).toString("hex"), createdAt: now() };
     this.s.save();
     return { id, email, name };
   }
-  private loginFails = new Map<string, LoginFails>();
-  async signIn(email: string, password: string) {
+  /** Sign-in attempt slots: the same create-first counter as Appwrite, kept in process (never written to disk). */
+  readonly attempts: AttemptStore = { files: new LocalFiles(new LocalState(null)), bucket: "login" };
+  async signIn(email: string, password: string, opts: { client?: string } = {}) {
     email = email.toLowerCase();
-    assertNotLocked(this.loginFails.get(email));
-    const entry = Object.entries(this.s.db.users).find(([, u]) => u.email === email);
-    // Hash even for unknown addresses, so response time does not reveal which accounts exist.
-    const derived = scryptSync(password, entry?.[1].salt ?? "engram-timing-pad", 32);
-    const ok = entry && timingSafeEqual(Buffer.from(entry[1].hash, "hex"), derived);
-    if (!entry || !ok) {
-      if (entry) this.loginFails.set(email, afterFailure(this.loginFails.get(email)));
-      throw new EngramError("unauthorized", "Invalid email or password.");
-    }
-    this.loginFails.delete(email);
-    return this.newSession(entry[0]);
+    return guardedSignIn(this.attempts, email, opts.client, async () => {
+      const entry = Object.entries(this.s.db.users).find(([, u]) => u.email === email);
+      // Hash even for unknown addresses, so response time does not reveal which accounts exist.
+      const derived = scryptSync(password, entry?.[1].salt ?? "engram-timing-pad", 32);
+      const ok = entry && timingSafeEqual(Buffer.from(entry[1].hash, "hex"), derived);
+      if (!entry || !ok) throw new EngramError("unauthorized", "Invalid email or password.");
+      return this.newSession(entry[0]);
+    });
   }
-  private newSession(userId: string) {
+  private newSession(userId: string, ttlMs = 30 * 86_400_000) {
     const secret = randomBytes(32).toString("hex");
-    const expire = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    const expire = new Date(Date.now() + ttlMs).toISOString();
     this.s.db.sessions[secret] = { userId, expire, createdAt: now() };
     this.s.save();
     return { secret, userId, expire };
@@ -241,7 +240,34 @@ class LocalAuth implements AuthStore {
     const s = this.s.db.sessions[secret];
     if (!s || s.expire < now()) return null;
     const u = this.s.db.users[s.userId];
-    return u ? { id: s.userId, email: u.email, name: u.name, emailVerified: !!u.verified } : null;
+    return u ? this.toUser(s.userId) : null;
+  }
+  private toUser(id: string): User {
+    const u = this.s.db.users[id];
+    return { id, email: u.email, name: u.name, emailVerified: !!u.verified, termsAcceptedAt: u.prefs?.termsAcceptedAt ?? null, guest: isGuestEmail(u.email) };
+  }
+  async createGuest() {
+    const id = "g" + randomBytes(9).toString("hex");
+    const salt = randomBytes(16).toString("hex");
+    const t = now();
+    // Nobody ever learns this password: the guest only ever holds the session created here.
+    this.s.db.users[id] = { email: `${id}@${GUEST_EMAIL_DOMAIN}`, name: "Guest", salt, hash: scryptSync(randomBytes(24).toString("base64url"), salt, 32).toString("hex"), createdAt: t, prefs: { guest: true, termsAcceptedAt: t } };
+    this.s.save();
+    return { user: this.toUser(id), session: this.newSession(id, GUEST_TTL_MS) };
+  }
+  async deleteGuests(before: string, limit: number) {
+    const doomed = Object.entries(this.s.db.users)
+      .filter(([, u]) => isGuestEmail(u.email) && (u.createdAt ?? "") < before)
+      .sort(([, a], [, b]) => ((a.createdAt ?? "") < (b.createdAt ?? "") ? -1 : 1))
+      .slice(0, limit);
+    for (const [id] of doomed) await this.deleteUser(id);
+    return doomed.length;
+  }
+  async acceptTerms(userId: string) {
+    const u = this.s.db.users[userId];
+    if (!u) throw new EngramError("not_found", "User not found.");
+    u.prefs = { ...u.prefs, termsAcceptedAt: now() };
+    this.s.save();
   }
   async signOut(secret: string) { delete this.s.db.sessions[secret]; this.s.save(); }
   async createJwt() { return null; }
@@ -276,7 +302,7 @@ class LocalAuth implements AuthStore {
     if (!u) throw new EngramError("bad_request", "This reset link is invalid or has expired. Request a new one.");
     u.salt = randomBytes(16).toString("hex");
     u.hash = scryptSync(password, u.salt, 32).toString("hex");
-    this.loginFails.delete(u.email);
+    await clearAttempts(this.attempts, u.email, { all: true });
     // A reset signs the account out everywhere.
     for (const [k, v] of Object.entries(this.s.db.sessions)) if (v.userId === userId) delete this.s.db.sessions[k];
     this.s.save();
@@ -299,7 +325,7 @@ class LocalAuth implements AuthStore {
     if (!user) throw new EngramError("unauthorized", "Sign in to continue.");
     this.s.db.users[user.id].name = name;
     this.s.save();
-    return { ...user, name };
+    return this.toUser(user.id);
   }
   async updatePassword(sessionSecret: string, oldPassword: string, password: string) {
     const user = await this.getUser(sessionSecret);
@@ -309,6 +335,8 @@ class LocalAuth implements AuthStore {
     if (password.length < 8) throw new EngramError("bad_request", "Password must be at least 8 characters.");
     u.salt = randomBytes(16).toString("hex");
     u.hash = scryptSync(password, u.salt, 32).toString("hex");
+    // Every other device is signed out; this one stays.
+    for (const [k, v] of Object.entries(this.s.db.sessions)) if (v.userId === user.id && k !== sessionSecret) delete this.s.db.sessions[k];
     this.s.save();
   }
   async deleteUser(userId: string) {

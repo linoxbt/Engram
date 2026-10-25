@@ -81,10 +81,37 @@ export interface FileStore {
   delete(bucket: string, fileId: string): Promise<void>;
 }
 
-export interface User { id: string; email: string; name: string; emailVerified?: boolean }
+export interface User {
+  id: string; email: string; name: string; emailVerified?: boolean;
+  /**
+   * When the account accepted the Terms; null when it never did through Engram (e.g. it was created directly
+   * against Appwrite with the public project ID). Set only by the server (`acceptTerms`).
+   */
+  termsAcceptedAt?: string | null;
+  /** A throwaway read-only demo account (POST /api/demo/enter), deleted after 24 hours. */
+  guest?: boolean;
+}
+
+/** Demo guests live under a reserved domain that can never receive mail (RFC 2606). */
+export const GUEST_EMAIL_DOMAIN = "guest.engram.invalid";
+export const isGuestEmail = (email: string) => email.trim().toLowerCase().endsWith("@" + GUEST_EMAIL_DOMAIN);
+/** Guests older than this are deleted. */
+export const GUEST_TTL_MS = 24 * 3_600_000;
+
+/**
+ * Sign-up with an address that already has an account. Worded so it does not confirm the account to whoever is
+ * asking; the request still fails, so a determined prober learns as much as from any sign-up form (rate-limited).
+ */
+export const SIGNUP_CONFLICT = "If you already have an account, sign in or reset your password.";
 export interface AuthStore {
   signUp(email: string, password: string, name: string): Promise<User>;
-  signIn(email: string, password: string): Promise<{ secret: string; userId: string; expire: string }>;
+  /**
+   * Password sign-in under the shared attempt limits (backend/login-guard.ts). `client` identifies the caller's
+   * network (IP, or IPv6 /64) so one attacker cannot lock the account's owner out; server-side re-authentication
+   * passes none.
+   */
+  signIn(email: string, password: string, opts?: { client?: string }): Promise<{ secret: string; userId: string; expire: string }>;
+  /** Null only when the session is invalid or expired; an outage throws (`unavailable`) instead of looking signed out. */
   getUser(secret: string): Promise<User | null>;
   signOut(secret: string): Promise<void>;
   /** A short-lived JWT the browser SDK can use for Realtime. Null when unsupported. */
@@ -101,9 +128,22 @@ export interface AuthStore {
   requestVerification(sessionSecret: string, url: string): Promise<{ devLink?: string }>;
   completeVerification(userId: string, secret: string, sessionSecret: string | null): Promise<void>;
   updateName(sessionSecret: string, name: string): Promise<User>;
+  /** Also ends every other session of the account; the one making the change stays signed in. */
   updatePassword(sessionSecret: string, oldPassword: string, password: string): Promise<void>;
   /** Permanently remove the account and every session it holds. */
   deleteUser(userId: string): Promise<void>;
+  /**
+   * Record that the account accepted the Terms, now: `termsAcceptedAt` in the user's prefs, plus (Appwrite) a
+   * server-only "terms" label, since prefs are writable by the user through Appwrite directly and the label is not.
+   */
+  acceptTerms(userId: string): Promise<void>;
+  /**
+   * A read-only demo guest: random ID and password, an address under GUEST_EMAIL_DOMAIN, name "Guest", prefs
+   * `{ guest: true, termsAcceptedAt }`, signed in. The caller adds the team membership.
+   */
+  createGuest(): Promise<{ user: User; session: { secret: string; userId: string; expire: string } }>;
+  /** Delete up to `limit` guests created before `before` (ISO time), oldest first. Returns how many went. */
+  deleteGuests(before: string, limit: number): Promise<number>;
   /**
    * Passkeys (WebAuthn). Adding or removing one needs a session that signed in within the last 10 minutes
    * (otherwise `reauth_required`). `origin` is the site the browser is on: Appwrite takes the relying party

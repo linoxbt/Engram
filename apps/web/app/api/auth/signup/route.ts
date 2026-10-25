@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getBackend, getConfig } from "@engram/server";
 import { readJson, route } from "@/lib/server/api";
 import { appOrigin, requireCookieConsent } from "@/lib/server/consent";
+import { cleanDisplayName } from "@/lib/server/names";
 import { clientIp, HOUR, rateLimit } from "@/lib/server/rate-limit";
 import { setSession } from "@/lib/server/session";
 
@@ -9,7 +10,7 @@ export const runtime = "nodejs";
 const Body = z.object({
   email: z.string().email(),
   password: z.string().min(8).max(256),
-  name: z.string().trim().min(1).max(80),
+  name: z.string().max(500).transform((s) => cleanDisplayName(s)).pipe(z.string().min(1, "Enter your name.")),
   acceptTerms: z.literal(true, { message: "Agree to the Terms of Service and Privacy Policy to create an account." }),
 });
 
@@ -19,6 +20,8 @@ export const POST = route(async (req) => {
   rateLimit("signup-ip", clientIp(req), 8, HOUR, "Too many accounts created from this network.");
   const b = getBackend();
   const user = await b.auth.signUp(body.email, body.password, body.name);
+  // The form required the box; record it with the account (accounts made elsewhere are asked on first use).
+  await b.auth.acceptTerms(user.id);
   const s = await b.auth.signIn(body.email, body.password);
   await setSession(s.secret, s.expire);
   // Best effort: the account works without it, and the banner offers to resend.

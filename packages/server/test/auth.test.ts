@@ -48,6 +48,26 @@ describe("local auth", () => {
     expect(await b.auth.findUserByEmail("cy@example.com")).toBeNull();
   });
 
+  it("records the Terms only when the server says so", async () => {
+    const b = createLocalBackend();
+    const u = await b.auth.signUp("tia@example.com", "password123", "Tia");
+    const s = await b.auth.signIn("tia@example.com", "password123");
+    expect((await b.auth.getUser(s.secret))?.termsAcceptedAt).toBeNull();
+    await b.auth.acceptTerms(u.id);
+    expect((await b.auth.getUser(s.secret))?.termsAcceptedAt).toMatch(/^\d{4}-\d\d-\d\dT/);
+    expect((await b.auth.getUser(s.secret))?.guest).toBe(false);
+  });
+
+  it("a password change signs out every other session but keeps the current one", async () => {
+    const b = createLocalBackend();
+    await b.auth.signUp("eve@example.com", "password123", "Eve");
+    const laptop = await b.auth.signIn("eve@example.com", "password123");
+    const phone = await b.auth.signIn("eve@example.com", "password123");
+    await b.auth.updatePassword(laptop.secret, "password123", "password789");
+    expect(await b.auth.getUser(laptop.secret)).not.toBeNull();
+    expect(await b.auth.getUser(phone.secret)).toBeNull();
+  });
+
   it("passkey changes need a recent sign-in, and passkey options name this site", async () => {
     const b = createLocalBackend();
     await b.auth.signUp("dee@example.com", "password123", "Dee");

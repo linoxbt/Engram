@@ -31,5 +31,13 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
   if (res.status === 401 && typeof window !== "undefined" && path.startsWith("/api/app")) {
     window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
   }
-  return readOk<T>(res);
+  try {
+    return await readOk<T>(res);
+  } catch (e) {
+    // An account that never accepted the Terms (made directly against Appwrite) is sent to accept them first.
+    if (e instanceof ApiError && e.code === "terms_required" && typeof window !== "undefined" && window.location.pathname !== "/accept-terms") {
+      window.location.href = `/accept-terms?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+    }
+    throw e;
+  }
 }

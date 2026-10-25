@@ -11,10 +11,13 @@ const Body = z.object({ email: z.string().email(), password: z.string().min(1).m
 export const POST = route(async (req) => {
   requireCookieConsent(req);
   const body = Body.parse(await readJson(req));
-  rateLimit("login-ip", clientIp(req), 30, 10 * MINUTE, "Too many sign-in attempts.");
-  rateLimit("login-email", body.email, 10, 10 * MINUTE, "Too many sign-in attempts for this account.");
+  const client = clientIp(req);
+  rateLimit("login-ip", client, 30, 10 * MINUTE, "Too many sign-in attempts.");
+  // Per account AND network, so nobody can lock a person out by guessing at their address; the shared per-account
+  // cap lives in the backend (login-guard.ts).
+  rateLimit("login-email", `${body.email}|${client}`, 10, 10 * MINUTE, "Too many sign-in attempts for this account.");
   const b = getBackend();
-  const s = await b.auth.signIn(body.email, body.password);
+  const s = await b.auth.signIn(body.email, body.password, { client });
   await replaceSession(s.secret, s.expire);
   return { user: await b.auth.getUser(s.secret) };
 });

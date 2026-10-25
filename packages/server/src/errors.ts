@@ -1,10 +1,15 @@
 export type ErrorCode =
   | "bad_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "too_large"
-  | "rate_limited" | "chain_busy" | "embeddings_unavailable" | "not_sandbox" | "unavailable" | "cookies_required" | "reauth_required" | "internal";
+  | "rate_limited" | "chain_busy" | "embeddings_unavailable" | "not_sandbox" | "unavailable" | "cookies_required" | "reauth_required" | "internal"
+  /** The account has not accepted the Terms (e.g. it was created directly against Appwrite). */
+  | "terms_required"
+  /** A viewer (the read-only demo guest) tried to write. */
+  | "read_only";
 
 const STATUS: Record<ErrorCode, number> = {
   bad_request: 400, unauthorized: 401, forbidden: 403, not_found: 404, conflict: 409, too_large: 413,
   rate_limited: 429, chain_busy: 503, embeddings_unavailable: 503, not_sandbox: 403, unavailable: 503, cookies_required: 403, reauth_required: 403, internal: 500,
+  terms_required: 403, read_only: 403,
 };
 
 export class EngramError extends Error {
@@ -43,4 +48,15 @@ export function toErrorBody(e: unknown): { status: number; body: { error: { code
   }
   console.error("[engram] unexpected error", e);
   return { status: 500, body: { error: { code: "internal", message: "Something went wrong on our side." } } };
+}
+
+/**
+ * What the logs should say about an error: the same status and code the client gets, but the real message even
+ * for unexpected errors (the client only sees "Something went wrong").
+ */
+export function errorLogFields(e: unknown): { status: number; code: string; message: string } {
+  if (isEngramError(e)) return { status: e.status, code: e.code, message: e.message };
+  if (e && typeof e === "object" && "issues" in e && Array.isArray((e as { issues: unknown[] }).issues)) return { status: 400, code: "bad_request", message: "invalid input" };
+  const message = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  return { status: 500, code: "internal", message: message.slice(0, 1000) };
 }

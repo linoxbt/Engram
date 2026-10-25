@@ -1,18 +1,47 @@
 import "server-only";
 import { after, NextResponse, type NextRequest } from "next/server";
-import { authAgent, getBackend, personCtx, requireScope, toErrorBody, EngramError, type Ctx, type Scope } from "@engram/server";
+import { authAgent, errorLogFields, getBackend, personCtx, requireScope, toErrorBody, EngramError, type Ctx, type Scope } from "@engram/server";
+import { assertSpaceWriteAllowed } from "./access";
+import { logError, requestIdFor } from "./log";
+import { currentRequest, requestStore, type RequestInfo } from "./request";
 import { requireSpaceAccess, type SpaceAccess } from "./session";
 
 export const json = (data: unknown, init?: ResponseInit) => NextResponse.json(data, init);
 
-/** `after()` keeps the function alive for post-commit work on serverless hosts. */
+/** `after()` keeps the function alive for post-commit work on serverless hosts. A failure is logged with the request's ID. */
 export const defer = (task: () => Promise<unknown>) => {
-  after(() => task().catch((e) => console.error("[engram] background task failed", e)));
+  const r = currentRequest();
+  after(() => task().catch((e) => {
+    const f = errorLogFields(e);
+    logError({ reqId: r?.reqId ?? "-", route: r?.route ?? "-", status: f.status >= 500 ? f.status : 500, code: "background_task_failed", message: `${f.code}: ${f.message}` });
+  }));
 };
 
 export function errorResponse(e: unknown) {
   const { status, body } = toErrorBody(e);
+  if (status >= 500) {
+    const r = currentRequest();
+    const f = errorLogFields(e);
+    logError({ reqId: r?.reqId ?? "-", route: r?.route ?? "-", status, code: f.code, message: f.message });
+  }
   return NextResponse.json(body, { status });
+}
+
+/**
+ * Runs a handler with a request ID: every response (errors included) carries `x-request-id`, and a 5xx that a
+ * handler returns itself is logged like a thrown one.
+ */
+async function handle(req: NextRequest, run: (info: RequestInfo) => Promise<Response>): Promise<Response> {
+  const info: RequestInfo = { reqId: requestIdFor(req.headers), route: req.nextUrl?.pathname ?? new URL(req.url).pathname, method: req.method };
+  return requestStore.run(info, async () => {
+    let res: Response;
+    let logged = false;
+    try { res = await run(info); } catch (e) { res = errorResponse(e); logged = true; }
+    if (res.status >= 500 && !logged) logError({ reqId: info.reqId, route: info.route, status: res.status, code: "internal", message: `handler returned ${res.status}` });
+    try { res.headers.set("x-request-id", info.reqId); }
+    catch { res = new Response(res.body, res); res.headers.set("x-request-id", info.reqId); } // immutable headers (a proxied fetch)
+    return res;
+  });
 }
 
 export async function readJson<T = unknown>(req: NextRequest | Request): Promise<T> {
@@ -48,44 +77,34 @@ export function requireSameOrigin(req: NextRequest | Request) {
 
 /** Agent-key routes under /api/v1. */
 export function agentRoute<P = Record<string, string>>(scope: Scope | null, fn: (ctx: Ctx, req: NextRequest, params: P) => Promise<unknown>) {
-  return async (req: NextRequest, { params }: Params<P>) => {
-    try {
-      const ctx = await authAgent(getBackend(), req.headers.get("authorization"), defer);
-      if (scope) requireScope(ctx, scope);
-      return json(await fn(ctx, req, await params));
-    } catch (e) {
-      return errorResponse(e);
-    }
-  };
+  return (req: NextRequest, { params }: Params<P>) => handle(req, async () => {
+    const ctx = await authAgent(getBackend(), req.headers.get("authorization"), defer);
+    if (scope) requireScope(ctx, scope);
+    return json(await fn(ctx, req, await params));
+  });
 }
 
 /** Session routes for the dashboard under /api/app/spaces/[key]. */
 export function spaceRoute<P extends { key: string } = { key: string }>(fn: (ctx: Ctx, access: SpaceAccess, req: NextRequest, params: P) => Promise<unknown>) {
-  return async (req: NextRequest, { params }: Params<P>) => {
-    try {
-      requireSameOrigin(req);
-      const p = await params;
-      const access = await requireSpaceAccess(p.key);
-      const ctx = personCtx(getBackend(), access.space, access.user, defer);
-      const out = await fn(ctx, access, req, p);
-      return out instanceof Response ? out : json(out);
-    } catch (e) {
-      return errorResponse(e);
-    }
-  };
+  return (req: NextRequest, { params }: Params<P>) => handle(req, async (info) => {
+    requireSameOrigin(req);
+    const p = await params;
+    const access = await requireSpaceAccess(p.key);
+    // Viewers (the demo guest) read only: GETs plus the POSTs that only read (recall, verify, proof).
+    assertSpaceWriteAllowed(access.roles, info.method, info.route);
+    const ctx = personCtx(getBackend(), access.space, access.user, defer);
+    const out = await fn(ctx, access, req, p);
+    return out instanceof Response ? out : json(out);
+  });
 }
 
 /** Anything else: wraps errors consistently. */
 export function route<P = Record<string, string>>(fn: (req: NextRequest, params: P) => Promise<unknown>) {
-  return async (req: NextRequest, ctx: Params<P>) => {
-    try {
-      requireSameOrigin(req);
-      const out = await fn(req, await ctx.params);
-      return out instanceof Response ? out : json(out);
-    } catch (e) {
-      return errorResponse(e);
-    }
-  };
+  return (req: NextRequest, ctx: Params<P>) => handle(req, async () => {
+    requireSameOrigin(req);
+    const out = await fn(req, await ctx.params);
+    return out instanceof Response ? out : json(out);
+  });
 }
 
 export function requireOwner(access: SpaceAccess) {

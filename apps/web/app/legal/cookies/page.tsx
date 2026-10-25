@@ -20,7 +20,7 @@ export default function CookiesPage() {
       <table>
         <thead><tr><th>Name</th><th>Purpose</th><th>Type</th><th>Duration</th></tr></thead>
         <tbody>
-          <tr><td><code>engram_session</code></td><td>Keeps you signed in. HTTP-only, so page scripts cannot read it; sent only over HTTPS.</td><td>Strictly necessary</td><td>Until you sign out, or up to one year</td></tr>
+          <tr><td><code>__Host-engram_session</code></td><td>Keeps you signed in. HTTP-only, so page scripts cannot read it; sent only over HTTPS, and only to this site.</td><td>Strictly necessary</td><td>Until you sign out, or up to 30 days</td></tr>
           <tr><td><code>engram_consent</code></td><td>Remembers whether you accepted or declined cookies, so we do not ask on every visit.</td><td>Strictly necessary</td><td>One year</td></tr>
         </tbody>
       </table>
@@ -44,8 +44,8 @@ export default function CookiesPage() {
 
       <h2>Third-party resources</h2>
       <p>
-        The site loads typefaces from Google Fonts. Google receives your IP address and browser details when fonts load but does not set
-        cookies through Engram. See the <Link href="/legal/privacy">Privacy Policy</Link> for every provider that processes data for us.
+        None. The typefaces are served from Engram itself, so your browser contacts no third party while you read the site. See the
+        <Link href="/legal/privacy">Privacy Policy</Link> for every provider that processes data for us.
       </p>
 
       <h2>Changes</h2>

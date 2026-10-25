@@ -1,13 +1,15 @@
 /** Appwrite backend: VectorsDB, Embeddings, Teams, Storage, Auth, Functions and Messaging. */
 import {
-  Account, AppwriteException, Client, Embeddings, EmbeddingModel, Functions, ID, Messaging, Query, Storage, Teams, Users, VectorsDB,
+  Account, AppwriteException, Client, Embeddings, EmbeddingModel, Functions, ID, Messaging, Query, Storage, Teams, Users, VectorsDB, type Models,
 } from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
-import type { EngramConfig } from "../config";
+import { randomBytes } from "node:crypto";
+import { bool, type EngramConfig } from "../config";
 import { ConflictError, EngramError, isEngramError, REAUTH_WINDOW_MS, reauthRequired } from "../errors";
 import { evaluate } from "./query";
-import { afterFailure, assertNotLocked, type LoginFails } from "./login-guard";
+import { clearAttempts, guardedSignIn, type AttemptStore } from "./login-guard";
 import { cosine } from "@engram/core";
+import { GUEST_EMAIL_DOMAIN, isGuestEmail, SIGNUP_CONFLICT } from "./types";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Filter, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamMember, TeamStore, TxOp,
   User, VDoc, VectorStore,
@@ -24,6 +26,13 @@ function mapError(e: unknown): unknown {
     if (e.code === 429) return new EngramError("rate_limited", "Appwrite rate limit reached. Try again shortly.");
   }
   return e;
+}
+/** A session check that failed for a reason other than the session being invalid. */
+function unavailableAuth(e: unknown): unknown {
+  const m = mapError(e);
+  if (isEngramError(m) && m.code !== "not_found") return m;
+  console.warn("[engram] session check failed", e instanceof Error ? e.message : e);
+  return new EngramError("unavailable", "Sign-in is temporarily unavailable. Try again shortly.");
 }
 /** Appwrite only redirects to hosts registered as a platform; say so plainly instead of a raw 400. */
 function authLinkError(e: unknown): unknown {
@@ -320,13 +329,29 @@ async function toBytes(x: unknown): Promise<Uint8Array> {
   throw new EngramError("internal", `Unexpected file body type: ${Object.prototype.toString.call(x)}`);
 }
 
+/**
+ * Accepting the Terms sets a label as well as `prefs.termsAcceptedAt`: a user can write their own prefs through
+ * Appwrite with the public project ID, but only the API key can set labels, so the label is what counts.
+ */
+const TERMS_LABEL = "terms";
+function toUser(u: Models.User<Models.Preferences>): User {
+  const prefs = (u.prefs ?? {}) as Record<string, unknown>;
+  const at = typeof prefs.termsAcceptedAt === "string" ? prefs.termsAcceptedAt : u.$createdAt;
+  return { id: u.$id, email: u.email, name: u.name, emailVerified: u.emailVerification, termsAcceptedAt: u.labels?.includes(TERMS_LABEL) ? at : null, guest: isGuestEmail(u.email) };
+}
+
 const toPasskeyInfo = (p: { $id: string; $createdAt: string; name: string; accessedAt: string }): PasskeyInfo =>
   ({ id: p.$id, name: p.name, createdAt: p.$createdAt, lastUsedAt: p.accessedAt || null });
 const passkeyMessage = (e: AppwriteException) =>
   /expired/i.test(e.message) ? "The passkey request expired. Try again." : e.message || "The passkey could not be saved.";
 
+/** Lifetime of the Realtime JWT handed to the browser (Appwrite's default; the maximum is 3600). */
+export const JWT_TTL_S = 900;
+
 class AppwriteAuth implements AuthStore {
-  constructor(private cfg: EngramConfig, private admin: Client) {}
+  constructor(private cfg: EngramConfig, private admin: Client) {
+    this.attempts = { files: new AppwriteFiles(new Storage(admin)), bucket: cfg.appwrite.checkpointsBucket };
+  }
   private anon() { return new Client().setEndpoint(this.cfg.appwrite.endpoint).setProject(this.cfg.appwrite.projectId); }
   async signUp(email: string, password: string, name: string): Promise<User> {
     try {
@@ -334,34 +359,44 @@ class AppwriteAuth implements AuthStore {
       return { id: u.$id, email: u.email, name: u.name };
     } catch (e) {
       // Same messages as the local backend; a bare 409 would otherwise read as a chain conflict.
-      if (e instanceof AppwriteException && e.code === 409) throw new EngramError("conflict", "An account with this email already exists.");
+      if (e instanceof AppwriteException && e.code === 409) throw new EngramError("conflict", SIGNUP_CONFLICT);
       if (e instanceof AppwriteException && e.code === 400) throw new EngramError("bad_request", e.message);
       throw mapError(e);
     }
   }
-  async signIn(email: string, password: string) {
-    const users = new Users(this.admin);
-    const u = (await call(() => users.list({ queries: [Query.equal("email", [email.trim().toLowerCase()]), Query.limit(1)] }))).users[0];
-    const prefs = (u?.prefs ?? {}) as Record<string, unknown>;
-    const guard = prefs.engramLogin as LoginFails | undefined;
-    assertNotLocked(guard);
-    try {
-      const s = await new Account(this.admin).createEmailPasswordSession({ email, password });
-      if (u && guard) await users.updatePrefs({ userId: u.$id, prefs: { ...prefs, engramLogin: null } }).catch(() => undefined);
-      return { secret: s.secret, userId: s.userId, expire: s.expire };
-    } catch (e) {
-      if (e instanceof AppwriteException && (e.code === 401 || e.code === 400)) {
-        if (u) await users.updatePrefs({ userId: u.$id, prefs: { ...prefs, engramLogin: afterFailure(guard) } }).catch((err) => console.warn("[engram] could not record failed sign-in", err));
-        throw new EngramError("unauthorized", "Invalid email or password.");
+  /** Attempt slots live as server-only files in the checkpoints bucket (see login-guard.ts). */
+  private attempts: AttemptStore;
+  async signIn(email: string, password: string, opts: { client?: string } = {}) {
+    // No user lookup first: unknown and known addresses take the same path.
+    return guardedSignIn(this.attempts, email, opts.client, async () => {
+      try {
+        const s = await new Account(this.admin).createEmailPasswordSession({ email, password });
+        return { secret: s.secret, userId: s.userId, expire: s.expire };
+      } catch (e) {
+        if (e instanceof AppwriteException && (e.code === 401 || e.code === 400)) throw new EngramError("unauthorized", "Invalid email or password.");
+        throw mapError(e);
       }
-      throw mapError(e);
-    }
+    });
   }
   async getUser(secret: string): Promise<User | null> {
     try {
-      const u = await new Account(this.anon().setSession(secret)).get();
-      return { id: u.$id, email: u.email, name: u.name, emailVerified: u.emailVerification };
-    } catch { return null; }
+      return toUser(await new Account(this.anon().setSession(secret)).get());
+    } catch (e) {
+      // Only Appwrite's 401 means the session is gone. Anything else (an outage, a network error) must not look
+      // like being signed out, which would clear the cookie and bounce people to the login page.
+      if (e instanceof AppwriteException && e.code === 401) return null;
+      throw unavailableAuth(e);
+    }
+  }
+  /** End every other session of the user behind `sessionSecret` (after a password change). */
+  private async endOtherSessions(sessionSecret: string) {
+    const account = this.account(sessionSecret);
+    const [me, current] = await Promise.all([call(() => account.get()), call(() => account.getSession({ sessionId: "current" }))]);
+    const users = new Users(this.admin);
+    const list = await call(() => users.listSessions({ userId: me.$id }));
+    await Promise.all(list.sessions.filter((s) => s.$id !== current.$id).map((s) => users.deleteSession({ userId: me.$id, sessionId: s.$id }).catch((e) => {
+      if (!(e instanceof AppwriteException && e.code === 404)) throw mapError(e);
+    })));
   }
   async signOut(secret: string) {
     try { await new Account(this.anon().setSession(secret)).deleteSession({ sessionId: "current" }); } catch { /* already gone */ }
@@ -385,7 +420,9 @@ class AppwriteAuth implements AuthStore {
       await new Account(this.anon()).updateRecovery({ userId, secret, password });
       // A successful reset proves ownership of the email, so it lifts any sign-in lockout.
       const users = new Users(this.admin);
-      await users.getPrefs({ userId }).then((p) => (p as Record<string, unknown>).engramLogin ? users.updatePrefs({ userId, prefs: { ...p, engramLogin: null } }) : null).catch(() => undefined);
+      await users.get({ userId }).then((u) => clearAttempts(this.attempts, u.email, { all: true })).catch(() => undefined);
+      // And it signs the account out everywhere: whoever knew the old password must not keep a session.
+      await users.deleteSessions({ userId }).catch((e) => console.error("[engram] could not end sessions after a password reset", e));
     } catch (e) {
       if (e instanceof AppwriteException && e.code === 400 && /password/i.test(e.message)) throw new EngramError("bad_request", e.message);
       if (e instanceof AppwriteException && (e.code === 401 || e.code === 404 || e.code === 400)) throw new EngramError("bad_request", "This reset link is invalid or has expired. Request a new one.");
@@ -410,8 +447,7 @@ class AppwriteAuth implements AuthStore {
     }
   }
   async updateName(sessionSecret: string, name: string): Promise<User> {
-    const u = await call(() => new Account(this.anon().setSession(sessionSecret)).updateName({ name }));
-    return { id: u.$id, email: u.email, name: u.name, emailVerified: u.emailVerification };
+    return toUser(await call(() => new Account(this.anon().setSession(sessionSecret)).updateName({ name })));
   }
   async updatePassword(sessionSecret: string, oldPassword: string, password: string) {
     try {
@@ -421,9 +457,63 @@ class AppwriteAuth implements AuthStore {
       if (e instanceof AppwriteException && e.code === 400) throw new EngramError("bad_request", e.message);
       throw mapError(e);
     }
+    // Every other device is signed out; this one stays.
+    await this.endOtherSessions(sessionSecret).catch((e) => console.error("[engram] could not end other sessions after a password change", e));
   }
   async deleteUser(userId: string) {
     await call(() => new Users(this.admin).delete({ userId }));
+  }
+  /**
+   * Guests are registered as server-only marker files (`gu_<userId>`) in the checkpoints bucket, so the clean-up can
+   * find them with a prefix listing (proven) instead of a user query on email or labels.
+   */
+  async createGuest() {
+    const users = new Users(this.admin);
+    const userId = ID.unique();
+    const email = `guest-${userId}@${GUEST_EMAIL_DOMAIN}`;
+    // Nobody ever learns this password: it only lets the server open the guest's one session below.
+    const password = randomBytes(24).toString("base64url");
+    const marker = `gu_${userId}`;
+    await this.attempts.files.put(this.attempts.bucket, marker, `${marker}.json`, new TextEncoder().encode("{}"), []);
+    try {
+      const t = new Date().toISOString();
+      await call(() => users.create({ userId, email, password, name: "Guest" }));
+      await call(() => users.updatePrefs({ userId, prefs: { guest: true, termsAcceptedAt: t } }));
+      const u = await call(() => users.updateLabels({ userId, labels: [TERMS_LABEL, "guest"] }));
+      const s = await call(() => new Account(this.admin).createEmailPasswordSession({ email, password }));
+      return { user: toUser({ ...u, prefs: { guest: true, termsAcceptedAt: t } }), session: { secret: s.secret, userId: s.userId, expire: s.expire } };
+    } catch (e) {
+      await users.delete({ userId }).catch(() => undefined);
+      await this.attempts.files.delete(this.attempts.bucket, marker).catch(() => undefined);
+      throw e;
+    }
+  }
+  async deleteGuests(before: string, limit: number) {
+    const markers = (await this.attempts.files.list(this.attempts.bucket, "gu_"))
+      .filter((f) => f.createdAt < before)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
+      .slice(0, limit);
+    const users = new Users(this.admin);
+    let n = 0;
+    for (const f of markers) {
+      const userId = f.fileId.slice(3);
+      try {
+        const u = await users.get({ userId });
+        // Only ever a guest: the marker names the user, and the address must be under the reserved domain too.
+        if (isGuestEmail(u.email)) await users.delete({ userId });
+      } catch (e) {
+        if (!(e instanceof AppwriteException && e.code === 404)) { console.warn("[engram] guest clean-up failed", e instanceof Error ? e.message : e); continue; }
+      }
+      await this.attempts.files.delete(this.attempts.bucket, f.fileId);
+      n++;
+    }
+    return n;
+  }
+  async acceptTerms(userId: string) {
+    const users = new Users(this.admin);
+    const u = await call(() => users.get({ userId }));
+    await call(() => users.updatePrefs({ userId, prefs: { ...u.prefs, termsAcceptedAt: new Date().toISOString() } }));
+    if (!u.labels.includes(TERMS_LABEL)) await call(() => users.updateLabels({ userId, labels: [...u.labels, TERMS_LABEL] }));
   }
 
   // ---- passkeys
@@ -479,11 +569,18 @@ class AppwriteAuth implements AuthStore {
     const s = await call(() => new Account(this.admin).createSession({ userId: token.userId, secret: token.secret }));
     return { secret: s.secret, userId: s.userId, expire: s.expire };
   }
+  /**
+   * The browser only needs this to open its Realtime socket, so it is short-lived (JWT_TTL_S; the page fetches a
+   * new one before it expires) and bound to this browser's own session: signing out here voids it at once.
+   */
   async createJwt(secret: string) {
-    const u = await this.getUser(secret);
-    if (!u) return null;
+    let sessionId: string, userId: string;
     try {
-      const j = await new Users(this.admin).createJWT({ userId: u.id, duration: 3600 });
+      const s = await this.account(secret).getSession({ sessionId: "current" });
+      sessionId = s.$id; userId = s.userId;
+    } catch { return null; }
+    try {
+      const j = await new Users(this.admin).createJWT({ userId, sessionId, duration: JWT_TTL_S });
       return j.jwt;
     } catch { return null; }
   }
@@ -498,7 +595,7 @@ class AppwriteJobs implements Jobs {
     return true;
   }
   async notifyTamper(args: { spaceKey: string; spaceName: string; ownerId?: string; message: string }) {
-    if (!args.ownerId || process.env.ENGRAM_ALERT_EMAILS !== "true") return;
+    if (!args.ownerId || !bool("ENGRAM_ALERT_EMAILS", false)) return;
     try {
       // Addressed to the user, so Appwrite Messaging sends it to the account's email target.
       await new Messaging(this.admin).createEmail({

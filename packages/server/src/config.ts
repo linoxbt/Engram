@@ -53,7 +53,8 @@ const env = (k: string) => {
   const v = typeof process !== "undefined" ? process.env[k] : undefined;
   return v && v.trim() ? v.trim() : null;
 };
-const bool = (k: string, d: boolean) => {
+/** The one boolean env parser: 1/true/yes/on (any case) is true; unset falls back to `d`. */
+export const bool = (k: string, d: boolean) => {
   const v = env(k);
   return v == null ? d : /^(1|true|yes|on)$/i.test(v);
 };
