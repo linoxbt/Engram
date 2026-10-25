@@ -3,7 +3,7 @@ export default function ApiDocs() {
     <>
       <h1>REST API</h1>
       <p>Base path <code>/api/v1</code>. JSON in and out. Agent routes need <code>Authorization: Bearer eng_XXXX_...</code>. Errors look like <code>{`{ "error": { "code": "...", "message": "..." } }`}</code>.</p>
-      <table><thead><tr><th>Method and path</th><th>Scope</th><th>Purpose</th></tr></thead><tbody>
+      <div className="overflow-x-auto"><table><thead><tr><th>Method and path</th><th>Scope</th><th>Purpose</th></tr></thead><tbody>
         <tr><td>POST /memories</td><td>remember</td><td>Remember (body: RememberInput)</td></tr>
         <tr><td>GET /memories/:id</td><td>recall</td><td>One entry with full metadata</td></tr>
         <tr><td>POST /recall</td><td>recall</td><td>Recall (body: RecallInput)</td></tr>
@@ -18,10 +18,10 @@ export default function ApiDocs() {
         <tr><td>GET /spaces/:key/chain?cursor=&amp;limit=</td><td>public</td><td>Header fields and hashes, paged</td></tr>
         <tr><td>GET /spaces/:key/checkpoints</td><td>public</td><td>Signed checkpoint files</td></tr>
         <tr><td>GET /spaces/:key/proof/:id</td><td>public</td><td>Inclusion proof, hashes only</td></tr>
-      </tbody></table>
+      </tbody></table></div>
       <p>Public routes work only for spaces with public verification switched on, and never return memory text. They send open CORS headers.</p>
       <h2>Error codes</h2>
-      <table><thead><tr><th>Code</th><th>Status</th><th>When</th></tr></thead><tbody>
+      <div className="overflow-x-auto"><table><thead><tr><th>Code</th><th>Status</th><th>When</th></tr></thead><tbody>
         <tr><td>bad_request</td><td>400</td><td>Validation failed</td></tr>
         <tr><td>unauthorized</td><td>401</td><td>Missing, unknown or revoked key</td></tr>
         <tr><td>forbidden</td><td>403</td><td>The key lacks the scope</td></tr>
@@ -29,7 +29,7 @@ export default function ApiDocs() {
         <tr><td>rate_limited</td><td>429</td><td>More than 60 writes per agent per minute</td></tr>
         <tr><td>chain_busy</td><td>503</td><td>Contention beyond 8 retries: retry with the same idempotency key</td></tr>
         <tr><td>embeddings_unavailable</td><td>503</td><td>Embedding quota reached; nothing was written</td></tr>
-      </tbody></table>
+      </tbody></table></div>
       <h2>SDK</h2>
       <pre><code>{`import { Engram } from "engram-sdk";
 // publicKey: the checkpoint key you trust, never one the server hands you.

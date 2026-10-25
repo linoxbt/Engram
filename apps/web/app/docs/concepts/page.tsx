@@ -5,12 +5,12 @@ export default function Concepts() {
       <p>Engram makes five promises: memories are found by meaning; every write is tamper-evident; any recall can run in the past; new facts reconcile themselves with old ones; and forgetting is provable.</p>
       <h2>Entries and the chain</h2>
       <p>Every record in a space is an <em>entry</em> with a sequence number. Its ID encodes that number, <code>m_&lt;space&gt;_&lt;seq as 12 digits&gt;</code>, so ordering by ID is chain order. An entry is one of four ops:</p>
-      <table><thead><tr><th>Op</th><th>Holds</th><th>Effect</th></tr></thead><tbody>
+      <div className="overflow-x-auto"><table><thead><tr><th>Op</th><th>Holds</th><th>Effect</th></tr></thead><tbody>
         <tr><td><code>remember</code></td><td>text and an embedding</td><td>a new memory (fact, preference, event, observation)</td></tr>
         <tr><td><code>reflect</code></td><td>a model-written summary</td><td>a summary memory linked to its sources</td></tr>
         <tr><td><code>forget</code></td><td>a reason, a tombstone vector</td><td>the target's text, salt and vector are erased</td></tr>
         <tr><td><code>link</code></td><td>a reason, a tombstone vector</td><td>records a resolution: supersede, refine, dismiss, or a conflict found later</td></tr>
-      </tbody></table>
+      </tbody></table></div>
       <h2>The four hashes</h2>
       <ul>
         <li><strong>genesis</strong>: <code>SHA-256("engram:genesis:v1:" + space)</code>, the previous hash of entry 0.</li>

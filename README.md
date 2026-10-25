@@ -50,7 +50,7 @@ Tools: `remember`, `recall`, `forget`, `timeline`, `verify`, `resolve`. REST API
 - **Forgetting.** A forget entry is appended; the target's text, salt and vector are erased; its header stays, so the chain still verifies.
 - **Tamper Lab.** In sandbox spaces, nine attackers with full database access corrupt the chain, each caught by a different layer, the last ones only by the signed checkpoint.
 
-More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corrections.md) · [demo script](docs/demo-script.md) · [Day 1 verification](docs/verified.md).
+More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corrections.md) · [demo script](docs/demo-script.md) · [live verification](docs/verified.md).
 
 ## Appwrite features used
 
@@ -63,9 +63,9 @@ More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corre
 | **Transactions** | Tried first for derived updates on neighbours; on this project they return `transaction_not_found` right after creation, so the adapter falls back to conditional bulk updates (see [verified](docs/verified.md) items 3, 13, 14) |
 | **Document permissions** | `read(team:<space>)` on every document; agents collection is server-only |
 | **Auth + Teams** | Email/password and passkey sign-in, email verification, password recovery; one team per space with `admin` and `member` roles, single-use invite links; space settings in team preferences |
-| **Storage** | Signed checkpoint files and exports |
-| **Functions** | checkpoint (5 min), sentinel (15 min), labeler (concept events), reflect (daily) |
-| **Realtime** | Live feed via a short-lived JWT, with 3-second polling as fallback |
+| **Storage** | Signed checkpoint files and their create-first lock files (exports are streamed to the browser, never stored) |
+| **Functions** | checkpoint (5 min), sentinel (15 min), labeler (concept update events, catch-up relabels at 3/10/30/100 members), reflect (daily) |
+| **Realtime** | Live feed via a short-lived JWT when Realtime delivers VectorsDB events, otherwise 3-second polling (the `events` provisioning step checks which channel fires; see [verified](docs/verified.md)) |
 | **Messaging** | Optional tamper alert emails from the sentinel |
 | **Backups** | `pnpm setup:appwrite` creates a daily backup policy for the `engram` database where the plan allows it (and says so when it cannot); `pnpm backup` exports what database backups do not cover |
 
@@ -108,7 +108,7 @@ With no Appwrite variables, Engram runs on a local file-backed backend with a de
 
 `ENGRAM_DEMO_RESET=<same id>` re-seeds the demo space once. Remove `ENGRAM_PROVISION` afterwards; without it the step does nothing.
 
-The labeler's event trigger in `appwrite.json` (`databases.engram.collections.concepts.documents.*.create`) names the database, so keep `APPWRITE_DB_ID=engram` (the default) or change that event path to match; otherwise the labeler never fires and a new concept keeps its rule-based label until the app relabels it at 3 members.
+The labeler's event trigger in `appwrite.json` (`databases.engram.collections.concepts.documents.*.update`) names the database, so keep `APPWRITE_DB_ID=engram` (the default) or change that event path to match. Whether VectorsDB documents raise `databases.*` or `vectorsdb.*` events is checked by the `events` provisioning step; until it reports one that fires, the app's inline relabelling at 3, 10, 30 and 100 members is what names concepts.
 
 **Backups and restore.** Appwrite's database backup covers the VectorsDB collections only. Space settings live in team preferences and signed checkpoints in Storage, so export those too: `pnpm backup` writes every space team (name, preferences, members) and every file in the checkpoints bucket to `~/engram-backups/` (keep the file private). To restore after a loss:
 
