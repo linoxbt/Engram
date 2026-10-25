@@ -28,8 +28,9 @@ export interface RelateResult { relations: Relation[]; status: "done" | "pending
 const RelationSchema = z.object({
   id: z.string(),
   relation: z.enum(["duplicate", "supersedes", "contradicts", "refines", "unrelated"]),
-  confidence: z.number().min(0).max(1),
-  reason: z.string().max(300),
+  // Bounds are applied after parsing: one over-long reason must not fail the whole classification.
+  confidence: z.number(),
+  reason: z.string(),
 });
 const RelateOutput = z.object({ relations: z.array(RelationSchema) });
 
@@ -133,10 +134,10 @@ export async function relate(ctx: Ctx, m: NewMemory, neighbours: Neighbour[], op
         output: Output.object({ schema: RelateOutput, name: "relations" }),
         abortSignal: AbortSignal.timeout(opts.timeoutMs ?? 3000),
         maxRetries: 0,
-        temperature: 0,
       });
       const known = new Set(rest.map((n) => n.id));
-      const rels = (res.output?.relations ?? []).filter((r) => known.has(r.id));
+      const rels = (res.output?.relations ?? []).filter((r) => known.has(r.id))
+        .map((r) => ({ ...r, confidence: Number.isFinite(r.confidence) ? Math.min(1, Math.max(0, r.confidence)) : 0.5, reason: r.reason.slice(0, 300) }));
       return { relations: [...fast, ...rels], status: "done", via: "model" };
     } catch (e) {
       const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");

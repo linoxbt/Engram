@@ -52,7 +52,8 @@ export async function assignConcept(ctx: Ctx, memoryId: string, vector: number[]
   return "";
 }
 
-const LabelOutput = z.object({ label: z.string().max(40), summary: z.string().max(200) });
+// No length caps in the schema: a slightly long answer would fail validation outright; it is trimmed below instead.
+const LabelOutput = z.object({ label: z.string(), summary: z.string() });
 
 export async function labelConcept(ctx: Ctx, id: string): Promise<{ label: string; summary: string } | null> {
   const { b, space } = ctx;
@@ -76,9 +77,8 @@ export async function labelConcept(ctx: Ctx, id: string): Promise<{ label: strin
         prompt: texts.map((t) => `- ${t}`).join("\n"),
         output: Output.object({ schema: LabelOutput }),
         abortSignal: AbortSignal.timeout(8000),
-        temperature: 0,
       });
-      if (res.output?.label) out = res.output;
+      if (res.output?.label.trim()) out = { label: res.output.label.trim().slice(0, 40), summary: res.output.summary.trim().slice(0, 200) };
     } catch (e) {
       console.warn("[engram] labeler model failed, using heuristic", e instanceof Error ? e.message : e);
     }

@@ -31,7 +31,7 @@ export async function reflect(ctx: Ctx, conceptId: string) {
   if (model) {
     try {
       const res = await generateText({
-        model, temperature: 0, abortSignal: AbortSignal.timeout(15_000),
+        model, abortSignal: AbortSignal.timeout(15_000),
         system: "Summarise these memories into 2-4 plain sentences of durable knowledge. Prefer the latest facts. No speculation.",
         prompt: texts.join("\n"),
       });
