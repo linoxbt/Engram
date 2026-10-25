@@ -77,3 +77,50 @@ export async function proofHex(hexLeaves: string[], i: number): Promise<string[]
 }
 export const verifyProofHex = (leaf: string, index: number, size: number, path: string[], root: string) =>
   verifyMerkleProof(fromHex(leaf), index, size, path.map(fromHex), fromHex(root));
+
+/**
+ * Compact range (RFC 6962 "frontier") of a tree over n leaves: the roots of the perfect subtrees given by the binary
+ * decomposition of n, largest (leftmost) first, so popcount(n) hashes. It is enough to append leaves and recompute
+ * the root without the earlier leaves: root(n) = node(f[0], node(f[1], ... node(f[k-2], f[k-1]))), which is exactly
+ * the largest-power-of-two split merkleRoot uses (the leftmost subtree is the largest power of two below n).
+ */
+export async function frontierAppend(frontier: Uint8Array[], size: number, leaves: Uint8Array[]): Promise<Uint8Array[]> {
+  const out = [...frontier];
+  let n = size;
+  for (const leaf of leaves) {
+    out.push(await leafHash(leaf));
+    // Each trailing 1 bit of the old size is a perfect subtree of the same height as the one just completed.
+    for (let m = n; m % 2 === 1; m = Math.floor(m / 2)) {
+      const r = out.pop()!, l = out.pop()!;
+      out.push(await nodeHash(l, r));
+    }
+    n++;
+  }
+  return out;
+}
+
+export async function frontierRoot(frontier: Uint8Array[]): Promise<Uint8Array> {
+  if (!frontier.length) return sha256(new Uint8Array(0));
+  let r = frontier[frontier.length - 1];
+  for (let i = frontier.length - 2; i >= 0; i--) r = await nodeHash(frontier[i], r);
+  return r;
+}
+
+/** Number of subtrees in the frontier of a tree over n leaves. */
+export function popcount(n: number): number {
+  let c = 0;
+  for (let m = n; m > 0; m = Math.floor(m / 2)) c += m % 2;
+  return c;
+}
+
+export const frontierAppendHex = async (frontier: string[], size: number, hexLeaves: string[]) =>
+  (await frontierAppend(frontier.map(fromHex), size, hexLeaves.map(fromHex))).map(toHex);
+export const frontierRootHex = async (frontier: string[]) => toHex(await frontierRoot(frontier.map(fromHex)));
+
+/** Audit path for leaf i from precomputed leaf hashes, for callers that cache them across proofs. */
+export async function proofFromLeafHashes(leafHashes: Uint8Array[], i: number): Promise<Uint8Array[]> {
+  if (i < 0 || i >= leafHashes.length) throw new Error("index out of range");
+  return proofOfHashes(leafHashes, i);
+}
+export const rootFromLeafHashes = (leafHashes: Uint8Array[]): Promise<Uint8Array> =>
+  leafHashes.length ? rootOfHashes(leafHashes) : sha256(new Uint8Array(0));

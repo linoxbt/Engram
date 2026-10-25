@@ -26,21 +26,24 @@ export const checkpointFileId = (cp: Pick<UnsignedCheckpoint, "space" | "seq">) 
 export async function buildCheckpoint(args: {
   space: string;
   /** Header hashes of entries 0..n-1, hex. */
-  hashes: string[];
+  hashes?: string[];
+  /** Instead of `hashes`: a tree the caller computed incrementally (size, last header hash, Merkle root). */
+  tree?: { size: number; head: string; root: string };
   prev: Checkpoint | null;
   keyId: string;
   createdAt?: string;
   anchor?: Anchor | null;
 }): Promise<UnsignedCheckpoint> {
-  const n = args.hashes.length;
+  const hashes = args.hashes ?? [];
+  const n = args.tree ? args.tree.size : hashes.length;
   if (n === 0) throw new Error("cannot checkpoint an empty chain");
   return {
     v: "1",
     space: args.space,
     seq: seqStr(n - 1),
     size: count8(n),
-    head: args.hashes[n - 1],
-    root: await rootHex(args.hashes),
+    head: args.tree ? args.tree.head : hashes[n - 1],
+    root: args.tree ? args.tree.root : await rootHex(hashes),
     prevCheckpoint: args.prev ? checkpointFileId(args.prev) : null,
     prevCheckpointHash: args.prev ? await checkpointHash(args.prev) : null,
     createdAt: args.createdAt ?? iso(),
