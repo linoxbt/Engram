@@ -1,6 +1,6 @@
 /** Agent registry: the vector is the agent's description, so agents can be found by capability. */
 import { agentId, count8, iso, keyHash, sha256Hex, timingSafeEqualHex } from "@engram/core";
-import type { Backend, VDoc } from "./backend/types";
+import type { Backend, Filter, VDoc } from "./backend/types";
 import { ALL_SCOPES, backgroundDefer, type Ctx, type Scope, type SpaceInfo } from "./context";
 import { getConfig } from "./config";
 import { embedAgentDescription } from "./embed";
@@ -61,8 +61,21 @@ export async function createAgent(b: Backend, space: SpaceInfo, input: CreateAge
   return { agent: toPublicAgent(doc), key };
 }
 
+const AGENT_PAGE = 100;
+/** Every agent document matching `filters`, read in pages of 100 in `$id` order. */
+async function queryAllAgents(b: Backend, filters: Filter[]): Promise<AgentDoc[]> {
+  const out: AgentDoc[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await b.vectors.query<AgentMeta>("agents", { filters, order: { field: "$id", dir: "asc" }, limit: AGENT_PAGE, cursorAfter: cursor, withVectors: false });
+    out.push(...page);
+    if (page.length < AGENT_PAGE) return out;
+    cursor = page[page.length - 1].$id;
+  }
+}
+
 export async function listAgents(b: Backend, space: string): Promise<PublicAgent[]> {
-  const docs = await b.vectors.query<AgentMeta>("agents", { filters: [{ op: "eq", path: "metadata.space", values: [space] }], limit: 200, withVectors: false });
+  const docs = await queryAllAgents(b, [{ op: "eq", path: "metadata.space", values: [space] }]);
   return docs.map(toPublicAgent).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
 }
 
