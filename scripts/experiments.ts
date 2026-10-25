@@ -7,7 +7,7 @@
 import "./env";
 import { writeFileSync } from "node:fs";
 import { AppwriteException, Client, Embeddings, EmbeddingModel, ID, Query, Teams, VectorsDB, VectorsDBIndexType } from "node-appwrite";
-import { cosine, embHash, quantize } from "@engram/core";
+import { cosine, embHash, entryId, quantize } from "@engram/core";
 import { createAppwriteBackend, getConfig, isConflict } from "@engram/server";
 
 const endpoint = process.env.APPWRITE_ENDPOINT, project = process.env.APPWRITE_PROJECT_ID, key = process.env.APPWRITE_API_KEY;
@@ -17,6 +17,8 @@ const client = new Client().setEndpoint(endpoint).setProject(project).setKey(key
 const vdb = new VectorsDB(client);
 const emb = new Embeddings(client);
 const COLL = `exp_${Date.now().toString(36)}`;
+/** Reserved space key for anything written to the real collections ("0" never appears in generated keys). */
+const TEST_SPACE = process.env.APPWRITE_TEST_SPACE ?? "test0000";
 const rows: { n: number; item: string; result: string; ok: boolean | null; action: string }[] = [];
 const rec = (n: number, item: string, ok: boolean | null, result: string, action: string) => { rows.push({ n, item, result, ok, action }); console.log(`${ok === null ? "·" : ok ? "✓" : "✗"} ${n}. ${item}: ${result}`); };
 const err = (e: unknown) => e instanceof AppwriteException ? `${e.code} ${e.type}: ${e.message}` : String(e);
@@ -137,15 +139,17 @@ try {
   // 13. The engine's conditional write (stage in a transaction, re-read, commit) under a real race: of two
   // writers that read the same version, exactly one may land. Runs through the engine's own adapter.
   {
+    // Runs in the real memories collection, so it uses the reserved test space (no team, no permissions) and is
+    // deleted in `finally`.
     const b = createAppwriteBackend(getConfig());
-    const id = `exp_${Date.now().toString(36)}`;
+    const id = entryId(TEST_SPACE, 900_000_000_000 + Math.floor(Math.random() * 1e9));
     try {
-      await b.vectors.create("memories", id, { embeddings: vecs[0], metadata: { space: "exp00000", n: "0" } });
+      await b.vectors.create("memories", id, { embeddings: vecs[0], metadata: { space: TEST_SPACE, n: "0" } }, []);
       const read = (await b.vectors.get<{ n: string }>("memories", id))!;
-      const attempts = await Promise.allSettled([1, 2, 3].map((n) => b.vectors.update("memories", id, { metadata: { space: "exp00000", n: String(n) } }, undefined, { ifUpdatedAt: read.$updatedAt })));
+      const attempts = await Promise.allSettled([1, 2, 3].map((n) => b.vectors.update("memories", id, { metadata: { space: TEST_SPACE, n: String(n) } }, undefined, { ifUpdatedAt: read.$updatedAt })));
       const won = attempts.filter((a) => a.status === "fulfilled").length;
       const conflicts = attempts.filter((a) => a.status === "rejected" && isConflict(a.reason)).length;
-      const stale = await b.vectors.update("memories", id, { metadata: { space: "exp00000", n: "late" } }, undefined, { ifUpdatedAt: read.$updatedAt }).then(() => "landed", (e) => (isConflict(e) ? "rejected" : `error ${err(e)}`));
+      const stale = await b.vectors.update("memories", id, { metadata: { space: TEST_SPACE, n: "late" } }, undefined, { ifUpdatedAt: read.$updatedAt }).then(() => "landed", (e) => (isConflict(e) ? "rejected" : `error ${err(e)}`));
       const ok = won === 1 && conflicts === 2 && stale === "rejected";
       rec(13, "Conditional writes under a race (3 writers, same read)", ok, `${won} landed, ${conflicts} conflicts; a later stale write was ${stale}`, ok ? "Stale copies cannot overwrite newer data (erasures stay erased)" : "Conditional writes are not safe: add a monotonic rev field and compare it instead of $updatedAt");
     } catch (e) { rec(13, "Conditional writes under a race", false, err(e), "Investigate before relying on conditional writes"); }
