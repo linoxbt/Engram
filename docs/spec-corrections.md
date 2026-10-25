@@ -32,3 +32,12 @@ The five build documents (Product and Architecture, Data Model and VectorsDB, Ba
 | 21 | Removing `d` from a document skipped the erasure and resurrection checks; a non-string header field crashed the verifier, leaving the sentinel's badge at its last value | Erasure rules run regardless of `d`; a missing `d` is its own finding. Headers are shape-checked before hashing and malformed ones become critical findings |
 | 22 | `$distance` on VectorsDB results is unverified; without it neighbour detection would silently stop | If a vector result lacks `$distance`, the adapter computes cosine distance from the returned embedding |
 | 23 | Checkpoint files were listed with full-text search | Listed with a `startsWith("name")` filter, falling back to search |
+
+## Found live on Appwrite Cloud
+
+| # | Problem | Implementation |
+|---|---------|----------------|
+| 24 | VectorsDB transactions return `transaction_not_found` immediately after `createTransaction` | The adapter tries a transaction, then falls back to compare-and-swap: `updateDocuments` filtered on `$id` and `$updatedAt`. Live check: of three writers racing on one read, exactly one lands |
+| 25 | `getFileDownload` returned an empty body through the SDK, so checkpoints were listed but never loaded | Files are read with `getFileView`, and the bytes are normalised whatever shape the SDK returns |
+| 26 | A scheduled Function execution has no body, and the runtime's `bodyJson` getter throws on it | Functions read `bodyText` first and treat an unparsable body as empty |
+| 27 | Seeding a sandbox took minutes against a request timeout of seconds | Seeding is resumable: progress lives in the space settings and each request writes about 6 s of the story |

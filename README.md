@@ -42,7 +42,7 @@ Tools: `remember`, `recall`, `forget`, `timeline`, `verify`, `resolve`. REST API
 ```
 
 - **The chain.** Entry IDs encode their sequence number: `m_<space>_<seq as 12 digits>`, so ordering by `$id` is chain order. Each entry's header (op, kind, author, subject, salted content hash, vector hash, times, refs, previous hash) is hashed with SHA-256 over canonical JSON.
-- **Lock-free writes.** Two writers that read the same head build the same ID. VectorsDB accepts one `createDocument`; the other gets a conflict and rebuilds on the new head. Derived updates on neighbours commit in one transaction and are idempotent.
+- **Lock-free writes.** Two writers that read the same head build the same ID. VectorsDB accepts one `createDocument`; the other gets a conflict and rebuilds on the new head. Derived updates on neighbours are idempotent and conditional on each document's `$updatedAt`: one transaction where VectorsDB transactions work, otherwise one compare-and-swap write at a time (`updateDocuments` filtered on `$id` and `$updatedAt`), which was verified live to let exactly one of three racing writers land.
 - **Checkpoints.** A scheduled Appwrite Function builds an RFC 6962 Merkle tree over header hashes and signs it with a key the database never sees. Checkpoints link to each other and can be anchored to a public GitHub repository.
 - **Verification.** Structure, links, header hashes, content hashes, vector hashes (deep mode), refs, time, a full derived-state replay, checkpoint signatures, linkage and roots. "Valid through #N", or the exact first broken entry.
 - **Forgetting.** A forget entry is appended; the target's text, salt and vector are erased; its header stays, so the chain still verifies.
@@ -58,9 +58,9 @@ More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corre
 | **Built-in embeddings** | nomic-embed-text for memories and queries; all-minilm for agent capability search |
 | **Vector + metadata queries** | Recall filtered by space, status, kind, subject, agent and time; `createQuery` for 768-d vectors |
 | **Unique document IDs** | The chain's concurrency lock |
-| **Transactions** | Atomic derived updates on neighbours with conflict detection |
+| **Transactions** | Tried first for derived updates on neighbours; on this project they return `transaction_not_found` right after creation, so the adapter falls back to conditional bulk updates (see [verified](docs/verified.md) items 3, 13, 14) |
 | **Document permissions** | `read(team:<space>)` on every document; agents collection is server-only |
-| **Auth + Teams** | Dashboard sessions; one team per space; space settings in team preferences |
+| **Auth + Teams** | Email/password and passkey sign-in, email verification, password recovery; one team per space with `admin` and `member` roles, single-use invite links; space settings in team preferences |
 | **Storage** | Signed checkpoint files and exports |
 | **Functions** | checkpoint (5 min), sentinel (15 min), labeler (concept events), reflect (daily) |
 | **Realtime** | Live feed via a short-lived JWT, with 3-second polling as fallback |
@@ -73,9 +73,17 @@ More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corre
 - Agent keys are shown once; only a SHA-256 hash and a short prefix are stored. Keys are scoped and revocable, and every write carries the agent ID.
 - The public verification routes return header fields and hashes, never memory text, and only for spaces that switch them on.
 - Memory text is rendered as plain text only; recall output marks the author and source of each memory.
-- Content hashes are salted, and the salt is deleted on forget, so an erased short fact cannot be recovered by guessing.
+- Content hashes are salted, and the salt is deleted on forget, so an erased short fact cannot be recovered by guessing. Forgetting also scrubs concept summaries, derived reflections and recall logs that quoted the memory.
+- The checkpoint Function verifies the chain before it signs, so it never certifies a rewritten history.
+- The browser verifier pins the public key at build time and remembers the largest checkpoint it has seen per space; a later, shorter chain is reported as a rollback. Without a trusted key the result is a warning, never green.
+- Sign-in is rate-limited per IP and locks an account for 15 minutes after 8 failures. Adding or removing a passkey, and deleting an account, need a recent sign-in or the password.
+- Invite links are single-use, expire after 7 days, can be bound to an email, and only their SHA-256 hash is stored.
 
-**Checkpoint public key:** set `NEXT_PUBLIC_CP_PUBLIC_KEY` on deployment and publish it here.
+**Checkpoint public key** (`engram-cp-2026-10`, Ed25519):
+
+```
+ec0a9a63949ad6b798f2f85d802d33d11e5c1f3940fc670a205c96290664da71
+```
 
 ## Run it
 
@@ -90,10 +98,12 @@ With no Appwrite variables, Engram runs on a local file-backed backend with a de
 
 **On Appwrite:** `pnpm setup:appwrite`, then `pnpm experiments` (writes `docs/verified.md`), `pnpm functions:deploy` (builds and deploys the Functions from `appwrite.json`, with the signing key as a Function secret), then `pnpm seed -- --owner you@example.com --public`. Deploy to Netlify (`netlify.toml` at the root builds `apps/web`) with the variables in `.env.example`; `pnpm functions:deploy` deploys the Appwrite Functions that sign checkpoints and run the sentinel.
 
+**Provisioning from the hosting build.** So the Appwrite key never leaves the host, the same steps can run inside the Netlify build: set `ENGRAM_PROVISION=<random id>` (and optionally `ENGRAM_PROVISION_STEPS=setup,experiments,functions,seed,diagnose`), deploy, and read the redacted report at `/_provision/<id>.json`. `ENGRAM_DEMO_RESET=<same id>` re-seeds the demo space once. Remove the variables afterwards; without them the step does nothing.
+
 | Command | What it does |
 |---------|--------------|
 | `pnpm test` | Core and engine tests: hashes, Merkle proofs (sizes 1–70), every Tamper Lab attack, 20 parallel writers, supersede/conflict/forget/as-of, the seeded demo story |
-| `pnpm e2e` | Playwright: sign up, sandbox, browser verification, recall, conflict resolution, Tamper Lab levels 1 and 4, public verifier |
+| `pnpm e2e` | Playwright: cookie consent, sign up, sandbox, browser verification, recall, conflict resolution, Tamper Lab levels 1 and 4, public verifier, password reset, passkeys (virtual authenticator), invites |
 | `pnpm typecheck` | All packages, scripts and Functions |
 | `pnpm demo-agent smoke` | MCP smoke test with the official MCP client SDK (`ENGRAM_URL`, `ENGRAM_KEY`) |
 
@@ -118,7 +128,8 @@ With no Appwrite variables, Engram runs on a local file-backed backend with a de
 - The contradiction checker is only as good as its model; it can miss or over-flag, which is why the review inbox exists. Without a model key a rule-based classifier runs.
 - Checkpoints rebuild the Merkle tree from entry 0; fine at demo scale, an incremental frontier is next.
 - Truncation is detectable only up to the latest signed checkpoint.
-- The demo history was seeded with past timestamps through an admin path; the seed says so.
+- The demo history was seeded with past timestamps through an admin path; the seed says so. Seeding runs in short resumable slices, so a sandbox fills in over a few requests.
+- VectorsDB transactions did not work on this project during the hackathon; conditional writes keep every derived update safe, but a multi-document change is applied one document at a time (each one idempotent and re-applied by the next writer if an instance dies).
 - Only a TypeScript SDK today. Next: Python SDK, per-agent Ed25519 signatures on every write, signed audit exports ("what did the agent know at T"), a witness network co-signing checkpoints, self-hosting on Appwrite.
 
 ## Licence
