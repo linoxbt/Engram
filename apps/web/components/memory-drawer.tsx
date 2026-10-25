@@ -36,10 +36,7 @@ export function MemoryDrawer({ spaceKey, id, onClose, onNavigate }: { spaceKey: 
         {d && <Pill tone={d.conflict && d.status === "active" ? "conflict" : d.status}>{d.conflict && d.status === "active" ? "conflict" : d.status}</Pill>}
       </div>
     }>
-      <div className="px-4 pt-2">
-        <Tabs<Tab> value={tab} onChange={setTab} tabs={[{ id: "memory", label: "Memory" }, { id: "provenance", label: "Provenance" }, { id: "relations", label: "Relations" }, { id: "proof", label: "Proof" }, { id: "timeline", label: "Timeline" }]} />
-      </div>
-      <div className="p-4">
+      <Tabs<Tab> value={tab} onChange={setTab} className="mx-4 mt-2" panelClassName="p-4" tabs={[{ id: "memory", label: "Memory" }, { id: "provenance", label: "Provenance" }, { id: "relations", label: "Relations" }, { id: "proof", label: "Proof" }, { id: "timeline", label: "Timeline" }]}>
         {q.isLoading && <div className="space-y-2"><Skeleton className="h-6 w-3/4" /><Skeleton className="h-4 w-1/2" /><Skeleton className="h-24" /></div>}
         <ErrorNote error={q.error} />
         {d && tab === "memory" && <MemoryTab d={d} spaceKey={spaceKey} onNavigate={onNavigate} />}
@@ -47,7 +44,7 @@ export function MemoryDrawer({ spaceKey, id, onClose, onNavigate }: { spaceKey: 
         {d && tab === "relations" && <RelationsTab d={d} onNavigate={onNavigate} />}
         {d && tab === "proof" && <ProofTab d={d} spaceKey={spaceKey} />}
         {d && tab === "timeline" && <TimelineTab d={d} spaceKey={spaceKey} onNavigate={onNavigate} />}
-      </div>
+      </Tabs>
     </Drawer>
   );
 }

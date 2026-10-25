@@ -1,6 +1,6 @@
 "use client";
 import clsx from "clsx";
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ButtonHTMLAttributes, type RefObject, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type RefObject, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
 import { IconCopy, IconCross, IconTick } from "./icons";
 import { shortHash } from "@/lib/format";
@@ -129,16 +129,38 @@ export function Hash({ value, full = false, className }: { value: string | null 
   );
 }
 
-export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: T; label: string }[]; value: T; onChange: (t: T) => void }) {
+/** WAI-ARIA tabs with automatic activation. Pass the active panel as children to get the tabpanel wiring. */
+export function Tabs<T extends string>({ tabs, value, onChange, children, className, panelClassName }: { tabs: { id: T; label: string }[]; value: T; onChange: (t: T) => void; children?: ReactNode; className?: string; panelClassName?: string }) {
+  const base = useId();
+  const refs = useRef(new Map<T, HTMLButtonElement>());
+  const tabId = (id: T) => `${base}-tab-${id}`;
+  const panelId = `${base}-panel`;
+  const hasPanel = children !== undefined;
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const i = tabs.findIndex((t) => t.id === value);
+    const n = tabs.length;
+    const next = e.key === "ArrowRight" ? (i + 1) % n : e.key === "ArrowLeft" ? (i - 1 + n) % n : e.key === "Home" ? 0 : e.key === "End" ? n - 1 : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    onChange(tabs[next].id);
+    refs.current.get(tabs[next].id)?.focus();
+  };
   return (
-    <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-line">
-      {tabs.map((t) => (
-        <button key={t.id} role="tab" aria-selected={value === t.id} onClick={() => onChange(t.id)}
-          className={clsx("-mb-px shrink-0 border-b-2 px-3 py-2 text-xs uppercase tracking-wider", value === t.id ? "border-accent text-accent" : "border-transparent text-muted hover:text-text")}>
-          {t.label}
-        </button>
-      ))}
-    </div>
+    <>
+      <div role="tablist" aria-orientation="horizontal" onKeyDown={onKeyDown} className={clsx("flex gap-1 overflow-x-auto border-b border-line", className)}>
+        {tabs.map((t) => {
+          const on = value === t.id;
+          return (
+            <button key={t.id} ref={(el) => { if (el) refs.current.set(t.id, el); else refs.current.delete(t.id); }}
+              type="button" role="tab" id={tabId(t.id)} aria-selected={on} aria-controls={on && hasPanel ? panelId : undefined} tabIndex={on ? 0 : -1} onClick={() => onChange(t.id)}
+              className={clsx("-mb-px shrink-0 border-b-2 px-3 py-2 text-xs uppercase tracking-wider", on ? "border-accent text-accent" : "border-transparent text-muted hover:text-text")}>
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+      {hasPanel && <div role="tabpanel" id={panelId} aria-labelledby={tabId(value)} tabIndex={0} className={clsx("focus-visible:outline-offset-4", panelClassName)}>{children}</div>}
+    </>
   );
 }
 
@@ -146,7 +168,7 @@ type Layer = { close: () => void; el: () => HTMLElement | null; trap: boolean };
 const layers: Layer[] = [];
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 const FIELD = 'input:not([disabled]):not([type=hidden]),textarea:not([disabled]),select:not([disabled])';
-const focusables = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.getClientRects().length > 0);
+const focusables = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.tabIndex >= 0 && el.getClientRects().length > 0);
 
 function onLayerKey(e: KeyboardEvent) {
   const top = layers[layers.length - 1];
