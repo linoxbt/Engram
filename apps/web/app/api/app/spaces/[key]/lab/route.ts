@@ -1,10 +1,9 @@
 import { z } from "zod";
 import { ATTACKS } from "@engram/core";
 import { attack, resetSandbox, sealSandbox, requireSandbox } from "@engram/server";
-import { readJson, spaceRoute } from "@/lib/server/api";
+import { readJson, requireOwner, spaceRoute } from "@/lib/server/api";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
 
 const Body = z.object({
   action: z.enum(["attack", "reset", "seal"]),
@@ -15,7 +14,8 @@ const Body = z.object({
 export const GET = spaceRoute(async (ctx) => { requireSandbox(ctx); return { attacks: ATTACKS }; });
 export const POST = spaceRoute(async (ctx, access, req) => {
   const body = Body.parse(await readJson(req));
-  if (body.action === "reset") return resetSandbox(ctx, `user:${access.user.id}`, 6_000);
+  // The same rule as continuing the story (/seed): a reset someone else cannot finish would leave it half-seeded.
+  if (body.action === "reset") { requireOwner(access); return resetSandbox(ctx, `user:${access.user.id}`, 6_000); }
   if (body.action === "seal") return sealSandbox(ctx);
   return attack(ctx, body.attack as Parameters<typeof attack>[1], body.params);
 });

@@ -3,7 +3,6 @@ import { route } from "@/lib/server/api";
 import { requireCron } from "@/lib/server/cron";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
 
 /** Fallback scheduler for deployments without the Appwrite checkpoint Function. */
 export const GET = route(async (req) => {

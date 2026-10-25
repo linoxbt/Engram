@@ -27,7 +27,9 @@ describe("space invites", () => {
     const eve = await b.auth.signUp("eve@example.com", "password123", "Eve");
     await expect(acceptInvite(b, bound.token, eve)).rejects.toThrow(/for dee@example.com/);
     const dee = await b.auth.signUp("dee@example.com", "password123", "Dee");
-    await acceptInvite(b, bound.token, dee);
+    // The address must be verified: anyone can sign up with someone else's email.
+    await expect(acceptInvite(b, bound.token, { ...dee, emailVerified: false })).rejects.toThrow(/Verify that address/);
+    await acceptInvite(b, bound.token, { ...dee, emailVerified: true });
 
     const open = await createInvite(b, space.key, { email: null, createdBy: user.id });
     await revokeInvite(b, space.key, open.invite.id);

@@ -1,6 +1,6 @@
 /** Agent registry: the vector is the agent's description, so agents can be found by capability. */
 import { agentId, count8, iso, keyHash, sha256Hex, timingSafeEqualHex } from "@engram/core";
-import type { Backend, VDoc } from "./backend/types";
+import type { Backend, Filter, VDoc } from "./backend/types";
 import { ALL_SCOPES, backgroundDefer, type Ctx, type Scope, type SpaceInfo } from "./context";
 import { getConfig } from "./config";
 import { embedAgentDescription } from "./embed";
@@ -61,8 +61,21 @@ export async function createAgent(b: Backend, space: SpaceInfo, input: CreateAge
   return { agent: toPublicAgent(doc), key };
 }
 
+const AGENT_PAGE = 100;
+/** Every agent document matching `filters`, read in pages of 100 in `$id` order. */
+async function queryAllAgents(b: Backend, filters: Filter[]): Promise<AgentDoc[]> {
+  const out: AgentDoc[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await b.vectors.query<AgentMeta>("agents", { filters, order: { field: "$id", dir: "asc" }, limit: AGENT_PAGE, cursorAfter: cursor, withVectors: false });
+    out.push(...page);
+    if (page.length < AGENT_PAGE) return out;
+    cursor = page[page.length - 1].$id;
+  }
+}
+
 export async function listAgents(b: Backend, space: string): Promise<PublicAgent[]> {
-  const docs = await b.vectors.query<AgentMeta>("agents", { filters: [{ op: "eq", path: "metadata.space", values: [space] }], limit: 200, withVectors: false });
+  const docs = await queryAllAgents(b, [{ op: "eq", path: "metadata.space", values: [space] }]);
   return docs.map(toPublicAgent).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
 }
 
@@ -90,6 +103,20 @@ export async function revokeAgent(b: Backend, space: string, id: string) {
   if (!d || d.metadata.space !== space) throw new EngramError("not_found", "Agent not found.");
   await updateAgent(b, id, (m) => (m.status === "revoked" ? null : { ...m, status: "revoked" }), 10);
   authCache.clear();
+}
+
+/**
+ * Offboarding: revoke every active key a person created, in one space or (spaceKey null) in every space. A key
+ * must not outlive its creator's access. Returns the number of keys revoked.
+ */
+export async function revokeAgentsCreatedBy(b: Backend, spaceKey: string | null, userId: string): Promise<number> {
+  const createdBy = userId.startsWith("user:") ? userId : `user:${userId}`;
+  const filters: Filter[] = [{ op: "eq", path: "metadata.createdBy", values: [createdBy] }];
+  if (spaceKey) filters.push({ op: "eq", path: "metadata.space", values: [spaceKey] });
+  const docs = (await queryAllAgents(b, filters)).filter((d) => d.metadata.status === "active");
+  for (const d of docs) await updateAgent(b, d.$id, (m) => (m.status === "revoked" ? null : { ...m, status: "revoked" }), 10);
+  authCache.clear();
+  return docs.length;
 }
 
 export async function findAgentsByCapability(b: Backend, space: string, query: string, k = 3) {

@@ -9,9 +9,16 @@ export interface IntegrityStatus {
   critical: number;
   checkedAt: string;
   firstFinding: string | null;
+  /** When the owner was last alerted about a problem, and what that alert was for (so it is sent once). */
+  alertedAt?: string | null;
+  alertedFor?: string | null;
 }
 
-/** Space settings, stored as Appwrite team preferences (settings have no meaning to embed). */
+/**
+ * Space settings, stored as Appwrite team preferences (settings have no meaning to embed), except the
+ * server-owned `integrity`, `seeding` and `invites`, which live in the state store (state.ts). `getSpace`
+ * merges both and `updateSettings` routes each field to where it lives.
+ */
 export interface SpaceSettings {
   spaceKey: string;
   name: string;

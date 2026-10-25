@@ -5,10 +5,13 @@ import { MINUTE, rateLimit } from "@/lib/server/rate-limit";
 
 export const runtime = "nodejs";
 export const GET = spaceRoute(async (ctx, access) => {
-  const { people: _p, ...settings } = ctx.space.settings;
+  // Pending invites (with their token hashes) are the owner's business only.
+  const { people: _p, invites, ...rest } = ctx.space.settings;
+  const settings = access.owner ? { ...rest, invites } : rest;
   const cfg = getConfig();
+  const role: "owner" | "member" | "viewer" = access.owner ? "owner" : access.roles.includes("viewer") ? "viewer" : "member";
   return {
-    key: ctx.space.key, settings, role: access.owner ? "owner" : "member",
+    key: ctx.space.key, settings, role, allowedModels: cfg.allowedModels,
     user: { id: access.user.id, name: access.user.name, email: access.user.email },
     publicKey: cfg.checkpoint.publicKey, keyId: cfg.checkpoint.keyId,
     signing: { inline: !!cfg.checkpoint.privateKey, function: !!cfg.appwrite.checkpointFunctionId },
