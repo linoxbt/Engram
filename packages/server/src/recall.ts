@@ -8,6 +8,7 @@ import { loadChain, patchDerived, type MemDoc } from "./chain";
 import type { Ctx } from "./context";
 import { embedQuery } from "./embed";
 import { RecallInput } from "./schemas";
+import { integrityOf, verifyHistoryAt } from "./verify";
 import type { CheckpointPointer, IntegrityStatus } from "./settings";
 
 export interface RecallMemory {
@@ -88,11 +89,15 @@ export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {
 
   let candidates = [...byId.values()];
   let replayed: number | undefined;
+  let verified: { integrity: IntegrityStatus; checkpoint: CheckpointPointer | null } | null = null;
   if (asOf) {
     if (input.verify) {
+      // Replay only what verifies: hashes, links and the covering signed checkpoint, or refuse (409).
       const chain = await loadChain(b, space.key);
-      replayed = chain.length;
-      const valid = validSetAt(chain.map((e) => ({ id: e.$id, h: e.metadata.h })), asOf);
+      const { prefix, report, checkpoint } = await verifyHistoryAt(b, space, chain, asOf);
+      replayed = prefix;
+      verified = { integrity: integrityOf(report), checkpoint };
+      const valid = validSetAt(chain.slice(0, prefix).map((e) => ({ id: e.$id, h: e.metadata.h })), asOf);
       candidates = candidates.filter((d) => valid.has(d.$id));
     } else {
       candidates = candidates.filter((d) => validAt(d.metadata, asOf));
@@ -177,8 +182,10 @@ export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {
     mode: asOf ? (input.verify ? "as-of-verified" : "as-of") : "now",
     memories,
     conflicts: memories.filter((m) => m.conflict && m.status === "active").length,
-    checkpoint: cp,
-    integrity: space.settings.integrity,
+    // Verified as-of answers name the checkpoint that covers the replayed history (null while it is newer than every
+    // checkpoint) and the verdict of the verification just run.
+    checkpoint: verified ? verified.checkpoint : cp,
+    integrity: verified ? verified.integrity : space.settings.integrity,
     replayed,
     tookMs: Date.now() - t0,
   };
