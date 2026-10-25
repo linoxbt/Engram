@@ -149,8 +149,8 @@ function Timeline({ start, end, pos, onChange, ticks }: { start: number; end: nu
     const stepH = e.shiftKey ? 24 : 1;
     if (e.key === "ArrowLeft") { e.preventDefault(); onChange(Math.max(start, pos - stepH * 3_600_000)); }
     if (e.key === "ArrowRight") { e.preventDefault(); onChange(Math.min(end, pos + stepH * 3_600_000)); }
-    if (e.key === "Home") onChange(start);
-    if (e.key === "End") onChange(end);
+    if (e.key === "Home") { e.preventDefault(); onChange(start); }
+    if (e.key === "End") { e.preventDefault(); onChange(end); }
   };
   return (
     <div ref={ref} className="relative h-20 cursor-pointer select-none touch-none" onPointerDown={(e) => { drag.current = true; (e.target as HTMLElement).setPointerCapture?.(e.pointerId); fromEvent(e); }}
@@ -163,9 +163,9 @@ function Timeline({ start, end, pos, onChange, ticks }: { start: number; end: nu
       })}
       <div className="absolute inset-y-0 left-0 bg-gold/5" style={{ width: `${frac(pos) * 100}%` }} />
       <div role="slider" tabIndex={0} aria-label="As of" aria-valuemin={start} aria-valuemax={end} aria-valuenow={Math.round(pos)} aria-valuetext={when(new Date(pos).toISOString())} onKeyDown={onKey}
-        className="absolute top-2 -ml-[9px] flex flex-col items-center" style={{ left: `${frac(pos) * 100}%` }}>
-        <span className="flex size-[18px] items-center justify-center rounded-full border-2 border-gold bg-bg text-gold shadow"><IconClock size={10} /></span>
-        <span className="h-12 w-px bg-gold" />
+        className="group absolute top-2 -ml-[9px] flex flex-col items-center focus-visible:outline-none" style={{ left: `${frac(pos) * 100}%` }}>
+        <span className="flex size-[18px] items-center justify-center rounded-full border-2 border-gold bg-bg text-gold shadow transition-transform group-focus-visible:scale-125 group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2"><IconClock size={10} /></span>
+        <span className="h-12 w-px bg-gold group-focus-visible:w-0.5 group-focus-visible:bg-accent" />
       </div>
       <div className="absolute bottom-0 left-0 text-2xs text-muted">{when(new Date(start).toISOString())}</div>
       <div className="absolute bottom-0 right-0 text-2xs text-muted">now</div>
