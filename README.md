@@ -100,7 +100,13 @@ With no Appwrite variables, Engram runs on a local file-backed backend with a de
 
 **On Appwrite:** `pnpm setup:appwrite`, then `pnpm experiments` (writes `docs/verified.md`), `pnpm functions:deploy` (builds and deploys the Functions from `appwrite.json`, with the signing key as a Function secret), then `pnpm seed -- --owner you@example.com --public`. Deploy to Netlify (`netlify.toml` at the root builds `apps/web`) with the variables in `.env.example`; `pnpm functions:deploy` deploys the Appwrite Functions that sign checkpoints and run the sentinel.
 
-**Provisioning from the hosting build.** So the Appwrite key never leaves the host, the same steps can run inside the Netlify build: set `ENGRAM_PROVISION=<random id>` (and optionally `ENGRAM_PROVISION_STEPS=setup,experiments,functions,seed,diagnose`), deploy, and read the redacted report at `/_provision/<id>.json`. `ENGRAM_DEMO_RESET=<same id>` re-seeds the demo space once. Remove the variables afterwards; without them the step does nothing.
+**Provisioning from the hosting build.** So the Appwrite key never leaves the host, the same steps can run inside the Netlify build, in the **production context only** (deploy previews and branch deploys never run it; `scripts/provision.ts` checks `CONTEXT` too and logs why it skipped):
+
+1. Once, on your machine: `pnpm decrypt-report --keygen ~/.engram/report.key`. It writes the private key and prints `ENGRAM_REPORT_PUBKEY=...`.
+2. In Netlify (production scope): `ENGRAM_REPORT_PUBKEY=<printed value>`, `ENGRAM_PROVISION=<16–64 chars of a-z0-9>` and optionally `ENGRAM_PROVISION_STEPS`. Default steps: `diagnose,setup,experiments,functions,seed`. Optional: `appwrite-live` (adapter integration suite against a reserved test space), `quality` (classifier and recall fixtures), `events` (Realtime channel and Function event discovery); `all` runs every step. The run is capped at `ENGRAM_PROVISION_BUDGET_MIN` (default 22) minutes.
+3. Deploy, then `pnpm decrypt-report ~/.engram/report.key https://<site>/_provision/<id>.enc.json`. The report is redacted and encrypted to your key; without `ENGRAM_REPORT_PUBKEY` no report file is written and only a summary appears in the build log. Copy `verifiedMd` from the report into `docs/verified.md`.
+
+`ENGRAM_DEMO_RESET=<same id>` re-seeds the demo space once. Remove `ENGRAM_PROVISION` afterwards; without it the step does nothing.
 
 The labeler's event trigger in `appwrite.json` (`databases.engram.collections.concepts.documents.*.create`) names the database, so keep `APPWRITE_DB_ID=engram` (the default) or change that event path to match; otherwise the labeler never fires and a new concept keeps its rule-based label until the app relabels it at 3 members.
 
