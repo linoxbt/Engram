@@ -1,7 +1,7 @@
 /** Tamper Lab: deliberately corrupt a sandbox space with the server key and let the verifier catch it. */
 import { runAttack, ATTACKS, type AttackId, type AttackParams } from "@engram/core";
 import { loadChain } from "./chain";
-import { runCheckpoint } from "./checkpoints";
+import { requestCheckpoint, runCheckpoint, type CheckpointRun } from "./checkpoints";
 import type { Ctx } from "./context";
 import { EngramError } from "./errors";
 import { seedStory } from "./seed";
@@ -48,8 +48,14 @@ export async function resetSandbox(ctx: Ctx, createdBy: string, budgetMs?: numbe
   return { ...seeded, note: null };
 }
 
-export async function sealSandbox(ctx: Ctx) {
+/**
+ * Sign a checkpoint of the sandbox now. Inline when this process holds the key (local development); in production
+ * the key lives only in the checkpoint Function, so the request goes there, as for every other checkpoint.
+ */
+export async function sealSandbox(ctx: Ctx): Promise<CheckpointRun> {
   requireSandbox(ctx);
-  if (!ctx.cfg.checkpoint.privateKey) throw new EngramError("unavailable", "No checkpoint signing key in this process.");
-  return runCheckpoint(ctx.b, ctx.space, { privateKey: ctx.cfg.checkpoint.privateKey });
+  if (ctx.cfg.checkpoint.privateKey) return runCheckpoint(ctx.b, ctx.space, { privateKey: ctx.cfg.checkpoint.privateKey });
+  const run = await requestCheckpoint(ctx);
+  if (!run.created && run.reason?.startsWith("no signing key")) throw new EngramError("unavailable", "No checkpoint signing key in this process and no checkpoint Function configured.");
+  return run;
 }
