@@ -6,6 +6,7 @@ export * from "./settings";
 export * from "./spaces";
 export * from "./state";
 export * from "./params";
+export * from "./throttle";
 export * from "./schemas";
 export * from "./embed";
 export * from "./chain";

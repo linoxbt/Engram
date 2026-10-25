@@ -2,9 +2,10 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
 import {
   authAgent, forget, formatForget, formatRecall, formatRemember, formatTimeline, formatVerify, getBackend, recall, remember,
-  requireScope, resolveConflict, timeline, toErrorBody, verifyTool, ForgetInput, RecallInput, RememberInput, ResolveInput, TimelineInput,
+  requireScope, resolveConflict, timeline, toErrorBody, verifyThrottled, ForgetInput, RecallInput, RememberInput, ResolveInput, TimelineInput,
 } from "@engram/server";
 import { defer } from "@/lib/server/api";
+import { MINUTE, rateLimit } from "@/lib/server/rate-limit";
 import {
   FORGET_DESCRIPTION, RECALL_DESCRIPTION, REMEMBER_DESCRIPTION, RESOLVE_DESCRIPTION, TIMELINE_DESCRIPTION, VERIFY_DESCRIPTION,
 } from "@/lib/server/mcp-tools";
@@ -14,9 +15,12 @@ export const maxDuration = 60;
 
 type ToolCtx = { http?: { authInfo?: { token?: string } } };
 
+/** Every tool call counts against one per-agent budget (recall alone embeds and searches on each call). */
 async function ctxFrom(extra: unknown) {
   const token = (extra as ToolCtx)?.http?.authInfo?.token;
-  return authAgent(getBackend(), token, defer);
+  const ctx = await authAgent(getBackend(), token, defer);
+  rateLimit("mcp-agent", ctx.actor, 120, MINUTE, "Too many tool calls from this agent key.");
+  return ctx;
 }
 
 function fail(e: unknown) {
@@ -48,7 +52,7 @@ const handler = createMcpHandler(
       try {
         const ctx = await ctxFrom(extra);
         requireScope(ctx, "verify");
-        const r = await verifyTool(ctx, args);
+        const r = await verifyThrottled(ctx, args);
         return ok(formatVerify(r as Parameters<typeof formatVerify>[0]), r);
       } catch (e) { return fail(e); }
     });

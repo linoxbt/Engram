@@ -1,9 +1,11 @@
 import { getBackend, loadCheckpoints } from "@engram/server";
-import { route } from "@/lib/server/api";
+import { json, route } from "@/lib/server/api";
 import { publicSpace } from "@/lib/server/public";
+import { clientIp, MINUTE, rateLimit } from "@/lib/server/rate-limit";
 
 export const runtime = "nodejs";
-export const GET = route<{ key: string }>(async (_req, { key }) => {
+export const GET = route<{ key: string }>(async (req, { key }) => {
+  rateLimit("public-v1", clientIp(req), 120, MINUTE, "Too many requests.");
   await publicSpace(key);
-  return { checkpoints: await loadCheckpoints(getBackend(), key) };
+  return json({ checkpoints: await loadCheckpoints(getBackend(), key) }, { headers: { "Cache-Control": "public, max-age=0, s-maxage=60" } });
 });

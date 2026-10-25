@@ -129,6 +129,21 @@ export async function membership(b: Backend, key: string, userId: string) {
   return b.teams.membership(teamIdFor(key), userId);
 }
 
+/** Per-person caps: every space costs storage, embeddings and scheduled checkpoint and sentinel runs. */
+export const SPACE_QUOTA = { owned: 10, sandboxes: 3 } as const;
+
+export async function assertSpaceQuota(b: Backend, userId: string, sandbox: boolean) {
+  const owned = (await b.teams.listForUser(userId)).filter((t) => t.teamId.startsWith("sp_") && isOwnerRole(t.roles));
+  if (owned.length >= SPACE_QUOTA.owned) {
+    throw new EngramError("forbidden", `You can own at most ${SPACE_QUOTA.owned} spaces. Delete one you no longer need first.`);
+  }
+  if (!sandbox) return;
+  const spaces = await Promise.all(owned.map((t) => getSpace(b, t.teamId.slice(3))));
+  if (spaces.filter((s) => s?.settings.sandbox).length >= SPACE_QUOTA.sandboxes) {
+    throw new EngramError("forbidden", `You can have at most ${SPACE_QUOTA.sandboxes} sandboxes. Reset or delete one instead of creating another.`);
+  }
+}
+
 export async function listSpacesForUser(b: Backend, userId: string): Promise<SpaceInfo[]> {
   const teams = (await b.teams.listForUser(userId)).filter((t) => t.teamId.startsWith("sp_"));
   const spaces = await Promise.all(teams.map((t) => getSpace(b, t.teamId.slice(3))));

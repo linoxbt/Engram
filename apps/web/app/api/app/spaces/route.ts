@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createSpace, getBackend, getSpace, listSpacesForUser, personCtx, seedStory } from "@engram/server";
+import { assertSpaceQuota, createSpace, getBackend, getSpace, listSpacesForUser, personCtx, seedStory } from "@engram/server";
 import { defer, readJson, route } from "@/lib/server/api";
 import { requireUser } from "@/lib/server/session";
 
@@ -31,6 +31,7 @@ export const POST = route(async (req) => {
   const user = await requireUser();
   const body = Body.parse(await readJson(req));
   const b = getBackend();
+  await assertSpaceQuota(b, user.id, body.sandbox);
   const space = await createSpace(b, { name: body.name, description: body.description, ownerId: user.id, ownerName: user.name, publicVerify: body.publicVerify, sandbox: body.sandbox });
   let keys: Record<string, string> = {};
   let seeding: { done: boolean; progress: { done: number; total: number } } | null = null;
