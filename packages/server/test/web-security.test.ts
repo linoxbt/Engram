@@ -4,8 +4,8 @@ import { safeNextFor } from "../../../apps/web/lib/client/safe-next";
 import { errorLine, requestIdFor } from "../../../apps/web/lib/server/log";
 import { clientKey, WindowCounter } from "../../../apps/web/lib/server/limits";
 import { cleanDisplayName } from "../../../apps/web/lib/server/names";
-import { assertTermsAccepted } from "../../../apps/web/lib/server/access";
-import { EngramError, errorLogFields } from "../src/index";
+import { assertGuestAllowed, assertSpaceWriteAllowed, assertTermsAccepted, VIEWER_ROLE } from "../../../apps/web/lib/server/access";
+import { EngramError, errorLogFields, isOwnerRole } from "../src/index";
 
 const ORIGIN = "https://engram.example";
 
@@ -94,6 +94,35 @@ describe("terms gate", () => {
     expect(() => assertTermsAccepted(none, "POST", "/api/auth/terms")).not.toThrow();
     expect(() => assertTermsAccepted(none, "DELETE", "/api/auth/me")).not.toThrow();
     expect(() => assertTermsAccepted({ termsAcceptedAt: "2026-10-25T00:00:00.000Z" }, "POST", "/api/app/spaces")).not.toThrow();
+  });
+});
+
+describe("read-only viewers and guests", () => {
+  const sp = "/api/app/spaces/abcd1234";
+  it("viewers may read and run the read-only POSTs, nothing else", () => {
+    const viewer = [VIEWER_ROLE];
+    for (const [m, r] of [["GET", `${sp}/memories`], ["GET", sp], ["HEAD", `${sp}/chain`], ["POST", `${sp}/recall`], ["POST", `${sp}/verify`], ["GET", `${sp}/memories/m_abcd1234_000000000001/proof`], ["POST", `${sp}/memories/m_abcd1234_000000000001/proof`]] as const) {
+      expect(() => assertSpaceWriteAllowed(viewer, m, r), `${m} ${r}`).not.toThrow();
+    }
+    for (const [m, r] of [["POST", `${sp}/memories`], ["POST", `${sp}/agents`], ["PATCH", `${sp}/settings`], ["DELETE", sp], ["POST", `${sp}/conflicts`], ["POST", `${sp}/lab`], ["POST", `${sp}/seed`], ["POST", `${sp}/memories/m_x/forget`], ["POST", `${sp}/recall/extra`], ["POST", `${sp}/members`], ["PUT", `${sp}/recall`]] as const) {
+      expect(() => assertSpaceWriteAllowed(viewer, m, r), `${m} ${r}`).toThrow(expect.objectContaining({ code: "read_only", status: 403 }));
+    }
+  });
+
+  it("members and owners are unaffected, and a viewer is never an owner", () => {
+    expect(() => assertSpaceWriteAllowed(["member"], "POST", `${sp}/memories`)).not.toThrow();
+    expect(() => assertSpaceWriteAllowed(["admin"], "DELETE", sp)).not.toThrow();
+    expect(isOwnerRole([VIEWER_ROLE])).toBe(false);
+  });
+
+  it("guests cannot create spaces, accept invites or change the account", () => {
+    const guest = { guest: true };
+    for (const [m, r] of [["POST", "/api/app/spaces"], ["POST", "/api/invites"], ["PATCH", "/api/auth/me"], ["POST", "/api/auth/password"], ["POST", "/api/auth/passkeys"], ["POST", "/api/auth/verification"], ["POST", `${sp}/agents`]] as const) {
+      expect(() => assertGuestAllowed(guest, m, r), `${m} ${r}`).toThrow(expect.objectContaining({ code: "read_only" }));
+    }
+    expect(() => assertGuestAllowed(guest, "GET", "/api/app/spaces")).not.toThrow();
+    expect(() => assertGuestAllowed(guest, "POST", `${sp}/recall`)).not.toThrow();
+    expect(() => assertGuestAllowed({ guest: false }, "POST", "/api/app/spaces")).not.toThrow();
   });
 });
 

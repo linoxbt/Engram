@@ -2,7 +2,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { EngramError, getBackend, isEngramError, isOwnerRole, membership, requireSpace, type SpaceInfo, type User } from "@engram/server";
-import { assertTermsAccepted } from "./access";
+import { assertGuestAllowed, assertTermsAccepted, isViewerRole } from "./access";
 import { currentRequest } from "./request";
 
 const PROD = process.env.NODE_ENV === "production";
@@ -70,10 +70,13 @@ export async function requireUser(): Promise<User> {
   // Accounts made directly against Appwrite never saw the Terms: every call but accepting them (or deleting the
   // account) is refused until they do.
   assertTermsAccepted(u, r?.method ?? null, r?.route ?? null);
+  // Demo guests only read, wherever they are.
+  if (r) assertGuestAllowed(u, r.method, r.route);
   return u;
 }
 
-export interface SpaceAccess { user: User; space: SpaceInfo; roles: string[]; owner: boolean }
+/** `viewer`: a read-only member (the demo guest); every write is refused by the route wrapper. */
+export interface SpaceAccess { user: User; space: SpaceInfo; roles: string[]; owner: boolean; viewer: boolean }
 
 export async function requireSpaceAccess(key: string): Promise<SpaceAccess> {
   const user = await requireUser();
@@ -81,7 +84,7 @@ export async function requireSpaceAccess(key: string): Promise<SpaceAccess> {
   const m = await membership(b, key, user.id);
   if (!m) throw new EngramError("not_found", "Space not found.");
   const space = await requireSpace(b, key);
-  return { user, space, roles: m.roles, owner: isOwnerRole(m.roles) };
+  return { user, space, roles: m.roles, owner: isOwnerRole(m.roles), viewer: isViewerRole(m.roles) };
 }
 
 /** Switch the browser to a new session and end the one it replaces (a re-authentication would otherwise leave it open). */

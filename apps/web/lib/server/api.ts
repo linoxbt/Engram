@@ -1,6 +1,7 @@
 import "server-only";
 import { after, NextResponse, type NextRequest } from "next/server";
 import { authAgent, errorLogFields, getBackend, personCtx, requireScope, toErrorBody, EngramError, type Ctx, type Scope } from "@engram/server";
+import { assertSpaceWriteAllowed } from "./access";
 import { logError, requestIdFor } from "./log";
 import { currentRequest, requestStore, type RequestInfo } from "./request";
 import { requireSpaceAccess, type SpaceAccess } from "./session";
@@ -85,10 +86,12 @@ export function agentRoute<P = Record<string, string>>(scope: Scope | null, fn: 
 
 /** Session routes for the dashboard under /api/app/spaces/[key]. */
 export function spaceRoute<P extends { key: string } = { key: string }>(fn: (ctx: Ctx, access: SpaceAccess, req: NextRequest, params: P) => Promise<unknown>) {
-  return (req: NextRequest, { params }: Params<P>) => handle(req, async () => {
+  return (req: NextRequest, { params }: Params<P>) => handle(req, async (info) => {
     requireSameOrigin(req);
     const p = await params;
     const access = await requireSpaceAccess(p.key);
+    // Viewers (the demo guest) read only: GETs plus the POSTs that only read (recall, verify, proof).
+    assertSpaceWriteAllowed(access.roles, info.method, info.route);
     const ctx = personCtx(getBackend(), access.space, access.user, defer);
     const out = await fn(ctx, access, req, p);
     return out instanceof Response ? out : json(out);

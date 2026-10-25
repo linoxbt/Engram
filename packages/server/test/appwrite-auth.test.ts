@@ -92,6 +92,32 @@ describe("Appwrite terms", () => {
   });
 });
 
+describe("Appwrite guests", () => {
+  it("creates a terms-accepted guest with a marker, and the clean-up deletes only old guests", async () => {
+    const files = stubStorage();
+    const created = vi.spyOn(Users.prototype, "create").mockImplementation((async (p: { userId: string; email: string }) => ({ $id: p.userId, email: p.email })) as never);
+    vi.spyOn(Users.prototype, "updatePrefs").mockResolvedValue({} as never);
+    vi.spyOn(Users.prototype, "updateLabels").mockImplementation((async (p: { userId: string; labels: string[] }) => ({ $id: p.userId, $createdAt: new Date().toISOString(), email: `guest-${p.userId}@guest.engram.invalid`, name: "Guest", emailVerification: false, labels: p.labels, prefs: {} })) as never);
+    vi.spyOn(Account.prototype, "createEmailPasswordSession").mockResolvedValue({ secret: "sec", userId: "x", expire: new Date(Date.now() + 365 * 86_400_000).toISOString() } as never);
+    const b = backend();
+    const { user } = await b.auth.createGuest();
+    expect(user).toMatchObject({ guest: true, name: "Guest", termsAcceptedAt: expect.any(String) });
+    expect(created.mock.calls[0][0]).toMatchObject({ name: "Guest", email: expect.stringMatching(/@guest\.engram\.invalid$/) });
+    expect([...files.keys()]).toEqual([`gu_${user.id}`]);
+
+    // A marker that is old enough, one that is not, and one (planted) that names a real account.
+    const old = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    files.get(`gu_${user.id}`)!.$createdAt = old;
+    files.set("gu_realuser", { $id: "gu_realuser", name: "gu_realuser.json", $createdAt: old, sizeOriginal: 2 });
+    files.set("gu_newguest", { $id: "gu_newguest", name: "gu_newguest.json", $createdAt: new Date().toISOString(), sizeOriginal: 2 });
+    vi.spyOn(Users.prototype, "get").mockImplementation((async (p: { userId: string }) => ({ $id: p.userId, email: p.userId === "realuser" ? "ada@example.com" : `guest-${p.userId}@guest.engram.invalid` })) as never);
+    const del = vi.spyOn(Users.prototype, "delete").mockResolvedValue({} as never);
+    expect(await b.auth.deleteGuests(new Date(Date.now() - 86_400_000).toISOString(), 10)).toBe(2);
+    expect(del.mock.calls.map((c) => (c[0] as unknown as { userId: string }).userId)).toEqual([user.id]);
+    expect([...files.keys()]).toEqual(["gu_newguest"]);
+  });
+});
+
 describe("Appwrite sessions", () => {
   it("only a 401 means signed out; an outage is an error", async () => {
     const get = vi.spyOn(Account.prototype, "get");

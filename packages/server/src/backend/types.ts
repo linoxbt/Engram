@@ -138,6 +138,13 @@ export interface AuthStore {
    */
   acceptTerms(userId: string): Promise<void>;
   /**
+   * A read-only demo guest: random ID and password, an address under GUEST_EMAIL_DOMAIN, name "Guest", prefs
+   * `{ guest: true, termsAcceptedAt }`, signed in. The caller adds the team membership.
+   */
+  createGuest(): Promise<{ user: User; session: { secret: string; userId: string; expire: string } }>;
+  /** Delete up to `limit` guests created before `before` (ISO time), oldest first. Returns how many went. */
+  deleteGuests(before: string, limit: number): Promise<number>;
+  /**
    * Passkeys (WebAuthn). Adding or removing one needs a session that signed in within the last 10 minutes
    * (otherwise `reauth_required`). `origin` is the site the browser is on: Appwrite takes the relying party
    * from its platform settings, the local backend from here.

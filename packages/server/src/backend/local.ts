@@ -11,7 +11,7 @@ import { normalize } from "@engram/core";
 import { ConflictError, EngramError, REAUTH_WINDOW_MS, reauthRequired } from "../errors";
 import { evaluate } from "./query";
 import { clearAttempts, guardedSignIn, type AttemptStore } from "./login-guard";
-import { isGuestEmail, SIGNUP_CONFLICT } from "./types";
+import { GUEST_EMAIL_DOMAIN, GUEST_TTL_MS, isGuestEmail, SIGNUP_CONFLICT } from "./types";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamMember, TeamStore, TxOp,
   User, VDoc, VectorStore,
@@ -229,9 +229,9 @@ class LocalAuth implements AuthStore {
       return this.newSession(entry[0]);
     });
   }
-  private newSession(userId: string) {
+  private newSession(userId: string, ttlMs = 30 * 86_400_000) {
     const secret = randomBytes(32).toString("hex");
-    const expire = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    const expire = new Date(Date.now() + ttlMs).toISOString();
     this.s.db.sessions[secret] = { userId, expire, createdAt: now() };
     this.s.save();
     return { secret, userId, expire };
@@ -245,6 +245,23 @@ class LocalAuth implements AuthStore {
   private toUser(id: string): User {
     const u = this.s.db.users[id];
     return { id, email: u.email, name: u.name, emailVerified: !!u.verified, termsAcceptedAt: u.prefs?.termsAcceptedAt ?? null, guest: isGuestEmail(u.email) };
+  }
+  async createGuest() {
+    const id = "g" + randomBytes(9).toString("hex");
+    const salt = randomBytes(16).toString("hex");
+    const t = now();
+    // Nobody ever learns this password: the guest only ever holds the session created here.
+    this.s.db.users[id] = { email: `${id}@${GUEST_EMAIL_DOMAIN}`, name: "Guest", salt, hash: scryptSync(randomBytes(24).toString("base64url"), salt, 32).toString("hex"), createdAt: t, prefs: { guest: true, termsAcceptedAt: t } };
+    this.s.save();
+    return { user: this.toUser(id), session: this.newSession(id, GUEST_TTL_MS) };
+  }
+  async deleteGuests(before: string, limit: number) {
+    const doomed = Object.entries(this.s.db.users)
+      .filter(([, u]) => isGuestEmail(u.email) && (u.createdAt ?? "") < before)
+      .sort(([, a], [, b]) => ((a.createdAt ?? "") < (b.createdAt ?? "") ? -1 : 1))
+      .slice(0, limit);
+    for (const [id] of doomed) await this.deleteUser(id);
+    return doomed.length;
   }
   async acceptTerms(userId: string) {
     const u = this.s.db.users[userId];

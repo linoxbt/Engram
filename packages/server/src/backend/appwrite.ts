@@ -3,12 +3,13 @@ import {
   Account, AppwriteException, Client, Embeddings, EmbeddingModel, Functions, ID, Messaging, Query, Storage, Teams, Users, VectorsDB, type Models,
 } from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
+import { randomBytes } from "node:crypto";
 import { bool, type EngramConfig } from "../config";
 import { ConflictError, EngramError, isEngramError, REAUTH_WINDOW_MS, reauthRequired } from "../errors";
 import { evaluate } from "./query";
 import { clearAttempts, guardedSignIn, type AttemptStore } from "./login-guard";
 import { cosine } from "@engram/core";
-import { isGuestEmail, SIGNUP_CONFLICT } from "./types";
+import { GUEST_EMAIL_DOMAIN, isGuestEmail, SIGNUP_CONFLICT } from "./types";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Filter, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamMember, TeamStore, TxOp,
   User, VDoc, VectorStore,
@@ -458,6 +459,52 @@ class AppwriteAuth implements AuthStore {
   }
   async deleteUser(userId: string) {
     await call(() => new Users(this.admin).delete({ userId }));
+  }
+  /**
+   * Guests are registered as server-only marker files (`gu_<userId>`) in the checkpoints bucket, so the clean-up can
+   * find them with a prefix listing (proven) instead of a user query on email or labels.
+   */
+  async createGuest() {
+    const users = new Users(this.admin);
+    const userId = ID.unique();
+    const email = `guest-${userId}@${GUEST_EMAIL_DOMAIN}`;
+    // Nobody ever learns this password: it only lets the server open the guest's one session below.
+    const password = randomBytes(24).toString("base64url");
+    const marker = `gu_${userId}`;
+    await this.attempts.files.put(this.attempts.bucket, marker, `${marker}.json`, new TextEncoder().encode("{}"), []);
+    try {
+      const t = new Date().toISOString();
+      await call(() => users.create({ userId, email, password, name: "Guest" }));
+      await call(() => users.updatePrefs({ userId, prefs: { guest: true, termsAcceptedAt: t } }));
+      const u = await call(() => users.updateLabels({ userId, labels: [TERMS_LABEL, "guest"] }));
+      const s = await call(() => new Account(this.admin).createEmailPasswordSession({ email, password }));
+      return { user: toUser({ ...u, prefs: { guest: true, termsAcceptedAt: t } }), session: { secret: s.secret, userId: s.userId, expire: s.expire } };
+    } catch (e) {
+      await users.delete({ userId }).catch(() => undefined);
+      await this.attempts.files.delete(this.attempts.bucket, marker).catch(() => undefined);
+      throw e;
+    }
+  }
+  async deleteGuests(before: string, limit: number) {
+    const markers = (await this.attempts.files.list(this.attempts.bucket, "gu_"))
+      .filter((f) => f.createdAt < before)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
+      .slice(0, limit);
+    const users = new Users(this.admin);
+    let n = 0;
+    for (const f of markers) {
+      const userId = f.fileId.slice(3);
+      try {
+        const u = await users.get({ userId });
+        // Only ever a guest: the marker names the user, and the address must be under the reserved domain too.
+        if (isGuestEmail(u.email)) await users.delete({ userId });
+      } catch (e) {
+        if (!(e instanceof AppwriteException && e.code === 404)) { console.warn("[engram] guest clean-up failed", e instanceof Error ? e.message : e); continue; }
+      }
+      await this.attempts.files.delete(this.attempts.bucket, f.fileId);
+      n++;
+    }
+    return n;
   }
   async acceptTerms(userId: string) {
     const users = new Users(this.admin);
