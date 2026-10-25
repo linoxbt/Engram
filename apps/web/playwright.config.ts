@@ -1,12 +1,12 @@
 import { defineConfig, devices } from "@playwright/test";
-import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { e2eKeys } from "../../scripts/lib/e2e-keys";
 
-// Throwaway Ed25519 keys and data directory for this run.
-const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-const raw = (der: Buffer) => der.subarray(der.length - 32).toString("hex");
+// Throwaway Ed25519 keys (shared with the build through scripts/e2e-keys.ts, so a build made after that script pins
+// the same public key) and a fresh data directory for this run.
+const keys = e2eKeys();
 const PORT = 3100;
 const dir = mkdtempSync(join(tmpdir(), "engram-e2e-"));
 
@@ -16,7 +16,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   fullyParallel: false,
   workers: 1,
-  reporter: process.env.CI ? "github" : "list",
+  reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: "retain-on-failure",
@@ -34,9 +34,11 @@ export default defineConfig({
       ENGRAM_BACKEND: "local",
       ENGRAM_DEV_LINKS: "true",
       ENGRAM_LOCAL_DIR: dir,
-      CP_PRIVATE_KEY: raw(privateKey.export({ format: "der", type: "pkcs8" }) as Buffer),
-      NEXT_PUBLIC_CP_PUBLIC_KEY: raw(publicKey.export({ format: "der", type: "spki" }) as Buffer),
-      CP_KEY_ID: "e2e",
+      CP_PRIVATE_KEY: keys.privateKey,
+      CP_KEY_ID: keys.keyId,
+      CP_PUBLIC_KEYS: `${keys.keyId}:${keys.publicKey}`,
+      NEXT_PUBLIC_CP_PUBLIC_KEY: keys.publicKey,
+      NEXT_PUBLIC_CP_KEY_ID: keys.keyId,
       NEXT_PUBLIC_APP_URL: `http://localhost:${PORT}`,
       NEXT_TELEMETRY_DISABLED: "1",
     },
