@@ -73,7 +73,7 @@ export default function TimeMachinePage() {
     <div className="space-y-4">
       <PageHeader title="Time Machine">Ask what the agents knew at any moment. Recall runs as of the handle: only memories created by then and still valid then.</PageHeader>
       <form onSubmit={(e) => { e.preventDefault(); setSubmitted(query.trim()); }} className="flex gap-2">
-        <Input aria-label="Question" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="What plan is Ada on?" className="h-10" />
+        <Input aria-label="Question" required minLength={2} maxLength={500} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="What plan is Ada on?" className="h-10" />
         <Button type="submit" variant="primary" className="h-10">Ask</Button>
       </form>
 
