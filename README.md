@@ -118,9 +118,12 @@ The labeler's event trigger in `appwrite.json` (`databases.engram.collections.co
 
 | Command | What it does |
 |---------|--------------|
-| `pnpm test` | Core and engine tests: hashes, Merkle proofs (sizes 1–70), every Tamper Lab attack, 20 parallel writers, supersede/conflict/forget/as-of, the seeded demo story |
-| `pnpm e2e` | Playwright: cookie consent, sign up, sandbox, browser verification, recall, conflict resolution, Tamper Lab levels 1 and 4, public verifier, password reset, passkeys (virtual authenticator), invites |
-| `pnpm typecheck` | All packages, scripts and Functions |
+| `pnpm test` | Core and engine tests: hashes, Merkle proofs (sizes 1–70), every Tamper Lab attack, 20 parallel writers, supersede/conflict/forget/as-of, the seeded demo story; the Appwrite adapter against a mocked SDK; health, labeler, provisioning (redaction, report encryption), backup and quality harness tests. The live adapter suite runs only with `APPWRITE_TEST_ENDPOINT/PROJECT/KEY` |
+| `pnpm e2e` | Playwright: cookie consent, sign up, sandbox, browser verification, recall, conflict resolution, Tamper Lab levels 1 and 4, public verifier, password reset, passkeys (virtual authenticator), invites, every MCP tool over Streamable HTTP, Time Machine and Prove it, forget-then-verify, docs at phone width. For the pinned-key path build first with `eval "$(pnpm -s tsx scripts/e2e-keys.ts)"` |
+| `pnpm typecheck` | All packages and their tests, scripts, Functions and e2e specs |
+| `pnpm quality` | Relation accuracy (30 pairs, gate 22/30) and recall hit rate (15 queries, 40 memories) against the configured model and embeddings; `-- --offline` for rules and the hashing embedder |
+| `pnpm backup` | Export (or `-- --restore`) team settings and checkpoint files |
+| `pnpm decrypt-report` | `--keygen <file>` once, then decrypt a provisioning report |
 | `pnpm demo-agent smoke` | MCP smoke test with the official MCP client SDK (`ENGRAM_URL`, `ENGRAM_KEY`) |
 
 ## Tech stack and open-source libraries
