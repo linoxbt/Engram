@@ -10,15 +10,16 @@ const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
  * The hero: a living network of memory nodes rolling like a slow wave, seen in perspective. Near nodes
  * are large and dark, far ones fade into the page; the crest of the wave glows gold. A verification
  * pass sweeps across the mesh, and now and then one node flares red with its links before healing.
- * The surface lifts under the pointer. Pauses offscreen; holds still under reduced motion.
+ * The surface lifts under the pointer. Pauses offscreen and in hidden tabs; one still frame under reduced motion.
  */
 export function WaveMesh({ className = "" }: { className?: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const c = ref.current!;
     const ctx = c.getContext("2d")!;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let w = 0, h = 0, dpr = 1, raf = 0, visible = true;
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let reduce = motion.matches;
+    let w = 0, h = 0, dpr = 1, raf = 0, onScreen = true;
     let cols = 0, rows = 0, nodes: Node[] = [];
     const pointer = { x: -1e4, y: -1e4 };
     const start = performance.now();
@@ -135,24 +136,32 @@ export function WaveMesh({ className = "" }: { className?: string }) {
           ctx.beginPath(); ctx.arc(n.sx, n.sy, r, 0, Math.PI * 2); ctx.fill();
         }
       }
-      if (visible && !reduce) raf = requestAnimationFrame(frame);
+      if (onScreen && !document.hidden && !reduce) raf = requestAnimationFrame(frame);
     };
+    // Draws at least one frame (resizing clears the canvas); the loop then continues only while it should.
+    const wake = () => { cancelAnimationFrame(raf); if (onScreen && !document.hidden) raf = requestAnimationFrame(frame); };
+    const onResize = () => { resize(); wake(); };
+    const onVisibility = () => (document.hidden ? cancelAnimationFrame(raf) : wake());
+    const onMotion = () => { reduce = motion.matches; wake(); };
 
     const io = new IntersectionObserver(([e]) => {
-      visible = e.isIntersecting;
-      if (visible) { resize(); cancelAnimationFrame(raf); raf = requestAnimationFrame(frame); }
+      onScreen = e.isIntersecting;
+      if (onScreen) onResize(); else cancelAnimationFrame(raf);
     });
     const onMove = (e: PointerEvent) => { const b = c.getBoundingClientRect(); pointer.x = e.clientX - b.left; pointer.y = e.clientY - b.top; };
     const onLeave = () => { pointer.x = -1e4; pointer.y = -1e4; };
     resize();
     io.observe(c);
-    window.addEventListener("resize", resize);
+    window.addEventListener("resize", onResize);
     window.addEventListener("pointermove", onMove, { passive: true });
     window.addEventListener("pointerleave", onLeave);
-    raf = requestAnimationFrame(frame);
+    document.addEventListener("visibilitychange", onVisibility);
+    motion.addEventListener("change", onMotion);
+    wake();
     return () => {
       cancelAnimationFrame(raf); io.disconnect();
-      window.removeEventListener("resize", resize); window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerleave", onLeave);
+      window.removeEventListener("resize", onResize); window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerleave", onLeave);
+      document.removeEventListener("visibilitychange", onVisibility); motion.removeEventListener("change", onMotion);
     };
   }, []);
   return <canvas ref={ref} className={className} aria-hidden />;
