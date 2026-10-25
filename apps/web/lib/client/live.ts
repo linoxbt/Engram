@@ -43,7 +43,8 @@ export function useLive(spaceKey: string): LiveMode {
       }
     }
     void connect();
-    const refresh = setInterval(connect, 50 * 60_000);
+    // The JWT lives 15 minutes (it only opens the socket); reconnect with a fresh one before it lapses.
+    const refresh = setInterval(connect, 12 * 60_000);
     return () => { cancelled = true; unsub?.(); clearInterval(refresh); if (debounce) clearTimeout(debounce); };
   }, [spaceKey, qc]);
   return mode;

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
+import { Inter, Instrument_Serif, JetBrains_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import type { ReactNode } from "react";
-import { AppwritePing } from "@/components/appwrite-ping";
 import { CookieBanner } from "@/components/cookie-banner";
 import { ErrorReporter } from "@/components/error-reporter";
 import { Providers } from "@/components/providers";
@@ -17,19 +18,24 @@ export const metadata: Metadata = {
 // cannot hydrate <head> with those extra nodes, so they are removed before the app's scripts run.
 const STRIP_HOST_INJECTIONS = `(function(){var h=document.head;if(!h)return;for(var n=h.firstChild;n;){var x=n.nextSibling;if(n.nodeType===8||(n.nodeType===3&&!n.textContent.trim()))h.removeChild(n);n=x;}})();`;
 
+// Self-hosted at build time by next/font: no request to Google from the visitor's browser, before or after consent.
+// next/font keeps the real family names, so globals.css, canvas and SVG text that name them keep working.
+const sans = Inter({ subsets: ["latin"], weight: ["300", "400", "500", "600"], display: "swap", variable: "--font-inter" });
+const serif = Instrument_Serif({ subsets: ["latin"], weight: "400", style: ["normal", "italic"], display: "swap", variable: "--font-instrument-serif" });
+const mono = JetBrains_Mono({ subsets: ["latin"], weight: ["400", "500", "600"], display: "swap", variable: "--font-jetbrains-mono" });
+
 export const viewport: Viewport = { themeColor: "#ffffff", width: "device-width", initialScale: 1 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // The per-request CSP nonce from proxy.ts. Reading request headers also renders every page per request, which a
+  // nonce needs (cached HTML would carry a stale one).
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
-    <html lang="en">
+    <html lang="en" className={`${sans.variable} ${serif.variable} ${mono.variable}`}>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: STRIP_HOST_INJECTIONS }} />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap" />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: STRIP_HOST_INJECTIONS }} />
       </head>
       <body className="min-h-screen">
-        <AppwritePing />
         <Providers>
           {children}
           <CookieBanner />

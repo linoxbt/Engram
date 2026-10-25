@@ -44,8 +44,8 @@ export default function CookiesPage() {
 
       <h2>Third-party resources</h2>
       <p>
-        The site loads typefaces from Google Fonts. Google receives your IP address and browser details when fonts load but does not set
-        cookies through Engram. See the <Link href="/legal/privacy">Privacy Policy</Link> for every provider that processes data for us.
+        None. The typefaces are served from Engram itself, so your browser contacts no third party while you read the site. See the
+        <Link href="/legal/privacy">Privacy Policy</Link> for every provider that processes data for us.
       </p>
 
       <h2>Changes</h2>

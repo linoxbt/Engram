@@ -4,6 +4,7 @@ import { safeNextFor } from "../../../apps/web/lib/client/safe-next";
 import { errorLine, requestIdFor } from "../../../apps/web/lib/server/log";
 import { clientKey, WindowCounter } from "../../../apps/web/lib/server/limits";
 import { cleanDisplayName } from "../../../apps/web/lib/server/names";
+import { API_CSP, appwriteOrigins, newNonce, pageCsp } from "../../../apps/web/lib/csp";
 import { assertGuestAllowed, assertSpaceWriteAllowed, assertTermsAccepted, VIEWER_ROLE } from "../../../apps/web/lib/server/access";
 import { EngramError, errorLogFields, isOwnerRole } from "../src/index";
 
@@ -123,6 +124,27 @@ describe("read-only viewers and guests", () => {
     expect(() => assertGuestAllowed(guest, "GET", "/api/app/spaces")).not.toThrow();
     expect(() => assertGuestAllowed(guest, "POST", `${sp}/recall`)).not.toThrow();
     expect(() => assertGuestAllowed({ guest: false }, "POST", "/api/app/spaces")).not.toThrow();
+  });
+});
+
+describe("content security policy", () => {
+  it("pages run only nonce'd scripts and reach only the configured Appwrite host", () => {
+    const csp = pageCsp({ nonce: "abc123==", dev: false, appwriteEndpoint: "https://fra.cloud.appwrite.io/v1" });
+    const script = csp.split("; ").find((d) => d.startsWith("script-src"))!;
+    expect(script).toBe("script-src 'self' 'nonce-abc123==' 'strict-dynamic'");
+    expect(csp).not.toMatch(/\*\.appwrite\.io|fonts\.googleapis|fonts\.gstatic|unsafe-eval/);
+    expect(csp).toContain("connect-src 'self' https://fra.cloud.appwrite.io wss://fra.cloud.appwrite.io");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(pageCsp({ nonce: "n", dev: true })).toContain("'unsafe-eval'");
+    expect(pageCsp({ nonce: "n", dev: false, appwriteEndpoint: "not a url" })).toContain("connect-src 'self';");
+    expect(appwriteOrigins("http://localhost:8080/v1")).toEqual(["http://localhost:8080", "ws://localhost:8080"]);
+  });
+
+  it("nonces are fresh 128-bit values", () => {
+    const a = newNonce(), b = newNonce();
+    expect(a).not.toBe(b);
+    expect(atob(a)).toHaveLength(16);
+    expect(API_CSP).toMatch(/^default-src 'none'/);
   });
 });
 

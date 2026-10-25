@@ -50,7 +50,6 @@ export default function PrivacyPage() {
           <tr><td>Netlify</td><td>Hosting the website and API</td><td>Requests passing through, including IP address and technical data</td></tr>
           <tr><td>Anthropic (only when model classification is enabled)</td><td>Deciding whether a new memory duplicates, supersedes, contradicts or refines its neighbours</td><td>The text of the new memory and of its closest existing memories</td></tr>
           <tr><td>GitHub (only when public anchoring is enabled)</td><td>Publishing checkpoint roots to a public repository as an external timestamp</td><td>Space key, checkpoint size and Merkle root; never memory text</td></tr>
-          <tr><td>Google Fonts</td><td>Serving the typefaces the site uses</td><td>Your IP address and browser details when fonts load</td></tr>
         </tbody>
       </table>
       <p>Each provider acts under its own terms and data-processing commitments. Some are based outside your country, including in the United States; where that applies, transfers rely on safeguards such as the European Commission&rsquo;s Standard Contractual Clauses.</p>

@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Account, AppwriteException, Messaging, Storage, Users } from "node-appwrite";
 import { createAppwriteBackend, getConfig, SIGNUP_CONFLICT } from "../src/index";
+import { JWT_TTL_S } from "../src/backend/appwrite";
 import { LOGIN_LIMITS } from "../src/backend/login-guard";
 
 const backend = () => createAppwriteBackend({ ...getConfig(), appwrite: { ...getConfig().appwrite, endpoint: "https://appwrite.invalid/v1", projectId: "p", apiKey: "k" } });
@@ -115,6 +116,16 @@ describe("Appwrite guests", () => {
     expect(await b.auth.deleteGuests(new Date(Date.now() - 86_400_000).toISOString(), 10)).toBe(2);
     expect(del.mock.calls.map((c) => (c[0] as unknown as { userId: string }).userId)).toEqual([user.id]);
     expect([...files.keys()]).toEqual(["gu_newguest"]);
+  });
+});
+
+describe("Appwrite Realtime JWT", () => {
+  it("is short-lived and bound to the browser's own session", async () => {
+    vi.spyOn(Account.prototype, "getSession").mockResolvedValue({ $id: "s-browser", userId: "u1" } as never);
+    const jwt = vi.spyOn(Users.prototype, "createJWT").mockResolvedValue({ jwt: "j" } as never);
+    expect(await backend().auth.createJwt("secret")).toBe("j");
+    expect(jwt).toHaveBeenCalledWith({ userId: "u1", sessionId: "s-browser", duration: JWT_TTL_S });
+    expect(JWT_TTL_S).toBeLessThanOrEqual(900);
   });
 });
 

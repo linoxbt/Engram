@@ -345,6 +345,9 @@ const toPasskeyInfo = (p: { $id: string; $createdAt: string; name: string; acces
 const passkeyMessage = (e: AppwriteException) =>
   /expired/i.test(e.message) ? "The passkey request expired. Try again." : e.message || "The passkey could not be saved.";
 
+/** Lifetime of the Realtime JWT handed to the browser (Appwrite's default; the maximum is 3600). */
+export const JWT_TTL_S = 900;
+
 class AppwriteAuth implements AuthStore {
   constructor(private cfg: EngramConfig, private admin: Client) {
     this.attempts = { files: new AppwriteFiles(new Storage(admin)), bucket: cfg.appwrite.checkpointsBucket };
@@ -566,11 +569,18 @@ class AppwriteAuth implements AuthStore {
     const s = await call(() => new Account(this.admin).createSession({ userId: token.userId, secret: token.secret }));
     return { secret: s.secret, userId: s.userId, expire: s.expire };
   }
+  /**
+   * The browser only needs this to open its Realtime socket, so it is short-lived (JWT_TTL_S; the page fetches a
+   * new one before it expires) and bound to this browser's own session: signing out here voids it at once.
+   */
   async createJwt(secret: string) {
-    const u = await this.getUser(secret);
-    if (!u) return null;
+    let sessionId: string, userId: string;
     try {
-      const j = await new Users(this.admin).createJWT({ userId: u.id, duration: 3600 });
+      const s = await this.account(secret).getSession({ sessionId: "current" });
+      sessionId = s.$id; userId = s.userId;
+    } catch { return null; }
+    try {
+      const j = await new Users(this.admin).createJWT({ userId, sessionId, duration: JWT_TTL_S });
       return j.jwt;
     } catch { return null; }
   }
