@@ -5,9 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/client/api";
 import { useConsent } from "@/lib/client/consent";
 import { useHydrated } from "@/lib/client/hydrated";
+import { passkeysSupported, signInWithPasskey } from "@/lib/client/passkeys";
 import { safeNext } from "@/lib/client/safe-next";
 import { AuthCard } from "./auth-card";
 import { CookieNotice } from "./cookie-notice";
+import { IconKey } from "./icons";
 import { Button, ErrorNote, Field, Input } from "./ui";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
@@ -21,6 +23,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [agree, setAgree] = useState(false);
   useEffect(() => { if (terms.current?.checked) setAgree(true); }, []);
   const [loading, setLoading] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
   const hydrated = useHydrated();
   const needsCookies = consent === "declined" || (error instanceof ApiError && error.code === "cookies_required" && consent !== "accepted");
   // Values come from the form itself, not React state: anything typed before hydration finished still counts.
@@ -33,6 +36,14 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       router.push(safeNext(next));
       router.refresh();
     } catch (e) { setError(e); } finally { setLoading(false); }
+  };
+  const passkey = async () => {
+    setPasskeyLoading(true); setError(null);
+    try {
+      await signInWithPasskey();
+      router.push(safeNext(next));
+      router.refresh();
+    } catch (e) { setError(e); } finally { setPasskeyLoading(false); }
   };
   const keepNext = next ? `?next=${encodeURIComponent(next)}` : "";
   return (
@@ -64,6 +75,14 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           {mode === "login" ? "Sign in" : "Create account"}
         </Button>
       </form>
+      {mode === "login" && hydrated && passkeysSupported() && (
+        <div className="mt-4 space-y-3">
+          <div className="flex items-center gap-3 text-2xs text-muted"><span className="h-px flex-1 bg-line" />or<span className="h-px flex-1 bg-line" /></div>
+          <Button type="button" variant="outline" className="w-full" loading={passkeyLoading} disabled={consent === "declined" || loading} onClick={() => void passkey()}>
+            <IconKey size={13} /> Sign in with a passkey
+          </Button>
+        </div>
+      )}
     </AuthCard>
   );
 }

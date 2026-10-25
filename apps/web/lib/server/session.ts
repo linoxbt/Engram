@@ -44,6 +44,13 @@ export async function requireSpaceAccess(key: string): Promise<SpaceAccess> {
   return { user, space, roles: m.roles, owner: isOwnerRole(m.roles) };
 }
 
+/** Switch the browser to a new session and end the one it replaces (a re-authentication would otherwise leave it open). */
+export async function replaceSession(secret: string, expire: string) {
+  const old = await sessionSecret();
+  await setSession(secret, expire);
+  if (old && old !== secret) await getBackend().auth.signOut(old).catch(() => undefined);
+}
+
 export async function setSession(secret: string, expire: string) {
   (await cookies()).set(SESSION_COOKIE, secret, {
     httpOnly: true,

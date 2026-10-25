@@ -1,5 +1,5 @@
 /** Account recovery, verification and profile changes on the local backend. */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createLocalBackend } from "../src/index";
 
 const linkParams = (link: string) => { const u = new URL(link); return { userId: u.searchParams.get("userId")!, secret: u.searchParams.get("secret")! }; };
@@ -46,5 +46,23 @@ describe("local auth", () => {
     await b.auth.deleteUser(user.id);
     expect(await b.auth.getUser(s.secret)).toBeNull();
     expect(await b.auth.findUserByEmail("cy@example.com")).toBeNull();
+  });
+
+  it("passkey changes need a recent sign-in, and passkey options name this site", async () => {
+    const b = createLocalBackend();
+    await b.auth.signUp("dee@example.com", "password123", "Dee");
+    const s = await b.auth.signIn("dee@example.com", "password123");
+    const c = await b.auth.startPasskeyRegistration(s.secret, "Laptop", "https://engram.example");
+    expect(c.publicKey).toMatchObject({ rp: { id: "engram.example", name: "Engram" }, authenticatorSelection: { residentKey: "required", userVerification: "required" } });
+    const signIn = await b.auth.startPasskeySignIn("https://engram.example");
+    expect(signIn.publicKey).toMatchObject({ rpId: "engram.example", userVerification: "required" });
+    // A forged or replayed sign-in never yields a session, and each challenge works once.
+    await expect(b.auth.finishPasskeySignIn(signIn.id, { id: "nope", type: "public-key", response: {} }, "https://engram.example")).rejects.toThrow(/could not be verified/);
+    await expect(b.auth.finishPasskeySignIn(signIn.id, { id: "nope", type: "public-key", response: {} }, "https://engram.example")).rejects.toThrow(/expired/);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 11 * 60_000);
+    await expect(b.auth.startPasskeyRegistration(s.secret, "Phone", "https://engram.example")).rejects.toMatchObject({ code: "reauth_required" });
+    expect(await b.auth.listPasskeys(s.secret)).toEqual([]);
+    vi.useRealTimers();
   });
 });

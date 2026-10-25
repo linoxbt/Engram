@@ -1,10 +1,10 @@
 export type ErrorCode =
   | "bad_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "too_large"
-  | "rate_limited" | "chain_busy" | "embeddings_unavailable" | "not_sandbox" | "unavailable" | "cookies_required" | "internal";
+  | "rate_limited" | "chain_busy" | "embeddings_unavailable" | "not_sandbox" | "unavailable" | "cookies_required" | "reauth_required" | "internal";
 
 const STATUS: Record<ErrorCode, number> = {
   bad_request: 400, unauthorized: 401, forbidden: 403, not_found: 404, conflict: 409, too_large: 413,
-  rate_limited: 429, chain_busy: 503, embeddings_unavailable: 503, not_sandbox: 403, unavailable: 503, cookies_required: 403, internal: 500,
+  rate_limited: 429, chain_busy: 503, embeddings_unavailable: 503, not_sandbox: 403, unavailable: 503, cookies_required: 403, reauth_required: 403, internal: 500,
 };
 
 export class EngramError extends Error {
@@ -21,6 +21,10 @@ export class EngramError extends Error {
 }
 
 /** Thrown by stores on duplicate IDs and transaction conflicts: the chain's lock signal. */
+/** Sensitive account changes (passkeys) need a sign-in within this window. */
+export const REAUTH_WINDOW_MS = 10 * 60_000;
+export const reauthRequired = () => new EngramError("reauth_required", "For your security, confirm it's you before changing passkeys.");
+
 export class ConflictError extends Error {
   constructor(message = "conflict") { super(message); this.name = "ConflictError"; }
 }

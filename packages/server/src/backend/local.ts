@@ -8,11 +8,12 @@ import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { normalize } from "@engram/core";
-import { ConflictError, EngramError } from "../errors";
+import { ConflictError, EngramError, REAUTH_WINDOW_MS, reauthRequired } from "../errors";
 import { evaluate } from "./query";
 import { afterFailure, assertNotLocked, type LoginFails } from "./login-guard";
 import type {
-  AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Jobs, QuerySpec, TeamInfo, TeamStore, TxOp, User, VDoc, VectorStore,
+  AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamStore, TxOp,
+  User, VDoc, VectorStore,
 } from "./types";
 
 interface Db {
@@ -22,7 +23,10 @@ interface Db {
   users: Record<string, { email: string; name: string; hash: string; salt: string; verified?: boolean }>;
   /** One-time recovery and verification tokens, keyed by secret. */
   tokens?: Record<string, { userId: string; kind: "recovery" | "verify"; expire: string }>;
-  sessions: Record<string, { userId: string; expire: string }>;
+  sessions: Record<string, { userId: string; expire: string; createdAt?: string }>;
+  passkeys?: Record<string, { userId: string; name: string; credentialId: string; publicKey: string; counter: number; transports?: string[]; createdAt: string; accessedAt: string | null }>;
+  /** Pending WebAuthn ceremonies: single use, five minutes. */
+  passkeyChallenges?: Record<string, { kind: "register" | "signin"; challenge: string; expire: string; userId?: string; passkeyId?: string; name?: string }>;
 }
 
 const emptyDb = (): Db => ({ docs: { memories: {}, concepts: {}, agents: {}, recalls: {} }, teams: {}, files: {}, users: {}, sessions: {} });
@@ -214,11 +218,14 @@ class LocalAuth implements AuthStore {
       throw new EngramError("unauthorized", "Invalid email or password.");
     }
     this.loginFails.delete(email);
+    return this.newSession(entry[0]);
+  }
+  private newSession(userId: string) {
     const secret = randomBytes(32).toString("hex");
     const expire = new Date(Date.now() + 30 * 86_400_000).toISOString();
-    this.s.db.sessions[secret] = { userId: entry[0], expire };
+    this.s.db.sessions[secret] = { userId, expire, createdAt: now() };
     this.s.save();
-    return { secret, userId: entry[0], expire };
+    return { secret, userId, expire };
   }
   async getUser(secret: string): Promise<User | null> {
     const s = this.s.db.sessions[secret];
@@ -296,9 +303,105 @@ class LocalAuth implements AuthStore {
   }
   async deleteUser(userId: string) {
     delete this.s.db.users[userId];
+    for (const [k, p] of Object.entries(this.s.db.passkeys ?? {})) if (p.userId === userId) delete this.s.db.passkeys![k];
     for (const [k, v] of Object.entries(this.s.db.sessions)) if (v.userId === userId) delete this.s.db.sessions[k];
     for (const t of Object.values(this.s.db.teams)) delete t.members[userId];
     this.s.save();
+  }
+  // ---- passkeys: the same WebAuthn ceremonies Appwrite runs, verified with @simplewebauthn/server.
+  private async sessionUser(secret: string, recent = false) {
+    const sess = this.s.db.sessions[secret];
+    const user = await this.getUser(secret);
+    if (!sess || !user) throw new EngramError("unauthorized", "Sign in to continue.");
+    if (recent && (!sess.createdAt || Date.now() - Date.parse(sess.createdAt) > REAUTH_WINDOW_MS)) throw reauthRequired();
+    return user;
+  }
+  private challenge(id: string, kind: "register" | "signin") {
+    const c = this.s.db.passkeyChallenges?.[id];
+    if (c) delete this.s.db.passkeyChallenges![id];
+    if (!c || c.kind !== kind || c.expire < now()) throw new EngramError("bad_request", "The passkey request expired. Try again.");
+    return c;
+  }
+  private info(id: string): PasskeyInfo {
+    const p = this.s.db.passkeys![id];
+    return { id, name: p.name, createdAt: p.createdAt, lastUsedAt: p.accessedAt };
+  }
+  async listPasskeys(sessionSecret: string): Promise<PasskeyInfo[]> {
+    const user = await this.sessionUser(sessionSecret);
+    return Object.entries(this.s.db.passkeys ?? {}).filter(([, p]) => p.userId === user.id).map(([id]) => this.info(id));
+  }
+  async startPasskeyRegistration(sessionSecret: string, name: string, origin: string): Promise<PasskeyChallenge> {
+    const user = await this.sessionUser(sessionSecret, true);
+    const { generateRegistrationOptions } = await import("@simplewebauthn/server");
+    const mine = Object.values(this.s.db.passkeys ?? {}).filter((p) => p.userId === user.id);
+    const publicKey = await generateRegistrationOptions({
+      rpName: "Engram", rpID: new URL(origin).hostname, userName: user.email, userDisplayName: user.name, userID: new TextEncoder().encode(user.id),
+      attestationType: "none", excludeCredentials: mine.map((p) => ({ id: p.credentialId, transports: p.transports })),
+      authenticatorSelection: { residentKey: "required", userVerification: "required" },
+    });
+    const id = randomBytes(12).toString("hex"), passkeyId = randomBytes(12).toString("hex"), expire = new Date(Date.now() + 5 * 60_000).toISOString();
+    (this.s.db.passkeyChallenges ??= {})[id] = { kind: "register", challenge: publicKey.challenge, expire, userId: user.id, passkeyId, name };
+    this.s.save();
+    return { id, passkeyId, publicKey, expire };
+  }
+  async finishPasskeyRegistration(sessionSecret: string, passkeyId: string, credential: object, origin: string): Promise<PasskeyInfo> {
+    const user = await this.sessionUser(sessionSecret);
+    const id = Object.entries(this.s.db.passkeyChallenges ?? {}).find(([, c]) => c.kind === "register" && c.passkeyId === passkeyId && c.userId === user.id)?.[0];
+    if (!id) throw new EngramError("bad_request", "The passkey request expired. Try again.");
+    const c = this.challenge(id, "register");
+    const { verifyRegistrationResponse } = await import("@simplewebauthn/server");
+    const r = await verifyRegistrationResponse({
+      response: credential as never, expectedChallenge: c.challenge, expectedOrigin: origin, expectedRPID: new URL(origin).hostname, requireUserVerification: true,
+    }).catch((e: unknown) => { throw new EngramError("bad_request", `The passkey could not be verified: ${e instanceof Error ? e.message : e}`); });
+    if (!r.verified) throw new EngramError("bad_request", "The passkey could not be verified.");
+    const cred = r.registrationInfo.credential;
+    (this.s.db.passkeys ??= {})[passkeyId] = {
+      userId: user.id, name: c.name ?? "Passkey", credentialId: cred.id, publicKey: Buffer.from(cred.publicKey).toString("base64url"),
+      counter: cred.counter, transports: cred.transports, createdAt: now(), accessedAt: null,
+    };
+    this.s.save();
+    return this.info(passkeyId);
+  }
+  async renamePasskey(sessionSecret: string, passkeyId: string, name: string): Promise<PasskeyInfo> {
+    const user = await this.sessionUser(sessionSecret);
+    const p = this.s.db.passkeys?.[passkeyId];
+    if (!p || p.userId !== user.id) throw new EngramError("not_found", "Passkey not found.");
+    p.name = name;
+    this.s.save();
+    return this.info(passkeyId);
+  }
+  async deletePasskey(sessionSecret: string, passkeyId: string) {
+    const user = await this.sessionUser(sessionSecret, true);
+    const p = this.s.db.passkeys?.[passkeyId];
+    if (!p || p.userId !== user.id) throw new EngramError("not_found", "Passkey not found.");
+    delete this.s.db.passkeys![passkeyId];
+    this.s.save();
+  }
+  async startPasskeySignIn(origin: string): Promise<PasskeyChallenge> {
+    const { generateAuthenticationOptions } = await import("@simplewebauthn/server");
+    const publicKey = await generateAuthenticationOptions({ rpID: new URL(origin).hostname, userVerification: "required" });
+    const id = randomBytes(12).toString("hex"), expire = new Date(Date.now() + 5 * 60_000).toISOString();
+    (this.s.db.passkeyChallenges ??= {})[id] = { kind: "signin", challenge: publicKey.challenge, expire };
+    this.s.save();
+    return { id, passkeyId: null, publicKey, expire };
+  }
+  async finishPasskeySignIn(challengeId: string, credential: object, origin: string) {
+    const c = this.challenge(challengeId, "signin");
+    const credId = (credential as { id?: unknown }).id;
+    const entry = Object.entries(this.s.db.passkeys ?? {}).find(([, p]) => p.credentialId === credId);
+    const fail = () => new EngramError("unauthorized", "That passkey could not be verified. Try again, or sign in with your password.");
+    if (!entry || !this.s.db.users[entry[1].userId]) throw fail();
+    const [pid, p] = entry;
+    const { verifyAuthenticationResponse } = await import("@simplewebauthn/server");
+    const r = await verifyAuthenticationResponse({
+      response: credential as never, expectedChallenge: c.challenge, expectedOrigin: origin, expectedRPID: new URL(origin).hostname, requireUserVerification: true,
+      credential: { id: p.credentialId, publicKey: new Uint8Array(Buffer.from(p.publicKey, "base64url")), counter: p.counter, transports: p.transports as never },
+    }).catch(() => { throw fail(); });
+    if (!r.verified) throw fail();
+    p.counter = r.authenticationInfo.newCounter;
+    p.accessedAt = now();
+    this.s.db.passkeys![pid] = p;
+    return this.newSession(p.userId);
   }
   async findUserByEmail(email: string): Promise<User | null> {
     const e = Object.entries(this.s.db.users).find(([, u]) => u.email === email.toLowerCase());

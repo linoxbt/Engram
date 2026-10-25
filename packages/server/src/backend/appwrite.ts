@@ -4,12 +4,13 @@ import {
 } from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
 import type { EngramConfig } from "../config";
-import { ConflictError, EngramError, isEngramError } from "../errors";
+import { ConflictError, EngramError, isEngramError, REAUTH_WINDOW_MS, reauthRequired } from "../errors";
 import { evaluate } from "./query";
 import { afterFailure, assertNotLocked, type LoginFails } from "./login-guard";
 import { cosine } from "@engram/core";
 import type {
-  AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Filter, Jobs, QuerySpec, TeamInfo, TeamStore, TxOp, User, VDoc, VectorStore,
+  AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Filter, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamStore, TxOp,
+  User, VDoc, VectorStore,
 } from "./types";
 
 function mapError(e: unknown): unknown {
@@ -246,6 +247,11 @@ class AppwriteFiles implements FileStore {
   }
 }
 
+const toPasskeyInfo = (p: { $id: string; $createdAt: string; name: string; accessedAt: string }): PasskeyInfo =>
+  ({ id: p.$id, name: p.name, createdAt: p.$createdAt, lastUsedAt: p.accessedAt || null });
+const passkeyMessage = (e: AppwriteException) =>
+  /expired/i.test(e.message) ? "The passkey request expired. Try again." : e.message || "The passkey could not be saved.";
+
 class AppwriteAuth implements AuthStore {
   constructor(private cfg: EngramConfig, private admin: Client) {}
   private anon() { return new Client().setEndpoint(this.cfg.appwrite.endpoint).setProject(this.cfg.appwrite.projectId); }
@@ -345,6 +351,60 @@ class AppwriteAuth implements AuthStore {
   }
   async deleteUser(userId: string) {
     await call(() => new Users(this.admin).delete({ userId }));
+  }
+
+  // ---- passkeys
+  private account(sessionSecret: string) { return new Account(this.anon().setSession(sessionSecret)); }
+  /** Appwrite refuses passkey changes on sessions older than 10 minutes; check first for a clear message. */
+  private async assertRecent(sessionSecret: string) {
+    const s = await call(() => this.account(sessionSecret).getSession({ sessionId: "current" }));
+    if (Date.now() - Date.parse(s.$createdAt) > REAUTH_WINDOW_MS) throw reauthRequired();
+  }
+  /** `sensitive`: Appwrite's 401 there means the sign-in is too old, not that the session is gone. */
+  private passkeyCall<T>(fn: () => Promise<T>, sensitive = false): Promise<T> {
+    return fn().catch((e) => {
+      if (e instanceof AppwriteException) {
+        if (e.code === 401) throw sensitive ? reauthRequired() : new EngramError("unauthorized", "Sign in to continue.");
+        if (e.code === 400 || e.code === 404 || e.code === 409) throw new EngramError(e.code === 404 ? "not_found" : "bad_request", passkeyMessage(e));
+        if (e.code === 403 || e.code === 501) throw new EngramError("unavailable", "Passkeys are not enabled for this Appwrite project. Turn them on under Auth → Settings.");
+      }
+      throw mapError(e);
+    });
+  }
+  async listPasskeys(sessionSecret: string): Promise<PasskeyInfo[]> {
+    const res = await this.passkeyCall(() => this.account(sessionSecret).listPasskeys());
+    return res.passkeys.map(toPasskeyInfo);
+  }
+  async startPasskeyRegistration(sessionSecret: string, name: string): Promise<PasskeyChallenge> {
+    await this.assertRecent(sessionSecret);
+    const c = await this.passkeyCall(() => this.account(sessionSecret).createPasskey({ passkeyId: ID.unique(), name }), true);
+    return { id: c.$id, passkeyId: c.passkeyId || null, publicKey: c.publicKey, expire: c.expire };
+  }
+  async finishPasskeyRegistration(sessionSecret: string, passkeyId: string, credential: object): Promise<PasskeyInfo> {
+    return toPasskeyInfo(await this.passkeyCall(() => this.account(sessionSecret).updatePasskeyVerification({ passkeyId, credential })));
+  }
+  async renamePasskey(sessionSecret: string, passkeyId: string, name: string): Promise<PasskeyInfo> {
+    return toPasskeyInfo(await this.passkeyCall(() => this.account(sessionSecret).updatePasskey({ passkeyId, name })));
+  }
+  async deletePasskey(sessionSecret: string, passkeyId: string) {
+    await this.assertRecent(sessionSecret);
+    await this.passkeyCall(() => this.account(sessionSecret).deletePasskey({ passkeyId }), true);
+  }
+  async startPasskeySignIn(): Promise<PasskeyChallenge> {
+    const c = await this.passkeyCall(() => new Account(this.anon()).createPasskeyToken());
+    return { id: c.$id, passkeyId: null, publicKey: c.publicKey, expire: c.expire };
+  }
+  async finishPasskeySignIn(challengeId: string, credential: object) {
+    let token: { userId: string; secret: string };
+    try {
+      token = await new Account(this.anon()).updatePasskeyToken({ challengeId, credential });
+    } catch (e) {
+      if (e instanceof AppwriteException && e.code < 500) throw new EngramError("unauthorized", "That passkey could not be verified. Try again, or sign in with your password.");
+      throw mapError(e);
+    }
+    // The API key is what lets the server read the new session's secret and set it as our cookie.
+    const s = await call(() => new Account(this.admin).createSession({ userId: token.userId, secret: token.secret }));
+    return { secret: s.secret, userId: s.userId, expire: s.expire };
   }
   async createJwt(secret: string) {
     const u = await this.getUser(secret);

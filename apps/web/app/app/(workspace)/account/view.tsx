@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
 import { openCookieSettings } from "@/lib/client/consent";
+import { PasskeysCard } from "@/components/passkeys-card";
 import { Button, Card, CopyButton, ErrorNote, Field, Input, Modal, PageHeader, Pill, Skeleton, Stat, useToast } from "@/components/ui";
 import { useHealth, useSpaces } from "@/lib/client/workspace";
 
@@ -111,6 +112,8 @@ export function View() {
                 {pwError ? <div className="sm:col-span-3"><ErrorNote error={pwError} /></div> : null}
               </form>
             </Card>
+
+            <PasskeysCard user={u} />
 
             <Card title="Your spaces">
               <div className="grid grid-cols-3 gap-3 p-4">

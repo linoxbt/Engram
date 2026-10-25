@@ -7,7 +7,7 @@ async function signIn(page: Page) {
   await page.goto("/login");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill("password123");
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL("**/app");
 }
 
@@ -126,7 +126,39 @@ test.describe.serial("signature path", () => {
     await page.goto("/login");
     await page.getByLabel("Email").fill(email);
     await page.getByLabel("Password").fill("password456");
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await page.waitForURL("**/app");
+  });
+
+  test("a passkey can be added, used to sign in, and removed", async ({ page }) => {
+    // Chromium's virtual authenticator stands in for Touch ID or a security key.
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("WebAuthn.enable");
+    await cdp.send("WebAuthn.addVirtualAuthenticator", {
+      options: { protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
+    });
+    await page.goto("/login");
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password").fill("password456");
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.waitForURL("**/app");
+
+    await page.goto("/app/account");
+    await page.getByRole("button", { name: "Add a passkey" }).click();
+    await page.getByLabel("Name this passkey").fill("E2E authenticator");
+    await page.getByRole("button", { name: "Create passkey" }).click();
+    await expect(page.getByText("E2E authenticator")).toBeVisible();
+
+    await page.getByRole("button", { name: "Sign out" }).first().click();
+    await page.waitForURL((u) => !u.pathname.startsWith("/app"));
+    await page.goto("/login");
+    await page.getByRole("button", { name: "Sign in with a passkey" }).click();
+    await page.waitForURL("**/app");
+
+    await page.goto("/app/account");
+    await expect(page.getByText(/last used \w/)).not.toHaveText(/last used never/);
+    await page.getByRole("button", { name: "Remove", exact: true }).click();
+    await page.getByRole("dialog", { name: "Remove passkey" }).getByRole("button", { name: "Remove" }).click();
+    await expect(page.getByText("E2E authenticator")).toHaveCount(0);
   });
 });

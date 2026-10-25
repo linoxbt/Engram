@@ -13,6 +13,7 @@
     "@engram/core": "workspace:*",
     "@engram/server": "workspace:*",
     "@modelcontextprotocol/server": "^2.4.0",
+    "@simplewebauthn/browser": "14.0.0",
     "@tanstack/react-query": "^5.104.5",
     "appwrite": "^29.1.0",
     "clsx": "^2.1.1",

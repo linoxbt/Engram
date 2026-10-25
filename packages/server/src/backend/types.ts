@@ -99,7 +99,23 @@ export interface AuthStore {
   updatePassword(sessionSecret: string, oldPassword: string, password: string): Promise<void>;
   /** Permanently remove the account and every session it holds. */
   deleteUser(userId: string): Promise<void>;
+  /**
+   * Passkeys (WebAuthn). Adding or removing one needs a session that signed in within the last 10 minutes
+   * (otherwise `reauth_required`). `origin` is the site the browser is on: Appwrite takes the relying party
+   * from its platform settings, the local backend from here.
+   */
+  listPasskeys(sessionSecret: string): Promise<PasskeyInfo[]>;
+  startPasskeyRegistration(sessionSecret: string, name: string, origin: string): Promise<PasskeyChallenge>;
+  finishPasskeyRegistration(sessionSecret: string, passkeyId: string, credential: object, origin: string): Promise<PasskeyInfo>;
+  renamePasskey(sessionSecret: string, passkeyId: string, name: string): Promise<PasskeyInfo>;
+  deletePasskey(sessionSecret: string, passkeyId: string): Promise<void>;
+  startPasskeySignIn(origin: string): Promise<PasskeyChallenge>;
+  finishPasskeySignIn(challengeId: string, credential: object, origin: string): Promise<{ secret: string; userId: string; expire: string }>;
 }
+
+export interface PasskeyInfo { id: string; name: string; createdAt: string; lastUsedAt: string | null }
+/** WebAuthn options in JSON form, for `navigator.credentials.create()` (registration) or `.get()` (sign-in). */
+export interface PasskeyChallenge { id: string; passkeyId: string | null; publicKey: object; expire: string }
 
 export interface Jobs {
   /** Ask the checkpoint Function to run for a space. Returns false if no Function is configured. */
