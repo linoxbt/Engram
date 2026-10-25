@@ -86,3 +86,26 @@ describe("verifier", () => {
     expect(guess).not.toBe(forgotten.h.contentHash);
   });
 });
+
+describe("checkpoint keyring", () => {
+  it("verifies checkpoints signed before and after a key rotation, and rejects an unknown key", async () => {
+    const { buildCheckpoint, signCheckpoint, generateKeyPair, parseKeyring } = await import("../src/index");
+    const chain = new TestChain();
+    for (let i = 0; i < 6; i++) await chain.add({});
+    const oldKey = await generateKeyPair(), newKey = await generateKeyPair();
+    const hashes = chain.entries.map((e) => e.metadata.hash);
+    const c1 = await signCheckpoint(await buildCheckpoint({ space: SPACE, hashes: hashes.slice(0, 3), prev: null, keyId: "cp-old" }), oldKey.privateKey);
+    const c2 = await signCheckpoint(await buildCheckpoint({ space: SPACE, hashes, prev: c1, keyId: "cp-new" }), newKey.privateKey);
+    const publicKeys = parseKeyring(`cp-old:${oldKey.publicKey}, cp-new:${newKey.publicKey}`);
+    expect((await verifySpace({ space: SPACE, entries: chain.entries, checkpoints: [c1, c2], publicKeys })).status).toBe("valid");
+    const missing = await verifySpace({ space: SPACE, entries: chain.entries, checkpoints: [c1, c2], publicKeys: { "cp-new": newKey.publicKey } });
+    expect(missing.status).toBe("tampered");
+    expect(missing.findings[0].message).toMatch(/unknown key \(cp-old\)/);
+  });
+
+  it("parses a keyring and keeps a legacy key under its ID", async () => {
+    const { parseKeyring } = await import("../src/index");
+    const hex = "a".repeat(64);
+    expect(parseKeyring(`k1:${hex},bad,k2:xyz`, "b".repeat(64), "legacy")).toEqual({ k1: hex, legacy: "b".repeat(64) });
+  });
+});

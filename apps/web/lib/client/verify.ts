@@ -6,10 +6,25 @@
  */
 import { api } from "./api";
 import { readConsent } from "./consent";
-import { ChainVerifier, cpSize, type ChainEntry, type Checkpoint, type PublicEntry, type Report, type TrustedCheckpoint, type VerifyMode } from "@engram/core";
+import { ChainVerifier, cpSize, parseKeyring, type ChainEntry, type Checkpoint, type PublicEntry, type Report, type TrustedCheckpoint, type VerifyMode } from "@engram/core";
 
-// Fixed when the site was built, so a tampered database or API response cannot swap the key the browser trusts.
-const PINNED_KEY = process.env.NEXT_PUBLIC_CP_PUBLIC_KEY || null;
+// Fixed when the site was built, so a tampered database or API response cannot swap the keys the browser trusts.
+// NEXT_PUBLIC_CP_PUBLIC_KEYS ("keyId:hex,...") holds every signing key ever used; the single legacy key is kept under its ID.
+const PINNED_KEYS = parseKeyring(process.env.NEXT_PUBLIC_CP_PUBLIC_KEYS, process.env.NEXT_PUBLIC_CP_PUBLIC_KEY, process.env.NEXT_PUBLIC_CP_KEY_ID || "engram-cp-2026-10");
+const PINNED = Object.keys(PINNED_KEYS).length > 0;
+
+/**
+ * The key to check a checkpoint signature with. Built-in keys win; the server's key is used only when the site was
+ * built without any, and `pinned: false` tells the caller to show that as a warning, never as green.
+ */
+export function trustedKeyFor(keyId: string | null | undefined, serverKey?: string | null): { key: string | null; pinned: boolean; mismatch: boolean } {
+  if (PINNED) {
+    const key = (keyId && PINNED_KEYS[keyId]) || null;
+    return { key, pinned: true, mismatch: !!serverKey && !!key && serverKey !== key };
+  }
+  return { key: serverKey ?? null, pinned: false, mismatch: false };
+}
+export const hasPinnedKeys = PINNED;
 
 /**
  * The newest checkpoint this browser has seen valid for a space. A later visit must still find it covered, which
@@ -44,8 +59,12 @@ export async function runVerification(args: {
   trust?: boolean;
 }): Promise<Report> {
   const trust = args.trust !== false;
-  const key = PINNED_KEY ?? args.publicKey ?? undefined;
-  const v = new ChainVerifier({ space: args.space, mode: args.mode, publicKeyHex: key, trusted: trust ? readTrusted(args.space) : undefined });
+  // Without built-in keys the server's key is the only option, and the report must say signatures were not independently checked.
+  const v = new ChainVerifier({
+    space: args.space, mode: args.mode,
+    ...(PINNED ? { publicKeys: PINNED_KEYS } : {}),
+    trusted: trust ? readTrusted(args.space) : undefined,
+  });
   const results = new Map<number, boolean>();
   let failedAt: number | null = null;
   let cursor: string | null = null;
@@ -62,8 +81,8 @@ export async function runVerification(args: {
     cursor = page.next;
   }
   const report = await v.finish(args.checkpoints);
-  if (PINNED_KEY && args.publicKey && args.publicKey !== PINNED_KEY) {
-    report.findings.push({ seq: Math.max(0, report.entries - 1), rule: "signature", severity: "warning", message: "The server offered a different public key from the one this site was built with. Signatures were checked against the built-in key." });
+  if (PINNED && args.publicKey && !Object.values(PINNED_KEYS).includes(args.publicKey)) {
+    report.findings.push({ seq: Math.max(0, report.entries - 1), rule: "signature", severity: "warning", message: "The server offered a different public key from the ones this site was built with. Signatures were checked against the built-in keys." });
     if (report.status === "valid") report.status = "warning";
   }
   if (trust && args.checkpoints.every((cp) => Number.isFinite(cpSize(cp)))) writeTrusted(args.space, report);

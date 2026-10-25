@@ -59,6 +59,8 @@ export class ChainVerifier {
   readonly space: string;
   readonly mode: VerifyMode;
   private publicKeyHex?: string;
+  /** Keyring by checkpoint keyId, so a rotated signing key does not invalidate checkpoints signed before rotation. */
+  private publicKeys: Record<string, string>;
   private findings: Finding[] = [];
   private kept: Kept[] = [];
   private prevHash: string | null = null;
@@ -69,10 +71,11 @@ export class ChainVerifier {
   private erasing = new Set<string>();
   private trusted?: TrustedCheckpoint;
 
-  constructor(opts: { space: string; mode?: VerifyMode; publicKeyHex?: string; trusted?: TrustedCheckpoint }) {
+  constructor(opts: { space: string; mode?: VerifyMode; publicKeyHex?: string; publicKeys?: Record<string, string>; trusted?: TrustedCheckpoint }) {
     this.space = opts.space;
     this.mode = opts.mode ?? "standard";
     this.publicKeyHex = opts.publicKeyHex;
+    this.publicKeys = opts.publicKeys ?? {};
     this.trusted = opts.trusted;
   }
 
@@ -264,7 +267,8 @@ export class ChainVerifier {
       if (problem) this.add({ seq: Math.max(0, this.kept.length - 1), rule: "checkpoint", severity: "critical", message: `A checkpoint file is malformed (${problem}). It was altered outside Engram.` });
       return !problem;
     });
-    if (checkpoints.length && !this.publicKeyHex) {
+    const hasKeys = !!this.publicKeyHex || Object.keys(this.publicKeys).length > 0;
+    if (checkpoints.length && !hasKeys) {
       this.add({ seq: Math.max(0, this.kept.length - 1), rule: "signature", severity: "warning", message: "Checkpoint signatures were not checked: no public key was given to the verifier." });
     }
     const t = this.trusted;
@@ -293,8 +297,12 @@ export class ChainVerifier {
       const size = cpSize(cp);
       const at = size - 1;
       let ok = true;
-      if (this.publicKeyHex) {
-        if (!(await verifyCheckpointSig(cp, this.publicKeyHex))) {
+      if (hasKeys) {
+        const key = this.publicKeys[cp.keyId] ?? this.publicKeyHex;
+        if (!key) {
+          ok = false;
+          this.add({ seq: at, rule: "signature", severity: "critical", message: `Checkpoint ${checkpointFileId(cp)} is signed with an unknown key (${cp.keyId}).` });
+        } else if (!(await verifyCheckpointSig(cp, key))) {
           ok = false;
           this.add({ seq: at, rule: "signature", severity: "critical", message: `Checkpoint ${checkpointFileId(cp)} has an invalid signature.` });
         }
@@ -368,12 +376,28 @@ export async function verifySpace(args: {
   entries: (ChainEntry | PublicEntry)[];
   checkpoints?: Checkpoint[];
   publicKeyHex?: string;
+  publicKeys?: Record<string, string>;
   mode?: VerifyMode;
   trusted?: TrustedCheckpoint;
 }): Promise<Report> {
-  const v = new ChainVerifier({ space: args.space, mode: args.mode, publicKeyHex: args.publicKeyHex, trusted: args.trusted });
+  const v = new ChainVerifier({ space: args.space, mode: args.mode, publicKeyHex: args.publicKeyHex, publicKeys: args.publicKeys, trusted: args.trusted });
   await v.push(args.entries);
   return v.finish(args.checkpoints ?? []);
 }
 
 export { entryId };
+
+/**
+ * Parses a keyring: "keyId:hex,keyId:hex". Malformed items are dropped. A single legacy key without an ID is
+ * listed under `fallbackId` so checkpoints signed before keyrings existed still verify.
+ */
+export function parseKeyring(list: string | undefined | null, legacyKey?: string | null, fallbackId?: string | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const item of (list ?? "").split(",")) {
+    const m = /^\s*([A-Za-z0-9._-]{1,64})\s*:\s*([0-9a-f]{64})\s*$/.exec(item);
+    if (m) out[m[1]] = m[2];
+  }
+  if (legacyKey && /^[0-9a-f]{64}$/.test(legacyKey) && fallbackId && !out[fallbackId]) out[fallbackId] = legacyKey;
+  return out;
+}
+
