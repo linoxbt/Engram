@@ -135,7 +135,8 @@ export interface UnsignedCheckpoint {
 export interface Anchor {
   type: "github";
   repo: string;
-  commit: string;
+  /** Commit SHA of the anchor file; null when GitHub did not report one (older anchors may carry ""). */
+  commit: string | null;
   path: string;
   /** Seq of the checkpoint whose root the commit published, 12-digit padded. */
   anchoredSeq: string;
@@ -160,7 +161,8 @@ export type Rule =
   | "checkpoint"
   | "signature"
   | "truncation"
-  | "rollback";
+  | "rollback"
+  | "anchor";
 
 export interface Finding {
   seq: number;

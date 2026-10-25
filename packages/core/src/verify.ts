@@ -13,6 +13,12 @@
  *     allowed on forget/link entries and on forgotten memories.
  *  7. Every ref points to an earlier entry of the same space.
  *  8. createdAt never decreases (2 s tolerance for clock skew).
+ *
+ * Erasure in progress: between a forget entry and the erasure of its target's text, the text is legitimately still
+ * stored, and the forget entry carries `applied: "false"`. That flag is operational and not hashed, so anyone with
+ * database access can set it. It therefore only downgrades stored text to a warning for forget entries among the
+ * newest ERASURE_WINDOW entries of the chain (writers and the sentinel apply pending erasures long before a chain
+ * grows past that); an older "pending" forget with text present is a resurrection.
  */
 import { canonical } from "./canonical";
 import { verifyCheckpointSig, checkpointHash, checkpointFileId, cpSize } from "./checkpoint";
@@ -26,6 +32,8 @@ import { isTombstone } from "./tombstone";
 import type { ChainEntry, Checkpoint, Finding, Header, PublicEntry, Report, VerifyMode } from "./types";
 
 const SKEW_MS = 2000;
+/** Forget entries this close to the head may still be erasing their target (see the header comment). */
+export const ERASURE_WINDOW = 25;
 
 export interface EntryResult { seq: number; ok: boolean }
 
@@ -67,16 +75,33 @@ export class ChainVerifier {
   private prevSeq = -1;
   private prevCreated = "";
   private state: StateMap = new Map();
-  /** Targets of forget entries whose erasure has not landed yet (applied: "false"). */
-  private erasing = new Set<string>();
+  /** Targets of forget entries whose erasure has not landed yet (applied: "false"), with the forget entry's seq. */
+  private erasing = new Map<string, number>();
   private trusted?: TrustedCheckpoint;
+  /** Entries before this seq were vouched for elsewhere (a verified checkpoint); see `from`. */
+  private offset = 0;
 
-  constructor(opts: { space: string; mode?: VerifyMode; publicKeyHex?: string; publicKeys?: Record<string, string>; trusted?: TrustedCheckpoint }) {
+  /**
+   * `from` resumes verification after a prefix the caller has already established, e.g. the entries covered by a
+   * checkpoint whose signature it checked and whose head it matched against the stored entry. Only entries from
+   * `from.size` on are pushed, and the first must link to `from.head`. Rules that need the whole chain (derived
+   * replay, content erasure, checkpoints, rollback) are skipped in this mode.
+   */
+  constructor(opts: {
+    space: string; mode?: VerifyMode; publicKeyHex?: string; publicKeys?: Record<string, string>; trusted?: TrustedCheckpoint;
+    from?: { size: number; head: string; createdAt: string };
+  }) {
     this.space = opts.space;
     this.mode = opts.mode ?? "standard";
     this.publicKeyHex = opts.publicKeyHex;
     this.publicKeys = opts.publicKeys ?? {};
     this.trusted = opts.trusted;
+    if (opts.from && opts.from.size > 0) {
+      this.offset = opts.from.size;
+      this.prevSeq = opts.from.size - 1;
+      this.prevHash = opts.from.head;
+      this.prevCreated = opts.from.createdAt;
+    }
   }
 
   private add(f: Finding) { this.findings.push(f); }
@@ -149,7 +174,7 @@ export class ChainVerifier {
 
       if (!isPublic(raw)) {
         const m = raw.metadata;
-        if (h.op === "forget" && r.target && m.applied === "false") this.erasing.add(r.target);
+        if (h.op === "forget" && r.target && m.applied === "false") this.erasing.set(r.target, seq);
         // Rule 4: content.
         if (m.c?.text != null) {
           if (!m.c.salt || (await contentHash(m.c.salt, m.c.text)) !== h.contentHash) {
@@ -191,20 +216,21 @@ export class ChainVerifier {
 
   /** Derived replay, content-erasure rules, checkpoints. Produces the report. */
   async finish(checkpoints: Checkpoint[] = []): Promise<Report> {
-    if (this.mode !== "public") this.checkDerived();
-    const cps = await this.checkCheckpoints(checkpoints);
+    const resumed = this.offset > 0;
+    if (this.mode !== "public" && !resumed) this.checkDerived();
+    const cps = resumed ? 0 : await this.checkCheckpoints(checkpoints);
 
     const crit = this.findings.filter((f) => f.severity === "critical");
-    const n = this.kept.length;
+    const n = this.offset + this.kept.length;
     const validThrough = crit.length ? Math.min(n, ...crit.map((f) => f.seq)) - 1 : n - 1;
     this.findings.sort((a, b) => a.seq - b.seq || sev(a.severity) - sev(b.severity));
-    const latest = checkpoints.filter((cp) => !checkpointProblem(cp, this.space)).sort((a, b) => cpSize(b) - cpSize(a))[0];
+    const latest = resumed ? undefined : checkpoints.filter((cp) => !checkpointProblem(cp, this.space)).sort((a, b) => cpSize(b) - cpSize(a))[0];
     return {
       space: this.space,
       entries: n,
       validThrough,
       checkpointsValid: cps,
-      checkpointsTotal: checkpoints.length,
+      checkpointsTotal: resumed ? 0 : checkpoints.length,
       latestCheckpoint: latest ? { seq: Number(latest.seq), size: cpSize(latest), root: latest.root, createdAt: latest.createdAt } : null,
       findings: this.findings,
       status: crit.length ? "tampered" : this.findings.some((f) => f.severity === "warning") ? "warning" : "valid",
@@ -226,8 +252,10 @@ export class ChainVerifier {
         this.add({ seq, rule: "content", severity: "critical", message: `Memory #${seq}'s content is missing, but no forget entry erased it.` });
       }
       if (want.status === "forgotten" && m.c?.text != null) {
-        // Between a forget entry and its erasure the text is legitimately still there; the forget entry says so.
-        if (this.erasing.has(k.id)) this.add({ seq, rule: "content", severity: "warning", message: `Memory #${seq} is being forgotten; its erasure has not finished yet.` });
+        // Between a forget entry and its erasure the text is legitimately still there; the forget entry says so,
+        // but only a recent forget entry can still be in progress, because the flag is not hashed.
+        const by = this.erasing.get(k.id);
+        if (by !== undefined && by >= this.kept.length - ERASURE_WINDOW) this.add({ seq, rule: "content", severity: "warning", message: `Memory #${seq} is being forgotten; its erasure has not finished yet.` });
         else this.add({ seq, rule: "content", severity: "critical", message: `Memory #${seq} was forgotten, but text was written back into it.` });
       }
       // Rule 6 (correction): tombstone vectors only where nothing should be found.
@@ -311,7 +339,7 @@ export class ChainVerifier {
         ok = false;
         this.add({ seq: at, rule: "checkpoint", severity: "critical", message: `Checkpoint ${checkpointFileId(cp)} belongs to another space.` });
       }
-      if (prev && (cp.prevCheckpoint !== checkpointFileId(prev) || cp.prevCheckpointHash !== (await checkpointHash(prev)))) {
+      if (prev && !(await linksTo(cp, prev))) {
         ok = false;
         this.add({ seq: at, rule: "checkpoint", severity: "critical", message: `Checkpoint ${checkpointFileId(cp)} does not link to the checkpoint before it. A checkpoint was removed or replaced.` });
       }
@@ -353,15 +381,37 @@ export class ChainVerifier {
 
 export interface TrustedCheckpoint { size: number; root: string }
 
-/** Every field a verifier relies on, checked before use. */
+/** Never throws: a hostile predecessor must become a finding, not a rejected promise that leaves a stale badge. */
+async function linksTo(cp: Checkpoint, prev: Checkpoint): Promise<boolean> {
+  try {
+    return cp.prevCheckpoint === checkpointFileId(prev) && cp.prevCheckpointHash === (await checkpointHash(prev));
+  } catch {
+    return false;
+  }
+}
+
+const HEX64 = /^[0-9a-f]{64}$/;
+const ANCHOR_KEYS = ["type", "repo", "commit", "path", "anchoredSeq"];
+
+/** Every field a verifier relies on (and every field hashed into a successor's link), checked before use. */
 export function checkpointProblem(cp: unknown, space?: string): string | null {
-  if (!cp || typeof cp !== "object") return "not an object";
+  if (!cp || typeof cp !== "object" || Array.isArray(cp)) return "not an object";
   const c = cp as Record<string, unknown>;
   if (c.v !== "1") return "unknown format version";
+  if (typeof c.space !== "string") return "space is not a string";
   if (typeof c.size !== "string" || !/^\d{8}$/.test(c.size) || Number(c.size) < 1) return "size is not a positive 8-digit count";
   if (typeof c.seq !== "string" || c.seq !== seqStr(Number(c.size) - 1)) return "seq does not match size";
   for (const k of ["head", "root"]) if (typeof c[k] !== "string" || !/^[0-9a-f]{64}$/.test(c[k] as string)) return `${k} is not a hash`;
   if (typeof c.sig !== "string" || typeof c.createdAt !== "string" || typeof c.keyId !== "string") return "signature fields are missing";
+  const first = c.prevCheckpoint === null && c.prevCheckpointHash === null;
+  const linked = typeof c.prevCheckpoint === "string" && typeof c.prevCheckpointHash === "string" && HEX64.test(c.prevCheckpointHash);
+  if (!first && !linked) return "the link to the previous checkpoint is malformed";
+  if (c.anchor !== undefined && c.anchor !== null) {
+    const a = c.anchor as Record<string, unknown>;
+    if (typeof a !== "object" || Array.isArray(a) || a.type !== "github" || typeof a.repo !== "string" || typeof a.path !== "string"
+      || typeof a.anchoredSeq !== "string" || (a.commit !== null && typeof a.commit !== "string")
+      || Object.keys(a).some((k) => !ANCHOR_KEYS.includes(k))) return "the anchor is malformed";
+  }
   if (space !== undefined && c.space !== space) return "it belongs to another space";
   return null;
 }

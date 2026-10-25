@@ -41,7 +41,7 @@ export interface RecallResult { query: string; asOf: string | null; mode: "now" 
 export interface ForgetResult { forgetEntryId: string; seq: number; target: string; targetSeq: number; status: "forgotten"; erased: boolean }
 export interface TimelineEntry { seq: number; id: string; op: string; kind: string; text: string | null; status: string; createdAt: string; agent: string; agentName: string; target: string | null }
 export interface Proof { id: string; seq: number; leaf: string; index: number; path: string[]; checkpoint: Checkpoint & { file: string }; publicKey: string | null; howToVerify: string }
-export interface VerifyResult { status: "valid" | "tampered"; integrity: Report["status"]; entries: number; validThrough: number; checkpointsValid: number; findings: Report["findings"]; proof?: Proof }
+export interface VerifyResult { status: "valid" | "warning" | "tampered"; integrity: Report["status"]; entries: number; validThrough: number; checkpointsValid: number; findings: Report["findings"]; proof?: Proof }
 
 export class EngramError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); this.name = "EngramError"; }

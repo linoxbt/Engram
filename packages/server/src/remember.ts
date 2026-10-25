@@ -284,8 +284,9 @@ async function postCommit(ctx: Ctx, id: string, seq: number, vector: number[], a
 /**
  * A write whose classification timed out: classify again with more time and record findings as link entries.
  * The same caps as the first pass apply, and the rule-based fallback cannot retire another agent's memory.
+ * Also used by the sentinel to sweep writes left pending.
  */
-export async function retryRelate(ctx: Ctx, id: string, vector: number[], input: RememberInput, actor = ctx.actor) {
+export async function retryRelate(ctx: Ctx, id: string, vector: number[], input: Pick<RememberInput, "text" | "kind" | "subject">, actor = ctx.actor) {
   const { linkFound } = await import("./forget");
   const near = (await nearestActive(ctx, vector, 6, ctx.space.settings.neighbourDistance)).filter((n) => n.$id !== id && n.$id < id);
   if (!near.length) { await patchDerived(ctx.b, id, { relateStatus: "done" }); return; }

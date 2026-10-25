@@ -1,4 +1,8 @@
 /** Environment configuration. Read once; every value has a safe default. */
+import { parseKeyring } from "@engram/core";
+
+/** Same format as `pnpm keygen` (engram-cp-YYYY-MM) and the browser's default for the legacy key. */
+export const DEFAULT_KEY_ID = "engram-cp-2026-10";
 
 export interface EngramConfig {
   backend: "appwrite" | "local";
@@ -14,7 +18,6 @@ export interface EngramConfig {
     checkpointsBucket: string;
     exportsBucket: string;
     checkpointFunctionId: string | null;
-    labelerFunctionId: string | null;
   };
   /** Combine vector queries with metadata filters in one request (Day 1 experiment 2). */
   vectorFilters: boolean;
@@ -27,11 +30,22 @@ export interface EngramConfig {
   modelApiKey: string | null;
   /** Required by Anthropic for keys that are not scoped to a workspace. */
   anthropicWorkspaceId: string | null;
-  checkpoint: { privateKey: string | null; publicKey: string | null; keyId: string };
+  checkpoint: {
+    privateKey: string | null;
+    /** The current signing key's public half (legacy single-key setting), listed in the keyring under `keyId`. */
+    publicKey: string | null;
+    keyId: string;
+    /**
+     * Every checkpoint public key ever used, by keyId (CP_PUBLIC_KEYS and NEXT_PUBLIC_CP_PUBLIC_KEYS, "keyId:hex,...").
+     * Server-side verification uses `keyringOf(cfg)`, which adds the legacy key and never falls back to a keyless check.
+     */
+    publicKeys?: Record<string, string>;
+  };
   anchor: { token: string | null; repo: string | null };
   seedAdminToken: string | null;
   cronSecret: string | null;
-  appUrl: string;
+  /** Public base URL for links in emails and proofs. Null in production when unset: links are left out, never pointed at localhost. */
+  appUrl: string | null;
   dims: { memories: number; concepts: number; agents: number; recalls: number };
 }
 
@@ -54,10 +68,16 @@ export function getConfig(): EngramConfig {
   const missing = ["APPWRITE_ENDPOINT", "APPWRITE_PROJECT_ID", "APPWRITE_API_KEY"].filter((k) => !env(k));
   // Appwrite when configured. Without it the local backend keeps every screen working in development, but
   // production must ask for it explicitly: an ephemeral per-instance store silently losing accounts is worse than an error.
-  const backend = backendEnv === "local" || backendEnv === "appwrite" ? backendEnv : missing.length ? (production ? "appwrite" : "local") : "appwrite";
-  const configError = backend === "appwrite" && missing.length
-    ? `Engram is not configured: set ${missing.join(", ")} (or ENGRAM_BACKEND=local for a throwaway demo).`
-    : null;
+  const knownBackend = backendEnv === null || backendEnv === "local" || backendEnv === "appwrite";
+  const backend = backendEnv === "local" || backendEnv === "appwrite" ? backendEnv : missing.length ? (production || !knownBackend ? "appwrite" : "local") : "appwrite";
+  // A typo must not silently pick a backend: getBackend() refuses to start with this error.
+  const configError = !knownBackend
+    ? `ENGRAM_BACKEND must be "appwrite" or "local", not "${backendEnv}".`
+    : backend === "appwrite" && missing.length
+      ? `Engram is not configured: set ${missing.join(", ")} (or ENGRAM_BACKEND=local for a throwaway demo).`
+      : null;
+  const keyId = env("CP_KEY_ID") ?? env("NEXT_PUBLIC_CP_KEY_ID") ?? DEFAULT_KEY_ID;
+  const publicKey = env("NEXT_PUBLIC_CP_PUBLIC_KEY") ?? env("CP_PUBLIC_KEY");
   cached = {
     backend,
     configError,
@@ -71,7 +91,6 @@ export function getConfig(): EngramConfig {
       // One bucket by default (the Free plan allows one); exports are stored as ex_* files beside checkpoints.
       exportsBucket: env("APPWRITE_EXPORTS_BUCKET") ?? env("APPWRITE_CHECKPOINTS_BUCKET") ?? "checkpoints",
       checkpointFunctionId: env("CHECKPOINT_FUNCTION_ID"),
-      labelerFunctionId: env("LABELER_FUNCTION_ID"),
     },
     vectorFilters: bool("ENGRAM_VECTOR_FILTERS", true),
     embedPrefixes: bool("ENGRAM_EMBED_PREFIXES", true),
@@ -83,16 +102,40 @@ export function getConfig(): EngramConfig {
     anthropicWorkspaceId: env("ANTHROPIC_WORKSPACE_ID"),
     checkpoint: {
       privateKey: env("CP_PRIVATE_KEY"),
-      publicKey: env("NEXT_PUBLIC_CP_PUBLIC_KEY") ?? env("CP_PUBLIC_KEY"),
-      keyId: env("CP_KEY_ID") ?? "engram-cp-1",
+      publicKey,
+      keyId,
+      publicKeys: { ...parseKeyring(env("NEXT_PUBLIC_CP_PUBLIC_KEYS")), ...parseKeyring(env("CP_PUBLIC_KEYS")) },
     },
     anchor: { token: env("GITHUB_ANCHOR_TOKEN"), repo: env("GITHUB_ANCHOR_REPO") },
     seedAdminToken: env("SEED_ADMIN_TOKEN"),
     cronSecret: env("CRON_SECRET"),
-    appUrl: env("NEXT_PUBLIC_APP_URL") ?? env("APP_URL") ?? "http://localhost:3000",
+    // Netlify sets URL to the site's primary address. Localhost only in development.
+    appUrl: env("NEXT_PUBLIC_APP_URL") ?? env("APP_URL") ?? (env("NETLIFY") ? env("URL") : null) ?? (production ? null : "http://localhost:3000"),
     dims: { memories: 768, concepts: 768, agents: 384, recalls: 768 },
   };
   return cached;
+}
+
+/**
+ * The keyring every server-side verification uses (sentinel, signer, /verify, proofs): CP_PUBLIC_KEYS plus the legacy
+ * single key under its keyId. A checkpoint is checked with the key its keyId names; an unknown keyId is critical.
+ */
+export function keyringOf(cfg: EngramConfig): Record<string, string> {
+  const ring = { ...(cfg.checkpoint.publicKeys ?? {}) };
+  const legacy = cfg.checkpoint.publicKey;
+  if (legacy && /^[0-9a-f]{64}$/.test(legacy) && !ring[cfg.checkpoint.keyId]) ring[cfg.checkpoint.keyId] = legacy;
+  return ring;
+}
+
+/** Scheduled Functions time out at 300 s; a run must stop starting new work well before that. */
+export const SCHEDULE_TIMEOUT_MS = 300_000;
+export const DEFAULT_BUDGET_MS = 240_000;
+export const MAX_BUDGET_MS = 270_000;
+
+/** A time budget from an env value (milliseconds), defaulting to 240 s and never above 270 s. */
+export function scheduleBudgetMs(raw?: string | number | null): number {
+  const n = typeof raw === "number" ? raw : raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? Math.min(n, MAX_BUDGET_MS) : DEFAULT_BUDGET_MS;
 }
 
 /** Tests and scripts can override configuration. */

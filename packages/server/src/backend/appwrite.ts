@@ -504,7 +504,8 @@ class AppwriteJobs implements Jobs {
       await new Messaging(this.admin).createEmail({
         messageId: ID.unique(),
         subject: `Engram integrity alert: ${args.spaceName}`,
-        content: `${args.message}\n\nOpen ${this.cfg.appUrl}/app/${args.spaceKey}/chain to inspect the chain.`,
+        // Without a configured public URL the link is left out rather than pointed at localhost.
+        content: `${args.message}${this.cfg.appUrl ? `\n\nOpen ${this.cfg.appUrl}/app/${args.spaceKey}/chain to inspect the chain.` : ""}`,
         users: [args.ownerId],
       });
     } catch (e) {

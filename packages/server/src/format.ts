@@ -93,10 +93,14 @@ export function formatTimeline(subject: string, entries: TimelineEntry[], next?:
   return lines.join("\n");
 }
 
-export function formatVerify(v: { status: string; integrity: string; validThrough: number; entries: number; checkpointsValid: number; findings: { seq: number; message: string }[]; proof?: { seq: number; checkpoint: { file: string; size: string }; path: string[] } }): string {
-  const lines = [v.status === "valid"
-    ? `Verified: ${v.entries} entries, valid through #${v.validThrough}, ${v.checkpointsValid} signed checkpoint${v.checkpointsValid === 1 ? "" : "s"} valid.${v.integrity === "warning" ? " Some derived fields disagree with the chain (warnings)." : ""}`
-    : `TAMPERED. Valid only through #${v.validThrough}.`];
+export function formatVerify(v: { status: string; integrity: string; validThrough: number; entries: number; checkpointsValid: number; findings: { seq: number; message: string; severity?: string }[]; proof?: { seq: number; checkpoint: { file: string; size: string }; path: string[] } }): string {
+  const verified = `${v.entries} entries, valid through #${v.validThrough}, ${v.checkpointsValid} signed checkpoint${v.checkpointsValid === 1 ? "" : "s"} valid.`;
+  const warning = v.findings.find((f) => f.severity === "warning") ?? v.findings[0];
+  const lines = [v.status === "tampered" || v.integrity === "tampered"
+    ? `TAMPERED. Valid only through #${v.validThrough}.`
+    : v.status === "warning" || v.integrity === "warning"
+      ? `Verified with warnings: ${verified}${warning ? ` First warning: ${warning.message}` : ""}`
+      : `Verified: ${verified}`];
   for (const f of v.findings.slice(0, 5)) lines.push(`- #${f.seq}: ${f.message}`);
   if (v.proof) lines.push(`Inclusion proof for #${v.proof.seq}: ${v.proof.path.length} Merkle steps to the root of ${v.proof.checkpoint.file} (${Number(v.proof.checkpoint.size)} entries).`);
   return lines.join("\n");
