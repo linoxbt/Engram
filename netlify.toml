@@ -2,7 +2,8 @@
 # declared explicitly because upload-triggered builds don't auto-install it.
 [build]
   base = "apps/web"
-  command = "pnpm run build"
+  # `provision` is a no-op unless ENGRAM_PROVISION is set (see scripts/provision.ts).
+  command = "pnpm -C ../.. run provision && pnpm run build"
   publish = ".next"
 
 [build.environment]

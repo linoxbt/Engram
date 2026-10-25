@@ -108,7 +108,8 @@ class AppwriteVectors implements VectorStore {
     try {
       docs = (await this.vdb.createQuery({ databaseId: this.db, collectionId: coll, queries: withSelect, total: false })).documents as unknown as VDoc<M>[];
     } catch (e) {
-      if (withSelect !== qs && e instanceof AppwriteException && e.code === 400) {
+      // Only a complaint about the select itself switches it off; any other 400 is a real error.
+      if (withSelect !== qs && e instanceof AppwriteException && e.code === 400 && /select|attribute/i.test(e.message)) {
         this.selectOk = false; // select unsupported on this collection type; fetch whole documents
         docs = (await call(() => this.vdb.createQuery({ databaseId: this.db, collectionId: coll, queries: qs, total: false }))).documents as unknown as VDoc<M>[];
       } else throw mapError(e);
@@ -232,10 +233,11 @@ class AppwriteFiles implements FileStore {
       let res;
       if (this.prefixOk) {
         try { res = await this.storage.listFiles({ bucketId: bucket, queries: [Query.startsWith("name", namePrefix), ...qs] }); }
-        catch (e) { if (e instanceof AppwriteException && e.code === 400) this.prefixOk = false; else throw mapError(e); }
+        catch (e) { if (e instanceof AppwriteException && e.code === 400 && /startsWith|query|attribute/i.test(e.message)) this.prefixOk = false; else throw mapError(e); }
       }
-      // Fallback: full-text search, then filter by prefix below.
-      if (!res) res = await call(() => this.storage.listFiles({ bucketId: bucket, queries: qs, search: namePrefix }));
+      // Fallback: list everything and filter by prefix below. Slower, but complete: full-text search could miss a
+      // checkpoint, and a missed checkpoint would start a second chain.
+      if (!res) res = await call(() => this.storage.listFiles({ bucketId: bucket, queries: qs }));
       for (const f of res.files) if (f.name.startsWith(namePrefix)) out.push({ fileId: f.$id, name: f.name, createdAt: f.$createdAt, size: f.sizeOriginal });
       if (res.files.length < 100) break;
       cursor = res.files[res.files.length - 1].$id;

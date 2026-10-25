@@ -8,6 +8,7 @@ import "./env";
 import { writeFileSync } from "node:fs";
 import { AppwriteException, Client, Embeddings, EmbeddingModel, ID, Query, Teams, VectorsDB, VectorsDBIndexType } from "node-appwrite";
 import { cosine, embHash, quantize } from "@engram/core";
+import { createAppwriteBackend, getConfig, isConflict } from "@engram/server";
 
 const endpoint = process.env.APPWRITE_ENDPOINT, project = process.env.APPWRITE_PROJECT_ID, key = process.env.APPWRITE_API_KEY;
 if (!endpoint || !project || !key) { console.error("Set APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID and APPWRITE_API_KEY."); process.exit(1); }
@@ -131,6 +132,24 @@ try {
     const withP = await score("search_document: ", "search_query: ");
     const without = await score("", "");
     rec(10, "Recall quality with and without nomic task prefixes", null, `top-1 hits: with prefixes ${withP}/4, without ${without}/4`, withP >= without ? "Keep ENGRAM_EMBED_PREFIXES=true" : "Set ENGRAM_EMBED_PREFIXES=false");
+  }
+
+  // 13. The engine's conditional write (stage in a transaction, re-read, commit) under a real race: of two
+  // writers that read the same version, exactly one may land. Runs through the engine's own adapter.
+  {
+    const b = createAppwriteBackend(getConfig());
+    const id = `exp_${Date.now().toString(36)}`;
+    try {
+      await b.vectors.create("memories", id, { embeddings: vecs[0], metadata: { space: "exp00000", n: "0" } });
+      const read = (await b.vectors.get<{ n: string }>("memories", id))!;
+      const attempts = await Promise.allSettled([1, 2, 3].map((n) => b.vectors.update("memories", id, { metadata: { space: "exp00000", n: String(n) } }, undefined, { ifUpdatedAt: read.$updatedAt })));
+      const won = attempts.filter((a) => a.status === "fulfilled").length;
+      const conflicts = attempts.filter((a) => a.status === "rejected" && isConflict(a.reason)).length;
+      const stale = await b.vectors.update("memories", id, { metadata: { space: "exp00000", n: "late" } }, undefined, { ifUpdatedAt: read.$updatedAt }).then(() => "landed", (e) => (isConflict(e) ? "rejected" : `error ${err(e)}`));
+      const ok = won === 1 && conflicts === 2 && stale === "rejected";
+      rec(13, "Conditional writes under a race (3 writers, same read)", ok, `${won} landed, ${conflicts} conflicts; a later stale write was ${stale}`, ok ? "Stale copies cannot overwrite newer data (erasures stay erased)" : "Conditional writes are not safe: add a monotonic rev field and compare it instead of $updatedAt");
+    } catch (e) { rec(13, "Conditional writes under a race", false, err(e), "Investigate before relying on conditional writes"); }
+    finally { await b.vectors.delete("memories", id).catch(() => undefined); }
   }
 
   rec(11, "Realtime channel for VectorsDB documents", null, "manual: open the dashboard; the sidebar shows Realtime or polling", "Engine subscribes to databases.<db>.collections.memories.documents with a JWT, else polls every 3 s");
