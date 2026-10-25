@@ -17,7 +17,7 @@ export function MemoryCard({ m, onOpen, asOf, maxScore = 1 }: { m: RecallMemory;
   return (
     <button onClick={() => onOpen?.(m.id)} className={clsx("panel block w-full px-4 py-3 text-left transition-colors hover:border-accent/60", m.status === "forgotten" && "border-dashed")}>
       <div className="flex items-start justify-between gap-3">
-        <p className={clsx("text-sm", m.status === "superseded" && !asOf && "text-muted", m.status === "forgotten" && "italic text-muted")}>
+        <p className={clsx("text-sm", m.status === "superseded" && !asOf && "strike text-muted", m.status === "forgotten" && "italic text-muted")}>
           {m.text ?? m.note ?? "Content erased. Receipt kept."}
         </p>
         <span className="shrink-0 text-2xs tabular text-muted">#{m.seq}</span>

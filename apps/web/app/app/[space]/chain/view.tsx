@@ -3,14 +3,17 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { verifyCheckpointSig, type ChainEntry, type Checkpoint, type Report } from "@engram/core";
+import { type ChainEntry, type Checkpoint, type Report } from "@engram/core";
 import { api } from "@/lib/client/api";
 import { useSpaceInfo } from "@/lib/client/hooks";
-import { runVerification } from "@/lib/client/verify";
+import { checkSignature, sigState, type SigCheck } from "@/lib/client/proof";
+import { criticalOf } from "@/lib/client/report-copy";
+import { hasPinnedKeys, runVerification, trustedKeyFor } from "@/lib/client/verify";
 import { shortHash, when } from "@/lib/format";
 import { ChainStrip, type BlockState } from "@/components/chain-strip";
 import { IconAlert, IconCross, IconExternal, IconSeal, IconShield, IconTick } from "@/components/icons";
-import { PageHeader, useOpenMemory } from "@/components/space-shell";
+import { ReportVerdict } from "@/components/report-status";
+import { PageHeader, useCanWrite, useOpenMemory } from "@/components/space-shell";
 import { Button, Card, CopyButton, ErrorNote, Pill, Skeleton, cx, useToast } from "@/components/ui";
 
 type Page = { entries: ChainEntry[]; next: string | null };
@@ -26,7 +29,7 @@ async function fetchAll(space: string, vectors: boolean): Promise<ChainEntry[]> 
   }
 }
 
-export default function ChainPage() {
+export function ChainView() {
   const { space } = useParams<{ space: string }>();
   const open = useOpenMemory();
   const qc = useQueryClient();
@@ -40,18 +43,22 @@ export default function ChainPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [sigs, setSigs] = useState<Map<string, boolean>>(new Map());
+  const [sigs, setSigs] = useState<Map<string, SigCheck>>(new Map());
   const cancel = useRef(false);
+  const canWrite = useCanWrite();
 
   const pub = info.data?.publicKey ?? null;
+  // Each signature is checked with the key built into this site for its key ID, never just the server's key.
   useEffect(() => {
-    if (!cps.data || !pub) return;
+    if (!cps.data || !info.data) return;
+    let live = true;
     void (async () => {
-      const m = new Map<string, boolean>();
-      for (const c of cps.data.checkpoints) m.set(c.seq, await verifyCheckpointSig(c, pub));
-      setSigs(m);
+      const m = new Map<string, SigCheck>();
+      for (const c of cps.data.checkpoints) m.set(c.seq, await checkSignature(c, pub));
+      if (live) setSigs(m);
     })();
-  }, [cps.data, pub]);
+    return () => { live = false; };
+  }, [cps.data, pub, info.data]);
 
   const blocks = useMemo(() => (chain.data ?? []).map((e) => ({ seq: Number(e.metadata.seq), op: e.metadata.op, status: e.metadata.d?.status, hash: e.metadata.hash, text: e.metadata.c?.text })), [chain.data]);
   const cpSizes = useMemo(() => (cps.data?.checkpoints ?? []).map((c) => Number(c.size)), [cps.data]);
@@ -59,14 +66,19 @@ export default function ChainPage() {
   const recordServer = useMutation({ mutationFn: () => api(`/api/app/spaces/${space}/verify?mode=${mode}`, { method: "POST" }), onSuccess: () => qc.invalidateQueries({ queryKey: ["space", space, "info"] }) });
   const seal = useMutation({
     mutationFn: () => api<{ created: boolean; reason?: string }>(`/api/app/spaces/${space}/checkpoints`, { method: "POST" }),
-    onSuccess: (r) => { toast(r.created ? "Checkpoint signed." : `No checkpoint: ${r.reason}`, r.created ? "ok" : "info"); qc.invalidateQueries({ queryKey: ["space", space] }); },
+    onSuccess: (r) => {
+      toast(r.created ? "Checkpoint signed." : /queued/i.test(r.reason ?? "") ? "Checkpoint requested. The checkpoint Function signs it in a few seconds." : `No checkpoint: ${r.reason}`, r.created ? "ok" : "info");
+      qc.invalidateQueries({ queryKey: ["space", space] });
+    },
+    onError: (e) => toast(e instanceof Error ? e.message : String(e), "error"),
   });
 
   const verify = async () => {
     setRunning(true); setError(null); setReport(null); setStates(new Map()); setFocus(null); cancel.current = false;
     try {
-      const entries = mode === "deep" ? await fetchAll(space, true) : await fetchAll(space, false);
-      const checkpoints = (await api<{ checkpoints: Checkpoint[] }>(`/api/app/spaces/${space}/checkpoints`)).checkpoints;
+      // Standard mode reuses the chain this page already downloaded while it is fresh; deep mode needs the vectors.
+      const entries = mode === "deep" ? await fetchAll(space, true) : await qc.fetchQuery({ queryKey: ["space", space, "chain-all"], queryFn: () => fetchAll(space, false), staleTime: 15_000 });
+      const checkpoints = (await qc.fetchQuery({ queryKey: ["space", space, "checkpoints"], queryFn: () => api<{ checkpoints: Checkpoint[] }>(`/api/app/spaces/${space}/checkpoints`), staleTime: 15_000 })).checkpoints;
       let results = new Map<number, boolean>();
       const pages: Page[] = [];
       for (let i = 0; i < entries.length; i += 500) pages.push({ entries: entries.slice(i, i + 500), next: i + 500 < entries.length ? String(i + 500) : null });
@@ -91,7 +103,7 @@ export default function ChainPage() {
       }
       if (firstCrit != null) { next.set(firstCrit, "fail"); setStates(new Map(next)); setFocus(firstCrit); }
       setReport(r);
-      recordServer.mutate();
+      if (canWrite) recordServer.mutate();
     } catch (e) {
       setError(e);
     } finally {
@@ -100,8 +112,9 @@ export default function ChainPage() {
   };
   useEffect(() => () => { cancel.current = true; }, []);
 
-  const crit = report?.findings.filter((f) => f.severity === "critical") ?? [];
+  const crit = report ? criticalOf(report) : [];
   const tone = report ? (report.status === "valid" ? "valid" : report.status === "warning" ? "warning" : "tampered") : undefined;
+  const trusted = trustedKeyFor(info.data?.keyId, pub);
 
   return (
     <div className="space-y-4">
@@ -112,7 +125,7 @@ export default function ChainPage() {
               <button key={m} onClick={() => setMode(m)} aria-pressed={mode === m} className={cx("px-3 py-1.5", mode === m ? "bg-panel-2 text-accent" : "text-muted hover:text-text")}>{m}</button>
             ))}
           </div>
-          {(info.data?.signing.inline || info.data?.signing.function) && <Button variant="gold" onClick={() => seal.mutate()} loading={seal.isPending}><IconSeal /> Seal now</Button>}
+          {canWrite && (info.data?.signing.inline || info.data?.signing.function) && <Button variant="gold" onClick={() => seal.mutate()} loading={seal.isPending}><IconSeal /> Seal now</Button>}
           <Button variant="primary" onClick={verify} loading={running}><IconShield /> Verify in this browser</Button>
         </>
       }>
@@ -141,12 +154,7 @@ export default function ChainPage() {
       {report && (
         <Card title="Result" state={tone}>
           <div className="p-4">
-            <div className={cx("flex items-center gap-2 text-lg", report.status === "valid" && "text-valid", report.status === "warning" && "text-warn", report.status === "tampered" && "text-tamper")}>
-              {report.status === "valid" ? <IconTick size={20} /> : <IconAlert size={20} />}
-              {report.status === "valid" && `Verified through #${report.validThrough}.${report.latestCheckpoint ? ` Signed ${when(report.latestCheckpoint.createdAt)}.` : ""}`}
-              {report.status === "warning" && `Hashes verify through #${report.validThrough}; derived fields disagree with the chain.`}
-              {report.status === "tampered" && (crit[0]?.rule === "truncation" ? crit[0].message : `Memory #${crit[0]?.seq} was changed after it was written.`)}
-            </div>
+            <ReportVerdict report={report} className="text-lg" suffix={report.status === "valid" && report.latestCheckpoint ? `Signed ${when(report.latestCheckpoint.createdAt)}.` : undefined} />
             <p className="mt-1 text-xs text-muted">{report.entries} entries checked in {report.mode} mode · {report.checkpointsValid}/{report.checkpointsTotal} checkpoints valid · {report.findings.length} findings</p>
           </div>
           {report.findings.length > 0 && (
@@ -168,7 +176,7 @@ export default function ChainPage() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card title="Signed checkpoints" className="lg:col-span-2">
+        <Card title="Signed checkpoints" className="min-w-0 lg:col-span-2">
           {cps.isLoading && <div className="p-4"><Skeleton className="h-16" /></div>}
           {cps.data && !cps.data.checkpoints.length && <p className="p-4 text-xs text-muted">No checkpoints yet. The checkpoint Function signs one every few minutes and after every {info.data?.settings.checkpointEvery ?? 16} writes.</p>}
           {cps.data && cps.data.checkpoints.length > 0 && (
@@ -182,7 +190,7 @@ export default function ChainPage() {
                       <td className="px-2 py-2 tabular">{Number(c.size)}</td>
                       <td className="px-2 py-2"><code title={c.root}>{shortHash(c.root)}</code></td>
                       <td className="px-2 py-2 text-muted">{when(c.createdAt)}</td>
-                      <td className="px-2 py-2">{!pub ? <span className="text-muted">no key</span> : sigs.get(c.seq) == null ? "…" : sigs.get(c.seq) ? <span className="text-valid"><IconTick className="inline" /> valid</span> : <span className="text-tamper"><IconCross className="inline" /> invalid</span>}</td>
+                      <td className="whitespace-nowrap px-2 py-2"><SigCell sig={sigs.get(c.seq)} /></td>
                       <td className="px-2 py-2">{c.anchor ? <a className="inline-flex items-center gap-1 text-accent hover:underline" href={`https://github.com/${c.anchor.repo}/commit/${c.anchor.commit}`} target="_blank" rel="noreferrer">GitHub <IconExternal size={11} /></a> : <span className="text-muted">—</span>}</td>
                     </tr>
                   ))}
@@ -191,11 +199,12 @@ export default function ChainPage() {
             </div>
           )}
         </Card>
-        <Card title="Public key" state="sealed">
+        <Card title="Public key" state={trusted.key && trusted.pinned && !trusted.mismatch ? "sealed" : "warning"}>
           <div className="space-y-3 p-4 text-xs">
-            {pub ? (
-              <div className="flex items-start gap-1"><code className="break-all text-gold">{pub}</code><CopyButton value={pub} /></div>
-            ) : <p className="text-warn">No public key configured. Set NEXT_PUBLIC_CP_PUBLIC_KEY to let verifiers check signatures.</p>}
+            {trusted.key && <div className="flex items-start gap-1"><code className="min-w-0 break-all text-gold">{trusted.key}</code><CopyButton value={trusted.key} /></div>}
+            {!hasPinnedKeys && <p className="text-warn">{pub ? "This site was built without a public key, so signatures are checked only against the key the server supplies, which is not an independent check." : "No public key configured."} Set NEXT_PUBLIC_CP_PUBLIC_KEYS when building the site so browsers check signatures independently.</p>}
+            {hasPinnedKeys && !trusted.key && <p className="text-warn">No built-in key matches key ID {info.data?.keyId}.</p>}
+            {trusted.mismatch && <p className="text-warn">The server offers a different key from the one built into this site. The built-in key is used.</p>}
             <p className="text-muted">Key ID {info.data?.keyId}. The signing key never touches the database; only the checkpoint Function holds it.</p>
             {info.data?.settings.publicVerify ? (
               <Link href={`/verify/${space}`} className="inline-flex items-center gap-1 text-accent hover:underline">Open the public verifier <IconExternal size={11} /></Link>
@@ -205,4 +214,14 @@ export default function ChainPage() {
       </div>
     </div>
   );
+}
+
+function SigCell({ sig }: { sig: SigCheck | undefined }) {
+  if (!sig) return <span className="text-muted">…</span>;
+  const st = sigState(sig);
+  if (st === "valid") return <span className="text-valid"><IconTick className="inline" /> valid</span>;
+  if (st === "invalid") return <span className="text-tamper"><IconCross className="inline" /> invalid</span>;
+  if (st === "unpinned") return <span className="text-warn" title="Checked only against the key the server supplied: this site has no built-in key."><IconAlert className="inline" /> server key only</span>;
+  if (st === "mismatch") return <span className="text-warn" title="Valid with the built-in key, but the server offers a different key."><IconAlert className="inline" /> valid · key mismatch</span>;
+  return <span className="text-warn" title={`No trusted key for key ID ${sig.keyId}.`}><IconAlert className="inline" /> unknown key</span>;
 }

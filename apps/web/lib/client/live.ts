@@ -2,8 +2,12 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { readJson } from "./api";
+import { readConsent } from "./consent";
 
 export type LiveMode = "realtime" | "polling";
+
+/** Fixed at build time: Realtime needs the browser SDK's endpoint and project. */
+const REALTIME_CONFIGURED = !!process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT && !!process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID;
 
 /**
  * Live updates: Appwrite Realtime with a short-lived JWT when available, otherwise polling every 3 seconds
@@ -23,6 +27,8 @@ export function useLive(spaceKey: string): LiveMode {
       debounce = setTimeout(() => { debounce = null; void qc.invalidateQueries({ queryKey: ["space", spaceKey] }); }, 500);
     };
     async function connect() {
+      // No Realtime on this deployment (the local backend) or no cookie consent: never ask for a JWT, just poll.
+      if (!REALTIME_CONFIGURED || readConsent() !== "accepted") return;
       try {
         const res = await fetch("/api/auth/jwt", { credentials: "same-origin" });
         if (!res.ok) return;
@@ -42,9 +48,10 @@ export function useLive(spaceKey: string): LiveMode {
         setMode("polling");
       }
     }
-    void connect();
+    // Connect after the page's first data requests, so the JWT round trip does not slow the first paint.
+    const start = setTimeout(() => void connect(), 2500);
     const refresh = setInterval(connect, 50 * 60_000);
-    return () => { cancelled = true; unsub?.(); clearInterval(refresh); if (debounce) clearTimeout(debounce); };
+    return () => { cancelled = true; unsub?.(); clearTimeout(start); clearInterval(refresh); if (debounce) clearTimeout(debounce); };
   }, [spaceKey, qc]);
   return mode;
 }

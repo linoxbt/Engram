@@ -1,9 +1,10 @@
 "use client";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
 import { useSpaceInfo } from "@/lib/client/hooks";
+import { AGENT_NAME_PATTERN } from "@/lib/client/patterns";
 import { ago } from "@/lib/format";
 import { IconKey, IconPlus, IconSearch } from "@/components/icons";
 import { PageHeader } from "@/components/space-shell";
@@ -12,7 +13,7 @@ import { Button, Card, CopyButton, Empty, ErrorNote, Field, Input, Modal, Pill, 
 interface Agent { id: string; name: string; description: string; keyPrefix: string; scopes: string[]; status: string; writes: string; recalls: string; lastSeenAt: string | null; createdAt: string; distance?: number | null }
 const SCOPES = ["remember", "recall", "forget", "verify", "resolve"] as const;
 
-export default function AgentsPage() {
+export function AgentsView() {
   const { space } = useParams<{ space: string }>();
   const qc = useQueryClient();
   const toast = useToast();
@@ -28,16 +29,19 @@ export default function AgentsPage() {
     onSuccess: () => { setRevoke(null); toast("Key revoked. The agent can no longer read or write.", "ok"); qc.invalidateQueries({ queryKey: ["space", space, "agents"] }); },
   });
   const appUrl = info.data?.appUrl ?? (typeof window !== "undefined" ? window.location.origin : "");
+  // Only the owner creates and revokes agent keys (the server refuses everyone else).
+  const owner = info.data?.role === "owner";
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Agents" actions={<Button variant="primary" onClick={() => setCreating(true)}><IconPlus /> New agent</Button>}>
+      <PageHeader title="Agents" actions={owner ? <Button variant="primary" onClick={() => setCreating(true)}><IconPlus /> New agent</Button> : undefined}>
         Each agent has its own key. Every write carries the agent ID, so provenance always says who wrote what. Keys are shown once; only a hash and an 8-character prefix are stored.
+        {info.data && !owner && <span className="mt-1 block">Only the space owner can create or revoke agent keys.</span>}
       </PageHeader>
       <ErrorNote error={q.error} />
       <Card title="Registry">
         {q.isLoading && <div className="p-4"><Skeleton className="h-24" /></div>}
-        {q.data && !q.data.agents.length && <Empty title="No agents yet" action={<Button variant="primary" onClick={() => setCreating(true)}>Create the first key</Button>}>Create a key, then connect Claude Code, the MCP Inspector or any MCP client.</Empty>}
+        {q.data && !q.data.agents.length && <Empty title="No agents yet" action={owner ? <Button variant="primary" onClick={() => setCreating(true)}>Create the first key</Button> : undefined}>{owner ? "Create a key, then connect Claude Code, the MCP Inspector or any MCP client." : "The space owner has not created any agent keys yet."}</Empty>}
         {q.data && q.data.agents.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-xs">
@@ -52,7 +56,7 @@ export default function AgentsPage() {
                     <td className="px-2 py-2.5 tabular">{Number(a.recalls ?? 0)}</td>
                     <td className="px-2 py-2.5 text-muted">{ago(a.lastSeenAt)}</td>
                     <td className="px-2 py-2.5"><Pill tone={a.status === "active" ? "active" : "tampered"}>{a.status}</Pill></td>
-                    <td className="px-4 py-2.5 text-right">{a.status === "active" && <Button size="sm" variant="danger" onClick={() => setRevoke(a)}>Revoke</Button>}</td>
+                    <td className="px-4 py-2.5 text-right">{owner && a.status === "active" && <Button size="sm" variant="danger" onClick={() => setRevoke(a)}>Revoke</Button>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -76,11 +80,11 @@ export default function AgentsPage() {
         <p className="px-4 pb-3 text-2xs text-muted">Agent descriptions are embedded with all-minilm (384 dimensions) and searched with cosine similarity in VectorsDB.</p>
       </Card>
 
-      <CreateAgent open={creating} onClose={() => setCreating(false)} space={space} onCreated={(r) => { setCreating(false); setCreated(r); qc.invalidateQueries({ queryKey: ["space", space, "agents"] }); }} />
+      {owner && <CreateAgent open={creating} onClose={() => setCreating(false)} space={space} onCreated={(r) => { setCreating(false); setCreated(r); qc.invalidateQueries({ queryKey: ["space", space, "agents"] }); }} />}
       <Modal open={!!created} onClose={() => setCreated(null)} title={`Key for ${created?.agent.name ?? ""}`} wide>
         {created && <Snippets apiKey={created.key} url={appUrl} />}
       </Modal>
-      <Modal open={!!revoke} onClose={() => setRevoke(null)} title="Revoke key">
+      <Modal open={!!revoke} onClose={() => { setRevoke(null); del.reset(); }} title="Revoke key">
         <p className="text-xs text-muted">Revoke the key for <span className="text-text">{revoke?.name}</span>? The agent loses access immediately. Its past entries stay in the chain with its ID.</p>
         <ErrorNote error={del.error} />
         <div className="mt-4 flex justify-end gap-2"><Button variant="ghost" onClick={() => setRevoke(null)}>Cancel</Button><Button variant="danger" loading={del.isPending} onClick={() => revoke && del.mutate(revoke.id)}>Revoke</Button></div>
@@ -93,11 +97,13 @@ function CreateAgent({ open, onClose, space, onCreated }: { open: boolean; onClo
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [scopes, setScopes] = useState<string[]>(["remember", "recall", "verify"]);
+  // Each opening starts clean.
+  useEffect(() => { if (open) { setName(""); setDescription(""); setScopes(["remember", "recall", "verify"]); m.reset(); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const m = useMutation({ mutationFn: () => api<{ key: string; agent: Agent }>(`/api/app/spaces/${space}/agents`, { method: "POST", json: { name, description, scopes } }), onSuccess: (r) => { onCreated(r); setName(""); setDescription(""); } });
   return (
     <Modal open={open} onClose={onClose} title="New agent">
       <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); m.mutate(); }}>
-        <Field label="Name"><Input required minLength={2} maxLength={48} pattern="[a-zA-Z0-9 ._-]+" value={name} onChange={(e) => setName(e.target.value)} placeholder="support-agent" /></Field>
+        <Field label="Name"><Input required minLength={2} maxLength={48} pattern={AGENT_NAME_PATTERN} title="Letters, digits, spaces, dots, underscores and hyphens" value={name} onChange={(e) => setName(e.target.value)} placeholder="support-agent" /></Field>
         <Field label="Description" help="Embedded so agents can be found by capability."><Textarea required minLength={3} maxLength={300} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Customer support agent for billing and refunds." /></Field>
         <Field label="Scopes">
           <div className="flex flex-wrap gap-1.5">

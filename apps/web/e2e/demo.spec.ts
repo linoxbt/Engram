@@ -78,7 +78,7 @@ test.describe.serial("signature path", () => {
     await card.getByRole("button", { name: "Attack" }).click();
     await expect(card.getByText(/Changed the text of #\d+/)).toBeVisible();
     await card.getByRole("button", { name: /Verify/ }).click();
-    await expect(card.getByText(/Caught\. Content hash/)).toBeVisible();
+    await expect(card.getByText(/Caught by: Salted content hash/)).toBeVisible();
   });
 
   test("Tamper Lab: rewriting later history is caught by the signed checkpoint", async ({ page }) => {
@@ -90,7 +90,7 @@ test.describe.serial("signature path", () => {
     await card.getByRole("button", { name: "Attack" }).click();
     await expect(card.getByText(/Rewrote #\d+/)).toBeVisible();
     await card.getByRole("button", { name: /Verify/ }).click();
-    await expect(card.getByText(/Caught\. Signed checkpoint/)).toBeVisible();
+    await expect(card.getByText(/Caught by: Signed Merkle checkpoint/)).toBeVisible();
     await page.getByRole("button", { name: /Reset sandbox/ }).click();
     await expect(page.getByText(/Sandbox restored/).last()).toBeVisible();
   });

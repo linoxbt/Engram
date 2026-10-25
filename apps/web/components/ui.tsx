@@ -233,15 +233,16 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
 }
 
 /** Right-side drawer on desktop, bottom sheet below 900px. Escape closes. */
-export function Drawer({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode }) {
+export function Drawer({ open, onClose, title, label, children }: { open: boolean; onClose: () => void; title: ReactNode; label?: string; children: ReactNode }) {
   const ref = useRef<HTMLElement>(null);
+  const titleId = useId();
   useLayer(open, onClose, ref, { focus: "self" });
   if (!open) return null;
   return portal(
     <div className="fixed inset-0 z-40 bg-black/50 anim-fade" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside ref={ref} role="dialog" aria-modal="true" tabIndex={-1} className="absolute bottom-0 right-0 flex max-h-[88vh] w-full flex-col border-t border-line bg-panel focus:outline-none min-[900px]:top-0 min-[900px]:max-h-none min-[900px]:w-[560px] min-[900px]:border-l min-[900px]:border-t-0 anim-slide-in">
+      <aside ref={ref} role="dialog" aria-modal="true" aria-label={label} aria-labelledby={label ? undefined : titleId} tabIndex={-1} className="absolute bottom-0 right-0 flex max-h-[88vh] w-full flex-col border-t border-line bg-panel focus:outline-none min-[900px]:top-0 min-[900px]:max-h-none min-[900px]:w-[560px] min-[900px]:border-l min-[900px]:border-t-0 anim-slide-in">
         <header className="flex items-center justify-between border-b border-line px-4 py-3">
-          <div className="min-w-0">{title}</div>
+          <div id={titleId} className="min-w-0">{title}</div>
           <button onClick={onClose} aria-label="Close drawer" className="text-muted hover:text-text"><IconCross /></button>
         </header>
         <div className="flex-1 overflow-auto">{children}</div>
@@ -265,7 +266,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div aria-live="polite" className="pointer-events-none fixed bottom-4 right-4 z-[90] flex max-w-sm flex-col gap-2">
         {items.map((t) => (
-          <div key={t.id} className={clsx("panel anim-slide-in px-3 py-2 text-xs shadow-lg", t.tone === "ok" && "border-valid/50 text-valid", t.tone === "error" && "border-tamper/50 text-tamper")}>{t.text}</div>
+          <div key={t.id} role={t.tone === "error" ? "alert" : "status"} className={clsx("panel anim-slide-in px-3 py-2 text-xs shadow-lg", t.tone === "ok" && "border-valid/50 text-valid", t.tone === "error" && "border-tamper/50 text-tamper")}>{t.text}</div>
         ))}
       </div>
     </ToastCtx.Provider>

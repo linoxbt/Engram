@@ -7,15 +7,16 @@ import { api } from "@/lib/client/api";
 import { pca2 } from "@/lib/client/pca";
 import { Feed, type FeedItem } from "@/components/feed";
 import { IconReflect, IconSearch } from "@/components/icons";
-import { PageHeader, useOpenMemory } from "@/components/space-shell";
+import { PageHeader, useCanWrite, useOpenMemory } from "@/components/space-shell";
 import { Button, Card, Empty, ErrorNote, Input, Skeleton, useToast } from "@/components/ui";
 
 interface GNode { id: string; label: string; summary: string; members: number; vector: number[] }
 interface GEdge { a: string; b: string; weight: number; conflict: boolean }
 type SimNode = SimulationNodeDatum & GNode & { r: number };
 type SimLink = SimulationLinkDatum<SimNode> & { conflict: boolean; weight: number };
+const labelOf = (n: { label: string }) => (n.label.length > 26 ? n.label.slice(0, 25) + "…" : n.label);
 
-export default function ConceptsPage() {
+export function ConceptsView() {
   const { space } = useParams<{ space: string }>();
   const open = useOpenMemory();
   const qc = useQueryClient();
@@ -24,10 +25,19 @@ export default function ConceptsPage() {
   const [sel, setSel] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const members = useQuery({ enabled: !!sel, queryKey: ["space", space, "concept", sel], queryFn: () => api<{ members: FeedItem[] }>(`/api/app/spaces/${space}/concepts/${sel}`) });
-  const relabel = useMutation({ mutationFn: (id: string) => api(`/api/app/spaces/${space}/concepts/${id}`, { method: "POST" }), onSuccess: () => qc.invalidateQueries({ queryKey: ["space", space, "concepts"] }) });
+  const canWrite = useCanWrite();
+  const relabel = useMutation({
+    mutationFn: (id: string) => api(`/api/app/spaces/${space}/concepts/${id}`, { method: "POST" }),
+    onSuccess: () => { toast("Concept relabelled.", "ok"); qc.invalidateQueries({ queryKey: ["space", space, "concepts"] }); },
+    onError: (e) => toast(e instanceof Error ? e.message : String(e), "error"),
+  });
   const reflect = useMutation({
-    mutationFn: (id: string) => api<{ seq: number }>(`/api/app/spaces/${space}/concepts/${id}/reflect`, { method: "POST" }),
-    onSuccess: (r) => { toast(`Summary written as entry #${r.seq}, linked to its sources.`, "ok"); qc.invalidateQueries({ queryKey: ["space", space] }); },
+    mutationFn: (id: string) => api<{ seq: number; unchanged?: boolean }>(`/api/app/spaces/${space}/concepts/${id}/reflect`, { method: "POST" }),
+    onSuccess: (r) => {
+      // Reflecting an unchanged concept returns the existing summary instead of writing a new entry.
+      toast(r.unchanged ? `Nothing new to summarise: the summary at entry #${r.seq} is still current.` : `Summary written as entry #${r.seq}, linked to its sources.`, "ok");
+      if (!r.unchanged) qc.invalidateQueries({ queryKey: ["space", space] });
+    },
     onError: (e) => toast(e instanceof Error ? e.message : String(e), "error"),
   });
   const node = g.data?.nodes.find((n) => n.id === sel);
@@ -50,12 +60,16 @@ export default function ConceptsPage() {
               <div className="space-y-2 border-b border-line p-4 text-xs">
                 <p className="text-muted">{node.summary || "Not labelled yet."}</p>
                 <p className="text-2xs text-muted">{node.members} members</p>
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={() => relabel.mutate(node.id)} loading={relabel.isPending}>Relabel</Button>
-                  <Button size="sm" variant="outline" onClick={() => reflect.mutate(node.id)} loading={reflect.isPending}><IconReflect /> Reflect</Button>
-                </div>
+                {canWrite && (
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => relabel.mutate(node.id)} loading={relabel.isPending}>Relabel</Button>
+                    <Button size="sm" variant="outline" onClick={() => reflect.mutate(node.id)} loading={reflect.isPending}><IconReflect /> Reflect</Button>
+                  </div>
+                )}
               </div>
-              <div className="max-h-[420px] overflow-y-auto">{members.isLoading ? <Skeleton className="m-4 h-20" /> : <Feed items={members.data?.members ?? []} onOpen={open} />}</div>
+              <div className="max-h-[420px] overflow-y-auto">
+                {members.isLoading ? <Skeleton className="m-4 h-20" /> : members.error ? <div className="p-4"><ErrorNote error={members.error} /></div> : <Feed items={members.data?.members ?? []} onOpen={open} />}
+              </div>
             </div>
           )}
         </Card>
@@ -70,6 +84,9 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
   const touched = useRef(false);
   const sim = useRef<{ nodes: SimNode[]; links: SimLink[] } | null>(null);
   const draw = useRef<() => void>(() => {});
+  // Selection and highlight only change how nodes are drawn; they live in refs so they never restart the layout.
+  const sel = useRef(selected);
+  const hl = useRef(highlight);
   const H = 480;
 
   const seeded = useMemo(() => {
@@ -99,6 +116,7 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
         ctx.lineWidth = l.conflict ? 2 / k : 1 / k;
         ctx.beginPath(); ctx.moveTo(s.x!, s.y!); ctx.lineTo(t.x!, t.y!); ctx.stroke();
       }
+      const highlight = hl.current, selected = sel.current;
       for (const n of seeded) {
         const hit = highlight && n.label.toLowerCase().includes(highlight);
         const dim = highlight && !hit;
@@ -113,7 +131,7 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
           ctx.fillStyle = "#0a0a0a";
           ctx.font = `${11 / k}px JetBrains Mono, monospace`;
           ctx.textAlign = "center";
-          ctx.fillText(n.label.length > 26 ? n.label.slice(0, 25) + "…" : n.label, n.x!, n.y! + n.r + 12 / k);
+          ctx.fillText(labelOf(n), n.x!, n.y! + n.r + 12 / k);
         }
         ctx.globalAlpha = 1;
       }
@@ -128,22 +146,31 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
       .on("tick", () => draw.current())
       .on("end", () => {
         if (touched.current || !seeded.length) return;
-        // Fit every node in view once the layout settles.
-        const pad = 40, w = c.clientWidth;
-        const xs = seeded.flatMap((n) => [n.x! - n.r, n.x! + n.r]), ys = seeded.flatMap((n) => [n.y! - n.r, n.y! + n.r + 16]);
-        const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
-        const k = Math.min(2, Math.max(0.3, Math.min((w - pad * 2) / bw, (H - pad * 2) / bh)));
-        view.current = { k, x: -((Math.max(...xs) + Math.min(...xs)) / 2) * k, y: -((Math.max(...ys) + Math.min(...ys)) / 2) * k };
+        // Fit every node and its label in view once the layout settles. Labels keep a fixed screen size, so their
+        // extent in world units depends on the zoom: settle it in a few rounds.
+        const pad = 24, w = c.clientWidth;
+        ctx.font = "11px JetBrains Mono, monospace";
+        const half = new Map(seeded.map((n) => [n.id, ctx.measureText(labelOf(n)).width / 2]));
+        let k = 1, box = { x0: 0, x1: 0, y0: 0, y1: 0 };
+        for (let round = 0; round < 4; round++) {
+          const xs = seeded.flatMap((n) => { const e = Math.max(n.r, half.get(n.id)! / k); return [n.x! - e, n.x! + e]; });
+          const ys = seeded.flatMap((n) => [n.y! - n.r, n.y! + n.r + 16 / k]);
+          box = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+          k = Math.min(2, Math.max(0.3, Math.min((w - pad * 2) / Math.max(1, box.x1 - box.x0), (H - pad * 2) / Math.max(1, box.y1 - box.y0))));
+        }
+        view.current = { k, x: -((box.x1 + box.x0) / 2) * k, y: -((box.y1 + box.y0) / 2) * k };
         draw.current();
       });
     resize();
     window.addEventListener("resize", resize);
     return () => { s.stop(); window.removeEventListener("resize", resize); };
-  }, [seeded, edges, selected, highlight]);
+  }, [seeded, edges]);
+  useEffect(() => { sel.current = selected; hl.current = highlight; draw.current(); }, [selected, highlight]);
 
   // Pan, zoom and select.
   useEffect(() => {
     const c = canvas.current!;
+    // `dragging` is set only by a press on the canvas, so releasing the pointer elsewhere on the page selects nothing.
     let dragging = false, moved = false, lx = 0, ly = 0;
     const toWorld = (ex: number, ey: number) => {
       const r = c.getBoundingClientRect(); const { x, y, k } = view.current;
@@ -152,6 +179,7 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
     const down = (e: PointerEvent) => { dragging = true; moved = false; touched.current = true; lx = e.clientX; ly = e.clientY; };
     const move = (e: PointerEvent) => { if (!dragging) return; const dx = e.clientX - lx, dy = e.clientY - ly; if (Math.abs(dx) + Math.abs(dy) > 2) moved = true; view.current.x += dx; view.current.y += dy; lx = e.clientX; ly = e.clientY; draw.current(); };
     const up = (e: PointerEvent) => {
+      if (!dragging) return;
       dragging = false;
       if (moved) return;
       const [wx, wy] = toWorld(e.clientX, e.clientY);

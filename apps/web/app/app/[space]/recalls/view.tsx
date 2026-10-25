@@ -10,7 +10,7 @@ import { Card, Empty, ErrorNote, Pill, Select, Skeleton, Tabs, cx } from "@/comp
 interface Log { id: string; agent: string; agentName: string; query: string; asOf: string | null; k: string; topDistance: string | null; returned: string[]; createdAt: string }
 interface Gap { query: string; count: number; best: number; last: string }
 
-export default function RecallsPage() {
+export function RecallsView() {
   const { space } = useParams<{ space: string }>();
   const open = useOpenMemory();
   const [tab, setTab] = useState<"audit" | "gaps">("audit");
@@ -59,6 +59,7 @@ export default function RecallsPage() {
         {tab === "gaps" && (
           <Card title="Questions memory could not answer well">
             {gaps.isLoading && <div className="p-4"><Skeleton className="h-24" /></div>}
+            {gaps.error ? <div className="p-4"><ErrorNote error={gaps.error} /></div> : null}
             {gaps.data && !gaps.data.gaps.length && <Empty title="No gaps found">Queries whose best match was far away (cosine distance above 0.45) show up here.</Empty>}
             <ul className="divide-y divide-line">
               {gaps.data?.gaps.map((g) => (

@@ -3,15 +3,18 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { Checkpoint } from "@engram/core";
 import { api } from "@/lib/client/api";
 import { useSpaceInfo, type SpaceInfoResponse } from "@/lib/client/hooks";
 import { pollInterval } from "@/lib/client/live";
+import { criticalOf, staleBy, warningsOf } from "@/lib/client/report-copy";
 import { verifySpaceInBrowser } from "@/lib/client/verify";
 import { ChainStrip } from "@/components/chain-strip";
 import { Feed, type FeedItem } from "@/components/feed";
 import { IconTick } from "@/components/icons";
 import { IntegrityBadge, type Integrity } from "@/components/integrity-badge";
-import { PageHeader, useLiveMode, useOpenMemory } from "@/components/space-shell";
+import { ReportVerdict } from "@/components/report-status";
+import { PageHeader, useCanWrite, useLiveMode, useOpenMemory } from "@/components/space-shell";
 import { Button, Card, Empty, ErrorNote, Skeleton, Stat, cx } from "@/components/ui";
 
 interface Overview {
@@ -24,16 +27,30 @@ interface Overview {
   topConcepts: { id: string; label: string; members: number }[];
 }
 
-export default function OverviewPage() {
+export function OverviewView() {
   const { space } = useParams<{ space: string }>();
   const live = useLiveMode();
   const open = useOpenMemory();
   const qc = useQueryClient();
   // Stats and the strip refresh slowly; the cheap feed endpoint carries the live updates.
-  const q = useQuery({ queryKey: ["space", space, "overview"], queryFn: () => api<Overview>(`/api/app/spaces/${space}/overview`), refetchInterval: live === "polling" ? 15_000 : 60_000 });
-  const feedQ = useQuery({ queryKey: ["space", space, "feed"], queryFn: () => api<{ items: FeedItem[] }>(`/api/app/spaces/${space}/feed?limit=30`), refetchInterval: pollInterval(live) });
-  const agents = useQuery({ queryKey: ["space", space, "agents"], queryFn: () => api<{ agents: { lastSeenAt: string | null; status: string }[] }>(`/api/app/spaces/${space}/agents`) });
-  const recalls = useQuery({ queryKey: ["space", space, "recalls"], queryFn: () => api<{ recalls: unknown[] }>(`/api/app/spaces/${space}/recalls`) });
+  const canWrite = useCanWrite();
+  // Stats and the strip refresh slowly; the cheap feed endpoint carries the live updates. The overview response
+  // already carries the first page of the feed, so the feed query starts from it instead of asking again.
+  const q = useQuery({
+    queryKey: ["space", space, "overview"],
+    queryFn: async () => {
+      const o = await api<Overview>(`/api/app/spaces/${space}/overview`);
+      if (!qc.getQueryData(["space", space, "feed"])) qc.setQueryData(["space", space, "feed"], { items: o.feed });
+      return o;
+    },
+    refetchInterval: live === "polling" ? 15_000 : 60_000,
+  });
+  const feedQ = useQuery({ enabled: q.isSuccess, queryKey: ["space", space, "feed"], queryFn: () => api<{ items: FeedItem[] }>(`/api/app/spaces/${space}/feed?limit=30`), refetchInterval: pollInterval(live), staleTime: pollInterval(live) });
+  // The getting-started checklist is only shown for young spaces; only then are agents and recalls needed here.
+  const young = !!q.data && q.data.stats.entries < 40;
+  const agents = useQuery({ enabled: young, queryKey: ["space", space, "agents"], queryFn: () => api<{ agents: { lastSeenAt: string | null; status: string }[] }>(`/api/app/spaces/${space}/agents`) });
+  const recalls = useQuery({ enabled: young, queryKey: ["space", space, "recalls"], queryFn: () => api<{ recalls: unknown[] }>(`/api/app/spaces/${space}/recalls`) });
+  const cps = useQuery({ enabled: q.isSuccess, queryKey: ["space", space, "checkpoints"], queryFn: () => api<{ checkpoints: Checkpoint[] }>(`/api/app/spaces/${space}/checkpoints`), staleTime: 30_000 });
   const verify = useMutation({
     mutationFn: () => api(`/api/app/spaces/${space}/verify`, { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["space", space] }),
@@ -47,7 +64,7 @@ export default function OverviewPage() {
       const d = info.data ?? (await api<SpaceInfoResponse>(`/api/app/spaces/${space}`));
       return verifySpaceInBrowser(space, d.publicKey, (p) => setChecked(p.done), !d.settings.sandbox);
     },
-    onSuccess: () => verify.mutate(),
+    onSuccess: () => { if (canWrite) verify.mutate(); },
   });
   const browserReport = browserVerify.data;
 
@@ -81,15 +98,17 @@ export default function OverviewPage() {
         <>
           <div className="grid gap-4 lg:grid-cols-3">
             <div className="lg:col-span-2">
-              <IntegrityBadge integrity={o.integrity} checkpoint={o.latestCheckpoint} size="lg" onVerify={browserVerify.isPending ? undefined : () => browserVerify.mutate()} />
+              <IntegrityBadge integrity={o.integrity} checkpoint={o.latestCheckpoint} size="lg" stale={staleBy(o.integrity, o.stats.entries)} onVerify={browserVerify.isPending ? undefined : () => browserVerify.mutate()} />
               {browserVerify.isPending && <p className="mt-2 text-xs text-muted">Recomputing {checked} hashes in your browser…</p>}
               {browserVerify.error ? <div className="mt-2"><ErrorNote error={browserVerify.error} /></div> : null}
               {browserReport && !browserVerify.isPending && (
-                <p className={cx("mt-2 text-xs", browserReport.status === "valid" ? "text-valid" : browserReport.status === "warning" ? "text-warn" : "text-tamper")}>
-                  Your browser recomputed {browserReport.entries} entries: {browserReport.status === "tampered"
-                    ? `changed at #${browserReport.findings.find((f) => f.severity === "critical")?.seq ?? browserReport.validThrough + 1}.`
-                    : `verified through #${browserReport.validThrough}${browserReport.status === "warning" ? ", with warnings" : ""}.`} {browserReport.checkpointsValid}/{browserReport.checkpointsTotal} signed checkpoints valid. Details on the <Link className="text-accent" href={`/app/${space}/chain`}>Chain</Link> page.
-                </p>
+                <div className="mt-2 space-y-1 text-xs">
+                  <ReportVerdict report={browserReport} size={13} />
+                  <p className="text-muted">
+                    Your browser recomputed {browserReport.entries} entries. {browserReport.checkpointsValid}/{browserReport.checkpointsTotal} signed checkpoints valid.
+                    {browserReport.status !== "valid" && (criticalOf(browserReport)[0] ?? warningsOf(browserReport)[0]) ? ` ${(criticalOf(browserReport)[0] ?? warningsOf(browserReport)[0]).message}` : ""} Details on the <Link className="text-accent" href={`/app/${space}/chain`}>Chain</Link> page.
+                  </p>
+                </div>
               )}
             </div>
             {showChecklist ? (
@@ -113,7 +132,7 @@ export default function OverviewPage() {
                       <div className="text-gold">{o.latestCheckpoint.fileId}</div>
                       <div className="mt-1 text-muted">{o.latestCheckpoint.size} entries signed with Ed25519.</div>
                     </>
-                  ) : <div className="text-muted">No signed checkpoint yet. One is made every few minutes and after every {"N"} writes.</div>}
+                  ) : <div className="text-muted">No signed checkpoint yet. One is made every few minutes and after every {info.data?.settings.checkpointEvery ?? 16} writes.</div>}
                 </div>
               </Card>
             )}
@@ -131,7 +150,7 @@ export default function OverviewPage() {
           <Card title={`Chain · last ${o.strip.length} of ${o.stats.entries}`} action={<Link href={`/app/${space}/chain`} className="text-2xs text-accent hover:underline">Verify →</Link>}>
             <div className="p-4">
               {o.strip.length ? (
-                <ChainStrip compact blocks={o.strip.map((b) => ({ ...b, text: o.feed.find((f) => f.seq === b.seq)?.text }))} checkpoints={o.latestCheckpoint ? [o.latestCheckpoint.size] : []}
+                <ChainStrip compact blocks={o.strip.map((b) => ({ ...b, text: o.feed.find((f) => f.seq === b.seq)?.text }))} checkpoints={cps.data ? cps.data.checkpoints.map((c) => Number(c.size)) : o.latestCheckpoint ? [o.latestCheckpoint.size] : []}
                   onOpen={(seq) => open(`m_${space}_${String(seq).padStart(12, "0")}`)} label="Recent chain entries" />
               ) : <p className="text-xs text-muted">The chain is empty. The first memory becomes entry #0, linked to the space's genesis hash.</p>}
             </div>
@@ -156,7 +175,7 @@ export default function OverviewPage() {
               <div className="border-t border-line px-4 py-2.5 text-2xs text-muted">{o.stats.forgets} forget entries · {o.stats.links} resolutions · {o.stats.concepts} concepts</div>
             </Card>
           </div>
-          {o.stats.entries > 0 && !o.integrity && <Button onClick={() => verify.mutate()} loading={verify.isPending}>Verify on the server</Button>}
+          {canWrite && o.stats.entries > 0 && !o.integrity && <Button onClick={() => verify.mutate()} loading={verify.isPending}>Verify on the server</Button>}
         </>
       )}
     </div>

@@ -4,17 +4,19 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
 import { when } from "@/lib/format";
-import { PageHeader, useOpenMemory } from "@/components/space-shell";
+import { PageHeader, useCanWrite, useOpenMemory } from "@/components/space-shell";
 import { Button, Card, Empty, ErrorNote, Pill, Skeleton, useToast } from "@/components/ui";
 
 interface Side { id: string; seq: number; text: string | null; agentName: string; createdAt: string; source: string | null; subject: string | null; importance: number }
-interface Pair { a: Side; b: Side; reason: string }
+/** `reason` is the classifier's explanation for this pair (empty when none was recorded or it was scrubbed). */
+interface Pair { a: Side; b: Side; reason: string | null }
 
-export default function ConflictsPage() {
+export function ConflictsView() {
   const { space } = useParams<{ space: string }>();
   const qc = useQueryClient();
   const toast = useToast();
   const open = useOpenMemory();
+  const canWrite = useCanWrite();
   const q = useQuery({ queryKey: ["space", space, "conflicts"], queryFn: () => api<{ pairs: Pair[] }>(`/api/app/spaces/${space}/conflicts`) });
   // Pending decisions per conflict pair, so overlapping mutations neither clear each other nor double-submit.
   const [pending, setPending] = useState<Record<string, string>>({});
@@ -39,7 +41,7 @@ export default function ConflictsPage() {
       {q.data?.pairs.map((p) => {
         const key = p.a.id + p.b.id;
         return (
-          <Card key={key} state="tampered" title={<span>#{p.a.seq} and #{p.b.seq} disagree. Choose which is right.</span>}>
+          <Card key={key} state="tampered" title={<span>#{p.a.seq} and #{p.b.seq} disagree.{canWrite ? " Choose which is right." : ""}</span>}>
             <div className="grid gap-3 p-4 md:grid-cols-2">
               {[p.a, p.b].map((s, i) => (
                 <div key={s.id} className="panel flex flex-col p-3">
@@ -48,19 +50,21 @@ export default function ConflictsPage() {
                   <div className="mt-2 flex flex-wrap gap-1.5 text-2xs text-muted">
                     <span>{s.agentName}</span><span>· {when(s.createdAt)}</span>{s.source && <Pill tone="accent">{s.source}</Pill>}<span>· importance {s.importance}</span>
                   </div>
-                  <Button className="mt-3" variant="outline" loading={pending[key] === "supersede" + s.id} disabled={!!pending[key]}
-                    onClick={() => decide(key, "supersede", s.id, i === 0 ? p.b.id : p.a.id)}>
-                    {i === 0 ? "A" : "B"} is right
-                  </Button>
+                  {canWrite && (
+                    <Button className="mt-3" variant="outline" loading={pending[key] === "supersede" + s.id} disabled={!!pending[key]}
+                      onClick={() => decide(key, "supersede", s.id, i === 0 ? p.b.id : p.a.id)}>
+                      {i === 0 ? "A" : "B"} is right
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-2.5">
-              <p className="text-2xs text-muted">{p.reason}</p>
-              <div className="flex gap-2">
+              <p className="min-w-0 flex-1 text-2xs text-muted">{p.reason ? <>Why they conflict: {p.reason}</> : "No reason was recorded for this pair."}</p>
+              {canWrite && <div className="flex gap-2">
                 <Button size="sm" variant="ghost" loading={pending[key] === "refine" + p.b.id} disabled={!!pending[key]} onClick={() => decide(key, "refine", p.b.id, p.a.id)}>Both true</Button>
                 <Button size="sm" variant="ghost" loading={pending[key] === "dismiss" + p.b.id} disabled={!!pending[key]} onClick={() => decide(key, "dismiss", p.b.id, p.a.id)}>Dismiss</Button>
-              </div>
+              </div>}
             </div>
           </Card>
         );
