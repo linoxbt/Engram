@@ -2,8 +2,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildCheckpoint, checkpointFileId, signCheckpoint, type EntryMeta } from "@engram/core";
 import {
-  append, createSpace, getConfig, getEntry, getSpace, latestCheckpoint, listAllSpaces, loadChain, loadCheckpoints, recall, remember, runCheckpoint, runSentinel,
-  RememberInput, repairSpace, updateSettings, verifyStoredSpace, ConflictError, type Collection,
+  append, createSpace, getConfig, getEntry, getSpace, labelConcept, latestCheckpoint, linkFound, listAllSpaces, loadChain, loadCheckpoints, recall,
+  reflect, remember, repairSpace, runCheckpoint, runSentinel, updateSettings, verifyStoredSpace, ConflictError, RememberInput, type Collection,
 } from "../src/index";
 import { setup } from "./helpers";
 
@@ -176,6 +176,23 @@ describe("repair under concurrent writers", () => {
     expect(xd.d.supersededBy).toBe(`m_${ctx.space.key}_000000000003`);
     expect((await getEntry(b, y.id))!.metadata.d.status).toBe("active");
     expect(r.fixed).toBe(1);
+  });
+});
+
+describe("space isolation of id-taking calls", () => {
+  it("labelling, reflecting on or linking another space's records is not found", async () => {
+    const a = await setup();
+    const other = await setup();
+    const m = await remember(other.ctx, { text: "Kestrel Foods renewed their annual contract.", subject: "customer:kestrel" });
+    await other.drain();
+    const [concept] = await other.b.vectors.query<{ space: string; label: string }>("concepts", { filters: [{ op: "eq", path: "metadata.space", values: [other.space.key] }], limit: 1, withVectors: false });
+    expect(concept).toBeTruthy();
+    // Same backend for both, as in production: point the first space's context at the second's storage.
+    const ctx = { ...a.ctx, b: other.b };
+    await expect(labelConcept(ctx, concept.$id)).rejects.toThrow(/not found/);
+    await expect(reflect(ctx, concept.$id)).rejects.toThrow(/not found/);
+    await expect(linkFound(ctx, { target: m.id, other: m.id, kind: "contradict", reason: "" })).rejects.toThrow(/not found/);
+    expect((await other.b.vectors.get<{ label: string }>("concepts", concept.$id))!.metadata.label).toBe(concept.metadata.label);
   });
 });
 

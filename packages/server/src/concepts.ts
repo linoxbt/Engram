@@ -5,7 +5,7 @@ import { conceptId, cosine, count8, iso, normalize, quantize, type EntryMeta } f
 import type { VDoc } from "./backend/types";
 import { patchDerived } from "./chain";
 import type { Ctx } from "./context";
-import { isConflict } from "./errors";
+import { EngramError, isConflict } from "./errors";
 import { modelFor } from "./relate";
 
 export interface ConceptMeta {
@@ -57,7 +57,7 @@ const LabelOutput = z.object({ label: z.string().max(40), summary: z.string().ma
 export async function labelConcept(ctx: Ctx, id: string): Promise<{ label: string; summary: string } | null> {
   const { b, space } = ctx;
   const c = await b.vectors.get<ConceptMeta>("concepts", id);
-  if (!c) return null;
+  if (!c || c.metadata.space !== space.key) throw new EngramError("not_found", "Concept not found.");
   const mems = await b.vectors.query<EntryMeta>("memories", {
     filters: [{ op: "eq", path: "metadata.space", values: [space.key] }, { op: "eq", path: "metadata.d.concept", values: [id] }, { op: "eq", path: "metadata.status", values: ["active", "superseded"] }],
     order: { field: "$id", dir: "desc" },
@@ -91,7 +91,7 @@ export async function labelConcept(ctx: Ctx, id: string): Promise<{ label: strin
 async function writeLabel(ctx: Ctx, id: string, out: { label: string; summary: string }, labeled: boolean) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const c = await ctx.b.vectors.get<ConceptMeta>("concepts", id);
-    if (!c) return;
+    if (!c || c.metadata.space !== ctx.space.key) return;
     const meta: ConceptMeta = { ...c.metadata, label: out.label, summary: out.summary, ...(labeled ? { labeledAtMembers: c.metadata.members } : {}) };
     try {
       await ctx.b.vectors.update("concepts", id, { metadata: meta }, undefined, { ifUpdatedAt: c.$updatedAt });
