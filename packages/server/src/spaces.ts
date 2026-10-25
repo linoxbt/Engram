@@ -84,10 +84,20 @@ export async function listSpacesForUser(b: Backend, userId: string): Promise<Spa
   return spaces.filter((s): s is SpaceInfo => !!s);
 }
 
-export async function listAllSpaces(b: Backend): Promise<SpaceInfo[]> {
+/** For scheduled Functions: bounded parallelism, and one unreadable team is skipped rather than failing the run. */
+export async function listAllSpaces(b: Backend, concurrency = 8): Promise<SpaceInfo[]> {
   const teams = await b.teams.listAll("sp_");
-  const spaces = await Promise.all(teams.map((t) => getSpace(b, t.teamId.slice(3))));
-  return spaces.filter((s): s is SpaceInfo => !!s);
+  const out: (SpaceInfo | null)[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < teams.length) {
+      const i = next++;
+      try { out[i] = await getSpace(b, teams[i].teamId.slice(3)); }
+      catch (e) { console.error(`[engram] could not read space ${teams[i].teamId}`, e); }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, teams.length) }, worker));
+  return out.filter((s): s is SpaceInfo => !!s);
 }
 
 /** Danger zone: remove every document (agents and their keys included), checkpoint and export file, then the team. */

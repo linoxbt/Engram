@@ -17,28 +17,39 @@ import { integrityOf } from "./verify";
 const fileCache = new Map<string, Checkpoint>();
 const dec = new TextDecoder();
 
+async function readCheckpoint(b: Backend, bucket: string, fileId: string, spaceKey: string): Promise<Checkpoint | null> {
+  const hit = fileCache.get(fileId);
+  if (hit) return hit;
+  const bytes = await b.files.get(bucket, fileId);
+  if (!bytes) return null;
+  let cp: Checkpoint;
+  try { cp = JSON.parse(dec.decode(bytes)) as Checkpoint; } catch { return null; }
+  // A malformed file is left to the verifier to report; the engine must never build on it.
+  if (checkpointProblem(cp, spaceKey)) return null;
+  fileCache.set(fileId, cp);
+  return cp;
+}
+
 export async function loadCheckpoints(b: Backend, spaceKey: string): Promise<Checkpoint[]> {
   const bucket = getConfig().appwrite.checkpointsBucket;
   const files = await b.files.list(bucket, `cp_${spaceKey}_`);
   const out: Checkpoint[] = [];
   for (const f of files) {
-    let cp = fileCache.get(f.fileId);
-    if (!cp) {
-      const bytes = await b.files.get(bucket, f.fileId);
-      if (!bytes) continue;
-      try { cp = JSON.parse(dec.decode(bytes)) as Checkpoint; } catch { continue; }
-      // A malformed file is left to the verifier to report; the engine must never build on it.
-      if (checkpointProblem(cp, spaceKey)) continue;
-      fileCache.set(f.fileId, cp);
-    }
-    out.push(cp);
+    const cp = await readCheckpoint(b, bucket, f.fileId, spaceKey);
+    if (cp) out.push(cp);
   }
   return out.sort((a, b) => cpSize(a) - cpSize(b));
 }
 
+/** Downloads only the newest file: IDs embed the zero-padded seq, so ID order is size order. */
 export async function latestCheckpoint(b: Backend, spaceKey: string): Promise<Checkpoint | null> {
-  const all = await loadCheckpoints(b, spaceKey);
-  return all[all.length - 1] ?? null;
+  const bucket = getConfig().appwrite.checkpointsBucket;
+  const files = (await b.files.list(bucket, `cp_${spaceKey}_`)).sort((x, y) => (x.fileId < y.fileId ? 1 : -1));
+  for (const f of files) {
+    const cp = await readCheckpoint(b, bucket, f.fileId, spaceKey);
+    if (cp && checkpointFileId(cp) === f.fileId) return cp;
+  }
+  return null;
 }
 
 export interface CheckpointRun { created: boolean; reason?: string; checkpoint?: Checkpoint }
@@ -48,6 +59,8 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
   const head = await chainHead(b, space.key);
   if (!head) return { created: false, reason: "empty chain" };
   const size = Number(head.metadata.seq) + 1;
+  // Cheap exit for scheduled runs: settings record the latest checkpoint, so an idle space costs no file reads.
+  if (!opts.force && space.settings.latestCheckpoint?.size === size) return { created: false, reason: "no new entries" };
   const prev = await latestCheckpoint(b, space.key);
   if (prev && cpSize(prev) >= size && !opts.force) return { created: false, reason: "no new entries" };
 
@@ -61,7 +74,9 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
   const entries = (await loadChain(b, space.key)).slice(0, size);
   // The signer is the trust anchor: it must never certify a chain that does not verify. Without this, anyone who
   // rewrites or deletes entries after the latest checkpoint gets the change signed on the next scheduled run.
-  const report = await verifySpace({ space: space.key, entries, checkpoints: prev ? [...(await loadCheckpoints(b, space.key))] : [], publicKeyHex: cfg.checkpoint.publicKey ?? undefined });
+  // Checking against prev alone is enough: the chain links every entry, prev's root covers its first prev.size
+  // leaves, and prev itself was only signed after the same check. Older files are the sentinel's job.
+  const report = await verifySpace({ space: space.key, entries, checkpoints: prev ? [prev] : [], publicKeyHex: cfg.checkpoint.publicKey ?? undefined });
   if (entries.length !== size || report.status === "tampered") {
     await b.files.delete(bucket, lockId).catch(() => undefined);
     await updateSettings(b, space.key, { integrity: integrityOf(report) }).catch(() => undefined);
