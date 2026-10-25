@@ -179,7 +179,7 @@ function RelationsTab({ d, onNavigate }: { d: Detail; onNavigate: (id: string) =
           const x = 20 + (i % 3) * 140 + (i >= 3 ? 70 : 0) - (i >= 3 ? 70 : 0);
           const y = i < 3 ? 5 : 90;
           const rel = relOf(r.id);
-          const color = rel.tone === "conflict" ? "#d7263d" : rel.tone === "gold" ? "#9a7200" : rel.tone === "superseded" ? "#686868" : rel.tone === "violet" ? "#45454d" : "#0a0a0a";
+          const color = rel.tone === "conflict" ? "#d7263d" : rel.tone === "gold" ? "#946d00" : rel.tone === "superseded" ? "#686868" : rel.tone === "violet" ? "#45454d" : "#0a0a0a";
           return (
             <g key={r.id} className="cursor-pointer" onClick={() => onNavigate(r.id)}>
               <line x1="200" y1={y < 45 ? 45 : 75} x2={x + 40} y2={y < 45 ? y + 25 : y} stroke={color} strokeWidth="1" strokeDasharray={rel.tone === "superseded" ? "3 3" : undefined} />

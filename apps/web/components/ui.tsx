@@ -35,10 +35,10 @@ export function Spinner({ className }: { className?: string }) {
 }
 
 export function Input({ className, ...p }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...p} className={clsx("h-9 w-full rounded-[2px] border border-line-2 bg-bg px-3 text-sm text-text placeholder:text-muted/70 focus:border-accent focus:outline-none", className)} />;
+  return <input {...p} className={clsx("h-9 w-full rounded-[2px] border border-line-2 bg-bg px-3 text-sm text-text placeholder:text-muted focus:border-accent focus:outline-none", className)} />;
 }
 export function Textarea({ className, ...p }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea {...p} className={clsx("w-full rounded-[2px] border border-line-2 bg-bg px-3 py-2 text-sm text-text placeholder:text-muted/70 focus:border-accent focus:outline-none", className)} />;
+  return <textarea {...p} className={clsx("w-full rounded-[2px] border border-line-2 bg-bg px-3 py-2 text-sm text-text placeholder:text-muted focus:border-accent focus:outline-none", className)} />;
 }
 export function Select({ className, children, ...p }: SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...p} className={clsx("h-9 rounded-[2px] border border-line-2 bg-bg px-2 text-sm text-text focus:border-accent focus:outline-none", className)}>{children}</select>;
