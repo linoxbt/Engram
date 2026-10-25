@@ -4,14 +4,37 @@ import { z } from "zod";
 export const MEMORY_KINDS = ["fact", "preference", "event", "observation"] as const;
 export const RECALL_KINDS = ["fact", "preference", "event", "observation", "summary"] as const;
 export const SUBJECT_RE = /^[a-z0-9_-]+:[a-z0-9_.-]+$/;
+export const SOURCE_RE = /^[A-Za-z0-9_-]+:\S+$/;
+export const SUBJECT_MAX = 80;
+
+const EMAIL_RE = /[^\s@:]+@[^\s@]+\.[^\s@]+/;
+/**
+ * Phone-number-like: a run of digits and phone punctuation holding seven or more digits, standing on its own (not
+ * glued to letters, so "INV-2024-000123" or a UUID's hex groups pass, while "5551234567" and "+44 20 7946 0958"
+ * do not).
+ */
+export function looksLikePhone(s: string): boolean {
+  for (const m of s.matchAll(/[\d ().+-]+/g)) {
+    if ((m[0].match(/\d/g)?.length ?? 0) < 7) continue;
+    const before = s[m.index - 1], after = s[m.index + m[0].length];
+    if (!(before && /[A-Za-z]/.test(before)) && !(after && /[A-Za-z]/.test(after))) return true;
+  }
+  return false;
+}
+const PUBLIC_HEADER = "is stored in the entry's header, which is permanent and public on spaces with public verification. Use a stable internal ID in type:id form (customer:ada, ticket:4412), never an e-mail address or a phone number.";
+const noContactDetails = (field: string) => (s: string, ctx: z.RefinementCtx) => {
+  if (EMAIL_RE.test(s) || looksLikePhone(s)) ctx.addIssue({ code: "custom", message: `The ${field} ${PUBLIC_HEADER}` });
+};
 
 export const RememberInput = z.object({
   text: z.string().trim().min(3).max(2000),
   kind: z.enum(MEMORY_KINDS).default("fact"),
-  subject: z.string().trim().toLowerCase().regex(SUBJECT_RE, 'Use "type:name", for example customer:ada').optional(),
+  subject: z.string().trim().toLowerCase().max(SUBJECT_MAX, `Subjects are limited to ${SUBJECT_MAX} characters.`)
+    .regex(SUBJECT_RE, 'Use "type:name", for example customer:ada').superRefine(noContactDetails("subject")).optional(),
   importance: z.number().int().min(0).max(10).default(5),
   confidence: z.number().int().min(0).max(10).default(7),
-  source: z.string().max(200).optional(),
+  source: z.string().trim().max(200).regex(SOURCE_RE, `Use "type:id" for the source, for example ticket:4412. The source ${PUBLIC_HEADER}`)
+    .superRefine(noContactDetails("source")).optional(),
   // No transform here (MCP publishes this schema as JSON Schema); remember() normalises it to 24-char UTC ISO.
   validFrom: z.string().datetime({ offset: true }).optional(),
   idempotencyKey: z.string().max(64).optional(),
@@ -46,6 +69,8 @@ export type ForgetInput = z.infer<typeof ForgetInput>;
 export const TimelineInput = z.object({
   subject: z.string().trim().toLowerCase().regex(SUBJECT_RE),
   limit: z.number().int().min(1).max(500).default(100),
+  /** The `next` value of the previous page. */
+  cursor: z.string().regex(/^m_[a-z0-9]{8}_\d{12}$/, "Not a timeline cursor").optional(),
 });
 export type TimelineInput = z.infer<typeof TimelineInput>;
 

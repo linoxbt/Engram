@@ -3,10 +3,10 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { conceptId, cosine, count8, iso, normalize, quantize, type EntryMeta } from "@engram/core";
 import type { VDoc } from "./backend/types";
-import { patchDerived } from "./chain";
+import { patchDerived, queryAll } from "./chain";
 import type { Ctx } from "./context";
 import { EngramError, isConflict } from "./errors";
-import { modelFor } from "./relate";
+import { DATA_BEGIN, DATA_END, DATA_RULE, modelFor, promptValue } from "./relate";
 
 export interface ConceptMeta {
   space: string;
@@ -44,9 +44,13 @@ export async function assignConcept(ctx: Ctx, memoryId: string, vector: number[]
     const meta: ConceptMeta = { space: space.key, label: "", summary: "", members: count8(1), membersN: 1, labeledAtMembers: count8(0), lastMemberAt: iso(), createdAt: iso() };
     // A new concept gets a cheap rule-based label right away; the model relabels at 3, 10, 30 and 100 members.
     const mem = await b.vectors.get<EntryMeta>("memories", memoryId);
-    if (mem?.metadata.c.text) Object.assign(meta, heuristicLabel([mem.metadata.c.text]));
+    if (mem?.metadata.c.text && mem.metadata.d.status !== "forgotten") Object.assign(meta, heuristicLabel([mem.metadata.c.text]));
     await b.vectors.create("concepts", id, { embeddings: vector, metadata: meta }, b.teamRead(space.teamId));
     await patchDerived(b, memoryId, { concept: id });
+    // A forget that ran while d.concept was still unset could not know this label quotes the memory. Whichever of
+    // the two looks second sees the other: forget re-reads d.concept after erasing, and we re-read the status here.
+    const after = await b.vectors.get<EntryMeta>("memories", memoryId);
+    if (meta.label && (!after || after.metadata.d.status === "forgotten" || after.metadata.c.text == null)) await scrubConcept(ctx, id, memoryId);
     return id;
   }
   return "";
@@ -73,8 +77,8 @@ export async function labelConcept(ctx: Ctx, id: string): Promise<{ label: strin
     try {
       const res = await generateText({
         model,
-        system: "Name a cluster of related memories. Give a label of at most 4 words and a one-sentence summary. Return JSON only.",
-        prompt: texts.map((t) => `- ${t}`).join("\n"),
+        system: `Name a cluster of related memories. Give a label of at most 4 words and a one-sentence summary. Return JSON only. ${DATA_RULE}`,
+        prompt: [DATA_BEGIN, ...texts.map((t) => `- text ${promptValue(t)}`), DATA_END].join("\n"),
         output: Output.object({ schema: LabelOutput }),
         abortSignal: AbortSignal.timeout(8000),
       });
@@ -138,18 +142,21 @@ export function heuristicLabel(texts: string[]): { label: string; summary: strin
 export interface GraphNode { id: string; label: string; summary: string; members: number; vector: number[] }
 export interface GraphEdge { a: string; b: string; weight: number; conflict: boolean }
 
-export async function conceptGraph(ctx: Ctx): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+/** The map draws every concept up to this many (edges are pairwise); beyond it the answer says it is truncated. */
+const GRAPH_MAX = 1000;
+
+export async function conceptGraph(ctx: Ctx): Promise<{ nodes: GraphNode[]; edges: GraphEdge[]; truncated: boolean }> {
   const { b, space } = ctx;
-  const cs = await b.vectors.query<ConceptMeta>("concepts", { filters: [{ op: "eq", path: "metadata.space", values: [space.key] }], limit: 500 });
+  const all = await queryAll<ConceptMeta>(b, "concepts", { filters: [{ op: "eq", path: "metadata.space", values: [space.key] }], withVectors: true }, GRAPH_MAX + 1);
+  const cs = all.slice(0, GRAPH_MAX);
   const nodes: GraphNode[] = cs.map((c) => ({ id: c.$id, label: c.metadata.label || "Unlabelled", summary: c.metadata.summary, members: c.metadata.membersN ?? Number(c.metadata.members), vector: c.embeddings ?? [] }));
   const edges: GraphEdge[] = [];
   for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
     const s = cosine(nodes[i].vector, nodes[j].vector);
     if (s > 0.75) edges.push({ a: nodes[i].id, b: nodes[j].id, weight: s, conflict: false });
   }
-  const conflicted = await b.vectors.query<EntryMeta>("memories", {
+  const conflicted = await queryAll<EntryMeta>(b, "memories", {
     filters: [{ op: "eq", path: "metadata.space", values: [space.key] }, { op: "eq", path: "metadata.conflict", values: ["true"] }, { op: "eq", path: "metadata.status", values: ["active"] }],
-    limit: 200, withVectors: false,
   });
   const conceptOf = new Map(conflicted.map((m) => [m.$id, m.metadata.d.concept]));
   for (const m of conflicted) for (const p of m.metadata.d.contradictedBy) {
@@ -159,12 +166,12 @@ export async function conceptGraph(ctx: Ctx): Promise<{ nodes: GraphNode[]; edge
       if (e) e.conflict = true; else edges.push({ a, b: c2, weight: 0.5, conflict: true });
     }
   }
-  return { nodes, edges };
+  return { nodes, edges, truncated: all.length > GRAPH_MAX };
 }
 
-export async function conceptMembers(ctx: Ctx, id: string) {
-  return ctx.b.vectors.query<EntryMeta>("memories", {
+/** Members, newest first, every page up to `max`. */
+export async function conceptMembers(ctx: Ctx, id: string, max = 5000) {
+  return queryAll<EntryMeta>(ctx.b, "memories", {
     filters: [{ op: "eq", path: "metadata.space", values: [ctx.space.key] }, { op: "eq", path: "metadata.d.concept", values: [id] }],
-    order: { field: "$id", dir: "desc" }, limit: 100, withVectors: false,
-  });
+  }, max);
 }

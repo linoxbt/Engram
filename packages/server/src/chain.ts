@@ -12,7 +12,7 @@ import {
   applyEntry, buildMeta, contentHash, embHash, entryId, genesis, headerHash, initialDerived, iso, patchMeta, randomSalt,
   score, seqOf, seqStr, tombstoneVector, type ChainEntry, type DerivedState, type EntryKind, type EntryMeta, type Header, type Op, type Refs,
 } from "@engram/core";
-import type { Backend, TxOp, VDoc } from "./backend/types";
+import type { Backend, Collection, Filter, TxOp, VDoc } from "./backend/types";
 import { COLLECTION_DIMS, type Ctx } from "./context";
 import { EngramError, isConflict } from "./errors";
 
@@ -60,6 +60,22 @@ export async function loadChain(b: Backend, space: string, opts: { withVectors?:
     cursor = docs[docs.length - 1].$id;
   }
   return opts.limit ? out.slice(0, opts.limit) : out;
+}
+
+/**
+ * Every matching document, page by page in $id order (desc by default: newest first), up to `max`. For reads where
+ * a record past one page must not be silently skipped (erasure, reflection, concept members).
+ */
+export async function queryAll<M>(b: Backend, coll: Collection, spec: { filters: Filter[]; dir?: "asc" | "desc"; withVectors?: boolean }, max = 20_000, page = 500): Promise<VDoc<M>[]> {
+  const out: VDoc<M>[] = [];
+  let cursor: string | undefined;
+  while (out.length < max) {
+    const docs = await b.vectors.query<M>(coll, { filters: spec.filters, order: { field: "$id", dir: spec.dir ?? "desc" }, limit: page, cursorAfter: cursor, withVectors: !!spec.withVectors });
+    out.push(...docs);
+    if (docs.length < page) break;
+    cursor = docs[docs.length - 1].$id;
+  }
+  return out.slice(0, max);
 }
 
 export interface Draft {
@@ -313,13 +329,15 @@ export async function applyPending(ctx: Ctx, opts: { through?: string; attempts?
 }
 
 /** Patch derived fields of one entry without touching the chain (access counts, concept, relate status). */
-export async function patchDerived(b: Backend, id: string, patch: Partial<EntryMeta["d"]>): Promise<void> {
+export async function patchDerived(b: Backend, id: string, patch: Partial<EntryMeta["d"]> | ((d: EntryMeta["d"]) => Partial<EntryMeta["d"]> | Record<string, unknown>)): Promise<void> {
   for (let i = 0; i < 5; i++) {
     const doc = await b.vectors.get<EntryMeta>("memories", id);
     if (!doc) return;
     try {
-      // Conditional on the read: a stale copy must never write back erased content.
-      await b.vectors.update("memories", id, { metadata: patchMeta(doc.metadata, patch) }, undefined, { ifUpdatedAt: doc.$updatedAt });
+      // Conditional on the read: a stale copy must never write back erased content. A function patch is computed
+      // from this read, so merges (classifier reasons) never drop a concurrent change.
+      const p = (typeof patch === "function" ? patch(doc.metadata.d) : patch) as Partial<EntryMeta["d"]>;
+      await b.vectors.update("memories", id, { metadata: patchMeta(doc.metadata, p) }, undefined, { ifUpdatedAt: doc.$updatedAt });
       return;
     } catch (e) {
       if (!isConflict(e)) throw e;
@@ -368,7 +386,7 @@ export async function repairSpace(ctx: Ctx): Promise<{ fixed: number; erased: nu
       const erase = st.status === "forgotten" && m.c.text != null;
       try {
         await b.vectors.update("memories", e.$id, {
-          metadata: { ...patchMeta(m, { ...st, contradictedBy: [...st.contradictedBy] }, erase ? { text: null, salt: null } : undefined), applied: "true" },
+          metadata: { ...patchMeta(m, { ...st, contradictedBy: [...st.contradictedBy], ...(erase ? ERASED_NOTES : {}) }, erase ? { text: null, salt: null } : undefined), applied: "true" },
           ...(erase ? { embeddings: tombstoneVector(COLLECTION_DIMS.memories) } : {}),
         }, undefined, { ifUpdatedAt: cur.$updatedAt });
         fixed++;

@@ -36,6 +36,9 @@ export interface RecallMemory {
   source: string | null;
   checkpoint: { seq: number; file: string } | null;
   note: string | null;
+  /** Summaries written by the reflect job: the memories they restate and who wrote those. */
+  derivedFrom?: string[];
+  sourceAgentNames?: string[];
 }
 
 export interface RecallResult {
@@ -139,7 +142,8 @@ export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {
   }
 
   const docs = [...picked.map((p) => ({ doc: p.doc, score: p.score })), ...erased.map((doc) => ({ doc, score: 0 }))];
-  const names = await agentNames(b, docs.map((d) => d.doc.metadata.agent), space);
+  const sourceAgents = (m: EntryMeta) => ((m.d as { sourceAgents?: string[] }).sourceAgents ?? []);
+  const names = await agentNames(b, docs.flatMap((d) => [d.doc.metadata.agent, ...sourceAgents(d.doc.metadata)]), space);
   const cp = space.settings.latestCheckpoint;
   const memories: RecallMemory[] = docs.map(({ doc, score }) => {
     const m = doc.metadata;
@@ -154,6 +158,7 @@ export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {
       related: m.h.refs.related, score: Math.round(score * 1000) / 1000, distance: doc.$distance ?? null, hash: m.hash,
       importance: Number(m.h.importance), source: m.h.source,
       checkpoint: cp && seq < cp.size ? { seq: cp.seq, file: cp.fileId } : null,
+      ...(m.op === "reflect" ? { derivedFrom: m.h.refs.derivedFrom, sourceAgentNames: sourceAgents(m).map((a) => names[a] ?? a) } : {}),
       note: forgotten ? `${asOf ? "Valid at that time; c" : "C"}ontent erased on ${m.d.forgottenAt?.slice(0, 10)}. The record of erasure is entry #${m.d.forgottenBy ? seqOf(m.d.forgottenBy) : "?"}.` : null,
     };
   });

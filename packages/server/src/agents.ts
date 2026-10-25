@@ -101,6 +101,8 @@ export async function findAgentsByCapability(b: Backend, space: string, query: s
 const nameCache = new Map<string, { name: string; at: number }>();
 export async function agentName(b: Backend, id: string, space?: SpaceInfo): Promise<string> {
   if (id.startsWith("user:")) return space?.settings.people[id.slice(5)] ?? "person";
+  // System authors (system:reflect, system:retention) are not agent documents, and ':' is not a valid document ID.
+  if (id.startsWith("system:")) return id;
   const hit = nameCache.get(id);
   if (hit && Date.now() - hit.at < 300_000) return hit.name;
   const d = await b.vectors.get<AgentMeta>("agents", id);

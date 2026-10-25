@@ -1,6 +1,6 @@
 import "server-only";
 import { seqOf, type EntryMeta } from "@engram/core";
-import { agentNames, EngramError, type Ctx } from "@engram/server";
+import { agentNames, EngramError, notesOf, type Ctx } from "@engram/server";
 
 /** One entry with everything the caller may see, plus its neighbours resolved for display. */
 export async function memoryDetail(ctx: Ctx, id: string) {
@@ -25,6 +25,9 @@ export async function memoryDetail(ctx: Ctx, id: string) {
     refs: m.h.refs,
     supersededBy: m.d.supersededBy,
     contradictedBy: m.d.contradictedBy,
+    // Why each relation was recorded (classifier, script or resolver), keyed by the other memory. Erasable: link
+    // entries carry fixed text, so this is where a resolver's own words live.
+    reasons: notesOf(m.d),
     related: rel.map((r) => ({ id: r.$id, seq: seqOf(r.$id), op: r.metadata.op, kind: r.metadata.kind, text: r.metadata.c.text, status: r.metadata.d.status, agentName: names[r.metadata.agent] ?? r.metadata.agent, createdAt: r.metadata.createdAt })),
     checkpoint: cp && seq < cp.size ? cp : null,
   };
