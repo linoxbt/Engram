@@ -78,8 +78,10 @@ export async function resolveConflict(ctx: Ctx, raw: unknown): Promise<ResolveRe
   const [w, l] = await Promise.all([input.winnerId, input.loserId].map((id) => ctx.b.vectors.get<EntryMeta>("memories", id)));
   if (!w || !l || w.metadata.space !== ctx.space.key || l.metadata.space !== ctx.space.key) throw new EngramError("not_found", "One of the memories was not found in this space.");
   if (w.metadata.d.status !== "active" || l.metadata.d.status !== "active") throw new EngramError("conflict", "Both memories must still be active to resolve a conflict.");
-  if (!(w.metadata.d.contradictedBy ?? []).includes(l.$id) && input.action !== "supersede") {
-    throw new EngramError("bad_request", "These memories are not in conflict.");
+  // Every action needs an open conflict between the two, supersede included: otherwise any key with the resolve
+  // scope could retire any memory it names.
+  if (!(w.metadata.d.contradictedBy ?? []).includes(l.$id) && !(l.metadata.d.contradictedBy ?? []).includes(w.$id)) {
+    throw new EngramError("bad_request", "These memories are not in conflict. Only an open conflict can be resolved.");
   }
   const res = await linkFound(ctx, { target: l.$id, other: w.$id, kind: input.action, reason: input.reason });
   return { linkEntryId: res.id, seq: res.seq, action: input.action, winner: w.$id, loser: l.$id };

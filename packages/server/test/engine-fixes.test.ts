@@ -1,6 +1,6 @@
 /** Engine fixes from the third audit (B1): ordering, locks, injection, provenance, erasure, paging, honesty, speed. */
 import { describe, expect, it } from "vitest";
-import { RecallInput, attack, getSpace, resetSandbox } from "../src/index";
+import { RecallInput, append, attack, getEntry, getSpace, resetSandbox, resolveConflict } from "../src/index";
 import { setup } from "./helpers";
 
 describe("input bounds", () => {
@@ -16,5 +16,18 @@ describe("input bounds", () => {
     expect(RecallInput.parse({ query: "plan", asOf: "2026-10-20T13:00:00+01:00" }).asOf).toBe("2026-10-20T12:00:00.000Z");
     expect(RecallInput.parse({ query: "plan", asOf: "2026-10-20T12:00:00Z" }).asOf).toBe("2026-10-20T12:00:00.000Z");
     expect(RecallInput.safeParse({ query: "plan", asOf: "yesterday" }).success).toBe(false);
+  });
+});
+
+describe("conflict resolution", () => {
+  it("supersede through resolve needs an open conflict between the two memories", async () => {
+    const { b, ctx } = await setup();
+    const a = await append(ctx, { op: "remember", kind: "fact", subject: null, text: "Ada is on the Pro plan." });
+    const c = await append(ctx, { op: "remember", kind: "fact", subject: null, text: "Kestrel pays by card." });
+    await expect(resolveConflict(ctx, { winnerId: c.id, loserId: a.id, action: "supersede" })).rejects.toMatchObject({ code: "bad_request" });
+    expect((await getEntry(b, a.id))!.metadata.d.status).toBe("active");
+    const x = await append(ctx, { op: "remember", kind: "fact", subject: null, text: "Ada is on Basic.", refs: { contradicts: [a.id] } });
+    await resolveConflict(ctx, { winnerId: x.id, loserId: a.id, action: "supersede" });
+    expect((await getEntry(b, a.id))!.metadata.d.supersededBy).toBe(x.id);
   });
 });
