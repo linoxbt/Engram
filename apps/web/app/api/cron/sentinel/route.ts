@@ -6,5 +6,5 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 export const GET = route(async (req) => {
   requireCron(req);
-  return { results: await runSentinel(getBackend()) };
+  return runSentinel(getBackend());
 });

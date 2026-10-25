@@ -7,10 +7,21 @@ import { forget } from "./forget";
 import { listAllSpaces } from "./spaces";
 import { verifyAndRecord } from "./verify";
 
-export async function runSentinel(b: Backend, opts: { spaces?: SpaceInfo[]; retention?: boolean } = {}) {
-  const spaces = opts.spaces ?? (await listAllSpaces(b));
-  const out: { space: string; status: string; validThrough: number; findings: number; retained?: number }[] = [];
+export type SentinelResult = { space: string; status: string; validThrough: number; findings: number; retained?: number };
+
+/**
+ * Spaces least recently checked go first, and no new space starts once `budgetMs` has passed, so a run
+ * finishes inside the Function timeout; the next run picks up the skipped ones first.
+ */
+export async function runSentinel(b: Backend, opts: { spaces?: SpaceInfo[]; retention?: boolean; budgetMs?: number } = {}) {
+  const started = Date.now();
+  const budget = opts.budgetMs ?? 240_000;
+  const spaces = [...(opts.spaces ?? (await listAllSpaces(b)))]
+    .sort((x, y) => (x.settings.integrity?.checkedAt ?? "").localeCompare(y.settings.integrity?.checkedAt ?? ""));
+  const results: SentinelResult[] = [];
+  const skipped: string[] = [];
   for (const s of spaces) {
+    if (Date.now() - started >= budget) { skipped.push(s.key); continue; }
     try {
       const before = s.settings.integrity?.status;
       const r = await verifyAndRecord(b, s);
@@ -18,13 +29,13 @@ export async function runSentinel(b: Backend, opts: { spaces?: SpaceInfo[]; rete
         await b.jobs.notifyTamper({ spaceKey: s.key, spaceName: s.settings.name, ownerId: s.settings.ownerId || undefined, message: r.findings.find((f) => f.severity === "critical")?.message ?? "Tampering detected." });
       }
       const retained = opts.retention !== false && s.settings.retentionDays > 0 && !s.settings.sandbox ? await applyRetention(b, s) : 0;
-      out.push({ space: s.key, status: r.status, validThrough: r.validThrough, findings: r.findings.length, retained });
+      results.push({ space: s.key, status: r.status, validThrough: r.validThrough, findings: r.findings.length, retained });
     } catch (e) {
       console.error(`[engram] sentinel failed for ${s.key}`, e);
-      out.push({ space: s.key, status: "error", validThrough: -1, findings: 0 });
+      results.push({ space: s.key, status: "error", validThrough: -1, findings: 0 });
     }
   }
-  return out;
+  return { results, skipped };
 }
 
 /** Retention is implemented as forget entries written by the system, never as deletions. */

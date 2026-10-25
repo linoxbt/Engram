@@ -1,7 +1,9 @@
 /** Production-readiness: cost bounds on scheduled work and races found in the second audit. */
 import { describe, expect, it, vi } from "vitest";
 import { buildCheckpoint, checkpointFileId, signCheckpoint } from "@engram/core";
-import { append, getConfig, getSpace, latestCheckpoint, listAllSpaces, loadChain, loadCheckpoints, runCheckpoint, verifyStoredSpace } from "../src/index";
+import {
+  append, createSpace, getConfig, getSpace, latestCheckpoint, listAllSpaces, loadChain, loadCheckpoints, runCheckpoint, runSentinel, updateSettings, verifyStoredSpace,
+} from "../src/index";
 import { setup } from "./helpers";
 
 describe("checkpoint Function cost", () => {
@@ -97,5 +99,26 @@ describe("checkpoint lock reclaim", () => {
     const bucket = getConfig().appwrite.checkpointsBucket;
     await b.files.put(bucket, `cpl_${ctx.space.key}_genesis`, "x", stale(), []);
     expect((await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey })).created).toBe(true);
+  });
+});
+
+describe("sentinel time budget", () => {
+  it("checks the least recently checked spaces first and reports the ones it had no time for", async () => {
+    const { b, user } = await setup();
+    const spaces = [];
+    for (const at of ["2026-10-20T00:00:00.000Z", null, "2026-10-10T00:00:00.000Z"]) {
+      const s = await createSpace(b, { name: `S ${at}`, ownerId: user.id });
+      if (at) await updateSettings(b, s.key, { integrity: { status: "valid", validThrough: -1, entries: 0, findings: 0, critical: 0, checkedAt: at, firstFinding: null } });
+      spaces.push((await getSpace(b, s.key))!);
+    }
+    const all = await runSentinel(b, { spaces });
+    expect(all.results.map((r) => r.space)).toEqual([spaces[1].key, spaces[2].key, spaces[0].key]);
+    expect(all.skipped).toEqual([]);
+
+    const query = b.vectors.query.bind(b.vectors);
+    b.vectors.query = (async (...args: Parameters<typeof query>) => { await new Promise((r) => setTimeout(r, 30)); return query(...args); }) as typeof query;
+    const short = await runSentinel(b, { spaces, budgetMs: 20 });
+    expect(short.results.map((r) => r.space)).toEqual([spaces[1].key]);
+    expect(short.skipped).toEqual([spaces[2].key, spaces[0].key]);
   });
 });
