@@ -68,7 +68,12 @@ try {
     const found = (await users.list({ queries: [Query.equal("email", [owner]), Query.limit(1)] })).users[0];
     const ownerId = found?.$id ?? (await users.create({ userId: ID.unique(), email: owner, name: "Engram" })).$id;
     const teams = (await users.listMemberships({ userId: ownerId, queries: [Query.limit(100)] })).memberships;
-    const existing = teams.find((m) => m.teamId.startsWith("sp_") && m.teamName === demoName);
+    let existing = teams.find((m) => m.teamId.startsWith("sp_") && m.teamName === demoName);
+    // ENGRAM_DEMO_RESET=<run id> deletes a half-seeded demo space once, so the next seed starts clean.
+    if (existing && env.ENGRAM_DEMO_RESET === run) {
+      const del = step("demo reset", "scripts/delete-space.ts", [existing.teamId.slice(3)]);
+      if (del.ok) existing = undefined;
+    }
     if (existing) {
       report.demo = { spaceKey: existing.teamId.slice(3), seeded: false, note: "already present" };
     } else {

@@ -161,4 +161,36 @@ test.describe.serial("signature path", () => {
     await page.getByRole("dialog", { name: "Remove passkey" }).getByRole("button", { name: "Remove" }).click();
     await expect(page.getByText("E2E authenticator")).toHaveCount(0);
   });
+
+  test("an invite link lets someone else join a space", async ({ page, browser, baseURL }) => {
+    await page.goto("/login");
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password").fill("password456");
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.waitForURL("**/app");
+    const { key } = await (await page.request.post("/api/app/spaces", { data: { name: "Shared space" } })).json();
+    await page.goto(`/app/${key}/settings`);
+    await page.getByRole("button", { name: "Create invite link" }).click();
+    const link = await page.locator("code").filter({ hasText: "/invite?token=" }).innerText();
+
+    const guest = `guest-${Date.now()}@example.com`;
+    const other = await browser.newContext();
+    await other.addCookies([{ name: "engram_consent", value: "accepted", url: baseURL! }]);
+    const p2 = await other.newPage();
+    await p2.goto(link);
+    await expect(p2.getByRole("heading", { name: "Join Shared space" })).toBeVisible();
+    await p2.getByRole("link", { name: "Create an account" }).click();
+    await p2.getByLabel("Name").fill("Guest");
+    await p2.getByLabel("Email").fill(guest);
+    await p2.getByLabel("Password").fill("password123");
+    await p2.getByRole("checkbox").check();
+    await p2.getByRole("button", { name: "Create account" }).click();
+    await p2.waitForURL("**/invite?token=*");
+    await p2.getByRole("button", { name: "Join space" }).click();
+    await p2.waitForURL(`**/app/${key}`);
+    await other.close();
+
+    await page.reload();
+    await expect(page.getByText(guest)).toBeVisible();
+  });
 });

@@ -152,6 +152,24 @@ try {
     finally { await b.vectors.delete("memories", id).catch(() => undefined); }
   }
 
+  // 14. Where transactions break, if they do: read back right away, after a pause, and stage through the
+  // per-document transactionId parameter instead of createOperations.
+  {
+    const out: string[] = [];
+    try {
+      const tx = await vdb.createTransaction({ ttl: 120 });
+      out.push(`created ${tx.$id} (${tx.status})`);
+      out.push(`get now: ${await vdb.getTransaction({ transactionId: tx.$id }).then((t) => t.status, err)}`);
+      await new Promise((r) => setTimeout(r, 2000));
+      out.push(`get after 2 s: ${await vdb.getTransaction({ transactionId: tx.$id }).then((t) => t.status, err)}`);
+      const listed = await vdb.listTransactions().then((l) => l.transactions.some((t) => t.$id === tx.$id), () => null);
+      out.push(`listed: ${listed}`);
+      out.push(`stage via updateDocument: ${await vdb.updateDocument({ databaseId: DB, collectionId: COLL, documentId: "m_testtest_000000000002", data: { metadata: { space: "testtest", staged: "yes" } }, transactionId: tx.$id }).then(() => "ok", err)}`);
+      out.push(`commit: ${await vdb.updateTransaction({ transactionId: tx.$id, commit: true }).then((t) => t.status, err)}`);
+    } catch (e) { out.push(`failed: ${err(e)}`); }
+    rec(14, "Transactions: where they fail", null, out.join("; "), "Without working transactions the engine applies batches one conditional write at a time (see 13)");
+  }
+
   rec(11, "Realtime channel for VectorsDB documents", null, "manual: open the dashboard; the sidebar shows Realtime or polling", "Engine subscribes to databases.<db>.collections.memories.documents with a JWT, else polls every 3 s");
   rec(12, "Function trigger on a VectorsDB document event", null, "manual: create a concept and check the labeler's executions", "The app labels inline when events do not fire");
 } finally {

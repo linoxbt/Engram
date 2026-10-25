@@ -23,4 +23,5 @@ export * from "./sentinel";
 export * from "./stats";
 export * from "./export";
 export * from "./reflect";
+export * from "./members";
 export * from "./format";

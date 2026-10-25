@@ -9,7 +9,7 @@ import { evaluate } from "./query";
 import { afterFailure, assertNotLocked, type LoginFails } from "./login-guard";
 import { cosine } from "@engram/core";
 import type {
-  AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Filter, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamStore, TxOp,
+  AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Filter, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamMember, TeamStore, TxOp,
   User, VDoc, VectorStore,
 } from "./types";
 
@@ -123,9 +123,33 @@ class AppwriteVectors implements VectorStore {
     return docs;
   }
 
+  /**
+   * Atomic batch through VectorsDB transactions. Where Appwrite cannot find a transaction it just created (seen on
+   * new dedicated databases), the batch is applied one document at a time instead, each conditional write as a
+   * compare-and-swap. That is safe for the engine: derived updates are idempotent and an entry is marked applied
+   * last, so a batch cut short stays visibly pending and the next writer finishes it.
+   */
   async transact(ops: TxOp[]) {
     if (!ops.length) return;
-    const tx = await call(() => this.vdb.createTransaction({ ttl: 60 }));
+    if (this.txOk) {
+      try { return await this.transactAtomic(ops); }
+      catch (e) {
+        if (!(e instanceof AppwriteException && e.type === "transaction_not_found")) throw mapError(e);
+        console.warn("[engram] VectorsDB transactions unavailable; applying batches one document at a time");
+        this.txOk = false;
+      }
+    }
+    for (const op of ops) {
+      if (op.action === "update" && op.ifUpdatedAt) await this.compareAndSwap(op.coll, op.id, op.data, op.ifUpdatedAt);
+      else if (op.action === "update") await call(() => this.vdb.updateDocument({ databaseId: this.db, collectionId: op.coll, documentId: op.id, data: op.data as any }));
+      else if (op.action === "delete") await this.delete(op.coll, op.id);
+      else await call(() => this.vdb.createDocument({ databaseId: this.db, collectionId: op.coll, documentId: op.id, data: op.data as any, permissions: op.perms }));
+    }
+  }
+  private txOk = true;
+
+  private async transactAtomic(ops: TxOp[]) {
+    const tx = await this.vdb.createTransaction({ ttl: 60 });
     try {
       await this.vdb.createOperations({
         transactionId: tx.$id,
@@ -147,8 +171,17 @@ class AppwriteVectors implements VectorStore {
       await this.vdb.updateTransaction({ transactionId: tx.$id, commit: true });
     } catch (e) {
       try { await this.vdb.updateTransaction({ transactionId: tx.$id, rollback: true }); } catch { /* already closed */ }
-      throw mapError(e);
+      throw e instanceof AppwriteException && e.type === "transaction_not_found" ? e : mapError(e);
     }
+  }
+
+  /** Update one document only if it is still the version we read: an update filtered on its ID and $updatedAt. */
+  private async compareAndSwap(coll: Collection, id: string, data: unknown, ifUpdatedAt: string) {
+    const res = await call(() => this.vdb.updateDocuments({
+      databaseId: this.db, collectionId: coll, data: data as object,
+      queries: [Query.equal("$id", [id]), Query.equal("$updatedAt", [ifUpdatedAt])],
+    }));
+    if (!res.documents.length) throw new ConflictError(`Document ${id} changed since it was read`);
   }
 }
 
@@ -187,6 +220,22 @@ class AppwriteTeams implements TeamStore {
       const m = res.memberships[0];
       return m && m.confirm !== false ? { roles: m.roles } : null;
     } catch (e) { if (isNotFound(e)) return null; throw mapError(e); }
+  }
+  async listMembers(teamId: string): Promise<TeamMember[]> {
+    const out: TeamMember[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+      const res = await call(() => this.teams.listMemberships({ teamId, queries: [Query.limit(100), ...(cursor ? [Query.cursorAfter(cursor)] : [])] }));
+      for (const m of res.memberships) if (m.confirm) out.push({ userId: m.userId, name: m.userName, email: m.userEmail, roles: m.roles, joinedAt: m.joined || null });
+      if (res.memberships.length < 100) break;
+      cursor = res.memberships[res.memberships.length - 1].$id;
+    }
+    return out;
+  }
+  async removeMember(teamId: string, userId: string) {
+    const res = await call(() => this.teams.listMemberships({ teamId, queries: [Query.equal("userId", [userId]), Query.limit(1)] }));
+    const m = res.memberships[0];
+    if (m) await call(() => this.teams.deleteMembership({ teamId, membershipId: m.$id }));
   }
   async listForUser(userId: string): Promise<TeamInfo[]> {
     const out: TeamInfo[] = [];

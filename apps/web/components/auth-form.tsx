@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/client/api";
 import { useConsent } from "@/lib/client/consent";
 import { useHydrated } from "@/lib/client/hydrated";
@@ -14,6 +15,7 @@ import { Button, ErrorNote, Field, Input } from "./ui";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const router = useRouter();
+  const qc = useQueryClient();
   const params = useSearchParams();
   const next = params.get("next");
   const consent = useConsent();
@@ -33,6 +35,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     setLoading(true); setError(null);
     try {
       await api(`/api/auth/${mode}`, { method: "POST", json: mode === "signup" ? { email, password, name, acceptTerms: f.get("acceptTerms") === "on" } : { email, password } });
+      qc.clear(); // a new identity must not see answers cached before it signed in
       router.push(safeNext(next));
       router.refresh();
     } catch (e) { setError(e); } finally { setLoading(false); }
@@ -41,6 +44,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     setPasskeyLoading(true); setError(null);
     try {
       await signInWithPasskey();
+      qc.clear();
       router.push(safeNext(next));
       router.refresh();
     } catch (e) { setError(e); } finally { setPasskeyLoading(false); }

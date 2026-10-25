@@ -66,7 +66,12 @@ export interface TeamStore {
   membership(teamId: string, userId: string): Promise<{ roles: string[] } | null>;
   listForUser(userId: string): Promise<TeamInfo[]>;
   listAll(prefix: string): Promise<{ teamId: string; name: string }[]>;
+  /** Confirmed members only. */
+  listMembers(teamId: string): Promise<TeamMember[]>;
+  removeMember(teamId: string, userId: string): Promise<void>;
 }
+
+export interface TeamMember { userId: string; name: string; email: string; roles: string[]; joinedAt: string | null }
 
 export interface FileInfo { fileId: string; name: string; createdAt: string; size: number }
 export interface FileStore {

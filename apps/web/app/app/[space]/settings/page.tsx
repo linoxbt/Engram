@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
 import { useSpaceInfo } from "@/lib/client/hooks";
 import { when } from "@/lib/format";
+import { MembersCard } from "@/components/members-card";
 import { PageHeader } from "@/components/space-shell";
 import { Button, Card, ErrorNote, Field, Input, Modal, Skeleton, Textarea, Toggle, useToast } from "@/components/ui";
 
@@ -61,6 +62,8 @@ export default function SettingsPage() {
           {owner && <div><Button type="submit" variant="primary" loading={save.isPending}>Save</Button></div>}
         </form>
       </Card>
+
+      <MembersCard space={space} owner={owner} sandbox={!!s?.sandbox} />
 
       <Card title="Thresholds">
         <div className="grid gap-5 p-4 md:grid-cols-2">

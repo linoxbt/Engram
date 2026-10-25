@@ -12,7 +12,7 @@ import { ConflictError, EngramError, REAUTH_WINDOW_MS, reauthRequired } from "..
 import { evaluate } from "./query";
 import { afterFailure, assertNotLocked, type LoginFails } from "./login-guard";
 import type {
-  AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamStore, TxOp,
+  AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamMember, TeamStore, TxOp,
   User, VDoc, VectorStore,
 } from "./types";
 
@@ -169,6 +169,16 @@ class LocalTeams implements TeamStore {
   }
   async listAll(prefix: string) {
     return Object.entries(this.s.db.teams).filter(([id]) => id.startsWith(prefix)).map(([teamId, t]) => ({ teamId, name: t.name }));
+  }
+  async listMembers(teamId: string): Promise<TeamMember[]> {
+    return Object.entries(this.s.db.teams[teamId]?.members ?? {}).map(([userId, roles]) => {
+      const u = this.s.db.users[userId];
+      return { userId, name: u?.name ?? "", email: u?.email ?? "", roles, joinedAt: null };
+    });
+  }
+  async removeMember(teamId: string, userId: string) {
+    const t = this.s.db.teams[teamId];
+    if (t) { delete t.members[userId]; this.s.save(); }
   }
 }
 

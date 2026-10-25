@@ -32,7 +32,11 @@ export interface SpaceSettings {
   integrity: IntegrityStatus | null;
   /** Display names for people who act in the dashboard (agent field "user:<id>"). */
   people: Record<string, string>;
+  /** Pending invite links. Only a hash of each token is kept; the link is shown once, to the owner. */
+  invites?: SpaceInvite[];
 }
+
+export interface SpaceInvite { id: string; tokenHash: string; email: string | null; createdAt: string; expiresAt: string; createdBy: string }
 
 export const SETTING_RANGES = {
   neighbourDistance: { min: 0.05, max: 0.9, label: "Neighbour distance", help: "How close an existing memory must be before Engram checks it for duplicates, supersessions and conflicts. Lower is stricter." },
