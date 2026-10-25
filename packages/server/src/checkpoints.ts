@@ -4,7 +4,7 @@
  * is configured); verifiers need only the public key.
  */
 import {
-  buildCheckpoint, checkpointFileId, checkpointProblem, cpSize, iso, signCheckpoint, toBase64, verifySpace, type Anchor, type Checkpoint,
+  buildCheckpoint, checkpointFileId, checkpointProblem, cpSize, iso, randomSalt, signCheckpoint, toBase64, verifySpace, type Anchor, type Checkpoint,
 } from "@engram/core";
 import type { Backend } from "./backend/types";
 import { chainHead, loadChain } from "./chain";
@@ -108,22 +108,32 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
 }
 
 const LOCK_STALE_MS = 5 * 60_000;
+/** Longer than a storage round trip: a reclaimer that judged the same stale lock has deleted by then, if at all. */
+const LOCK_SETTLE_MS = 250;
+const sameBytes = (a: Uint8Array | null, b: Uint8Array) => !!a && a.length === b.length && a.every((x, i) => x === b[i]);
 
 async function takeLock(b: Backend, bucket: string, lockId: string, space: SpaceInfo, prev: Checkpoint | null): Promise<boolean> {
-  const body = new TextEncoder().encode(JSON.stringify({ at: iso(), prev: prev?.seq ?? null }));
+  const body = new TextEncoder().encode(JSON.stringify({ at: iso(), prev: prev?.seq ?? null, token: randomSalt() }));
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await b.files.put(bucket, lockId, `${lockId}.json`, body, b.teamRead(space.teamId));
-      return true;
+      if (attempt === 0) return true;
+      // Storage has no conditional delete, so another reclaimer that saw the same stale lock may still delete
+      // ours. Its delete lands within one round trip; whoever's lock survives the wait owns it.
+      await new Promise((r) => setTimeout(r, LOCK_SETTLE_MS));
+      return sameBytes(await b.files.get(bucket, lockId), body);
     } catch (e) {
       if (!isConflict(e)) throw e;
       // A run that took the lock and died must not block checkpoints forever.
       const raw = await b.files.get(bucket, lockId);
+      if (!raw) continue;
       let at = 0;
-      try { at = raw ? Date.parse(JSON.parse(dec.decode(raw)).at) : 0; } catch { at = 0; }
+      try { at = Date.parse(JSON.parse(dec.decode(raw)).at); } catch { at = 0; }
       const latest = await latestCheckpoint(b, space.key);
       const stillPrev = (latest?.seq ?? null) === (prev?.seq ?? null);
-      if (!stillPrev || Date.now() - at < LOCK_STALE_MS) return false;
+      if (!stillPrev || Date.now() - (at || 0) < LOCK_STALE_MS) return false;
+      // Remove only the exact stale lock judged above: another run may have reclaimed it and taken a fresh one.
+      if (!sameBytes(await b.files.get(bucket, lockId), raw)) return false;
       await b.files.delete(bucket, lockId);
     }
   }

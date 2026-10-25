@@ -48,3 +48,54 @@ describe("checkpoint Function cost", () => {
     expect(keys).not.toContain("zzzzzzzz");
   });
 });
+
+describe("checkpoint lock reclaim", () => {
+  const enc = (o: object) => new TextEncoder().encode(JSON.stringify(o));
+  const stale = () => enc({ at: new Date(Date.now() - 10 * 60_000).toISOString(), prev: null, token: "dead" });
+
+  it("a reclaim never deletes a fresh lock another run took after it read the stale one", async () => {
+    const { b, ctx, keys } = await setup();
+    await append(ctx, { op: "remember", kind: "fact", subject: null, text: "fact 0" });
+    const bucket = getConfig().appwrite.checkpointsBucket;
+    const lockId = `cpl_${ctx.space.key}_genesis`;
+    await b.files.put(bucket, lockId, `${lockId}.json`, stale(), []);
+    const fresh = enc({ at: new Date().toISOString(), prev: null, token: "other-run" });
+    const get = b.files.get.bind(b.files);
+    let armed = true;
+    b.files.get = async (bk, id) => {
+      const r = await get(bk, id);
+      // Run A reclaims between our read of the stale lock and our delete.
+      if (armed && id === lockId) { armed = false; await b.files.delete(bucket, lockId); await b.files.put(bucket, lockId, "x", fresh, []); }
+      return r;
+    };
+    const run = await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey });
+    expect(run.created).toBe(false);
+    expect(new TextDecoder().decode((await get(bucket, lockId))!)).toContain("other-run");
+  });
+
+  it("a reclaimed lock deleted by a concurrent reclaimer is not used", async () => {
+    const { b, ctx, keys } = await setup();
+    await append(ctx, { op: "remember", kind: "fact", subject: null, text: "fact 0" });
+    const bucket = getConfig().appwrite.checkpointsBucket;
+    const lockId = `cpl_${ctx.space.key}_genesis`;
+    await b.files.put(bucket, lockId, `${lockId}.json`, stale(), []);
+    const put = b.files.put.bind(b.files);
+    let puts = 0;
+    b.files.put = async (bk, id, name, bytes, perms) => {
+      await put(bk, id, name, bytes, perms);
+      // Run B, which judged the same stale lock, deletes ours just after we create it and takes its own.
+      if (id === lockId && ++puts === 1) { await b.files.delete(bk, id); await put(bk, id, name, enc({ at: new Date().toISOString(), prev: null, token: "b" }), []); }
+    };
+    const run = await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey });
+    expect(run.created).toBe(false);
+    expect(await loadCheckpoints(b, ctx.space.key)).toHaveLength(0);
+  });
+
+  it("a stale lock is still reclaimed when nobody races", async () => {
+    const { b, ctx, keys } = await setup();
+    await append(ctx, { op: "remember", kind: "fact", subject: null, text: "fact 0" });
+    const bucket = getConfig().appwrite.checkpointsBucket;
+    await b.files.put(bucket, `cpl_${ctx.space.key}_genesis`, "x", stale(), []);
+    expect((await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey })).created).toBe(true);
+  });
+});
