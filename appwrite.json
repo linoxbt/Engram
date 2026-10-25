@@ -13,18 +13,14 @@
       "execute": [],
       "events": [],
       "scopes": [
-        "databases.read",
-        "databases.write",
-        "documents.read",
         "files.read",
         "files.write",
+        "messages.write",
         "teams.read",
         "teams.write",
         "vectorsdb.collections.read",
         "vectorsdb.documents.read",
-        "vectorsdb.documents.write",
-        "vectorsdb.read",
-        "vectorsdb.write"
+        "vectorsdb.read"
       ],
       "interval": 5
     },
@@ -39,11 +35,6 @@
       "execute": [],
       "events": [],
       "scopes": [
-        "databases.read",
-        "databases.write",
-        "documents.read",
-        "documents.write",
-        "embeddings.write",
         "files.read",
         "messages.write",
         "teams.read",
@@ -69,9 +60,6 @@
         "databases.engram.collections.concepts.documents.*.create"
       ],
       "scopes": [
-        "databases.read",
-        "documents.read",
-        "documents.write",
         "teams.read",
         "vectorsdb.collections.read",
         "vectorsdb.documents.read",
@@ -92,10 +80,6 @@
       "execute": [],
       "events": [],
       "scopes": [
-        "databases.read",
-        "databases.write",
-        "documents.read",
-        "documents.write",
         "embeddings.write",
         "teams.read",
         "vectorsdb.collections.read",
