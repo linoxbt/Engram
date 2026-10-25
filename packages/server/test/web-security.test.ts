@@ -4,6 +4,7 @@ import { safeNextFor } from "../../../apps/web/lib/client/safe-next";
 import { errorLine, requestIdFor } from "../../../apps/web/lib/server/log";
 import { clientKey, WindowCounter } from "../../../apps/web/lib/server/limits";
 import { cleanDisplayName } from "../../../apps/web/lib/server/names";
+import { assertTermsAccepted } from "../../../apps/web/lib/server/access";
 import { EngramError, errorLogFields } from "../src/index";
 
 const ORIGIN = "https://engram.example";
@@ -79,6 +80,20 @@ describe("display names", () => {
     expect(cleanDisplayName("x".repeat(200))).toHaveLength(80);
     expect(cleanDisplayName("\n\t\u200b")).toBe("");
     expect(cleanDisplayName("José Müller-Łukasz")).toBe("José Müller-Łukasz");
+  });
+});
+
+describe("terms gate", () => {
+  const none = { termsAcceptedAt: null };
+  it("refuses every signed-in call until the Terms are accepted, except accepting them or deleting the account", () => {
+    expect(() => assertTermsAccepted(none, "GET", "/api/app/spaces")).toThrow(expect.objectContaining({ code: "terms_required", status: 403 }));
+    expect(() => assertTermsAccepted(none, "POST", "/api/app/spaces/abcd1234/memories")).toThrow(/Terms/);
+    expect(() => assertTermsAccepted(none, "GET", "/api/auth/jwt")).toThrow(/Terms/);
+    expect(() => assertTermsAccepted(none, "PATCH", "/api/auth/me")).toThrow(/Terms/);
+    expect(() => assertTermsAccepted(none, null, null)).toThrow(/Terms/);
+    expect(() => assertTermsAccepted(none, "POST", "/api/auth/terms")).not.toThrow();
+    expect(() => assertTermsAccepted(none, "DELETE", "/api/auth/me")).not.toThrow();
+    expect(() => assertTermsAccepted({ termsAcceptedAt: "2026-10-25T00:00:00.000Z" }, "POST", "/api/app/spaces")).not.toThrow();
   });
 });
 

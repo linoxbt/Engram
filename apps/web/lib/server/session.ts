@@ -2,6 +2,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { EngramError, getBackend, isEngramError, isOwnerRole, membership, requireSpace, type SpaceInfo, type User } from "@engram/server";
+import { assertTermsAccepted } from "./access";
 import { currentRequest } from "./request";
 
 const PROD = process.env.NODE_ENV === "production";
@@ -52,17 +53,23 @@ export async function currentUser(): Promise<User | null> {
   return r.user;
 }
 
-/** For server components: redirect to login when signed out. */
+/** For server components: redirect to login when signed out, and to the Terms when they were never accepted. */
 export async function requireUserPage(next?: string): Promise<User> {
   const u = await currentUser();
-  if (!u) redirect(`/login${next ? `?next=${encodeURIComponent(next)}` : ""}`);
+  const q = next ? `?next=${encodeURIComponent(next)}` : "";
+  if (!u) redirect(`/login${q}`);
+  if (!u.termsAcceptedAt) redirect(`/accept-terms${q}`);
   return u;
 }
 
-/** For route handlers: throw a 401 when signed out. */
+/** For route handlers: 401 when signed out, 403 terms_required when the Terms were never accepted. */
 export async function requireUser(): Promise<User> {
   const u = await currentUser();
   if (!u) throw new EngramError("unauthorized", "Sign in to continue.");
+  const r = currentRequest();
+  // Accounts made directly against Appwrite never saw the Terms: every call but accepting them (or deleting the
+  // account) is refused until they do.
+  assertTermsAccepted(u, r?.method ?? null, r?.route ?? null);
   return u;
 }
 

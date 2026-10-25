@@ -11,7 +11,7 @@ import { normalize } from "@engram/core";
 import { ConflictError, EngramError, REAUTH_WINDOW_MS, reauthRequired } from "../errors";
 import { evaluate } from "./query";
 import { clearAttempts, guardedSignIn, type AttemptStore } from "./login-guard";
-import { SIGNUP_CONFLICT } from "./types";
+import { isGuestEmail, SIGNUP_CONFLICT } from "./types";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamMember, TeamStore, TxOp,
   User, VDoc, VectorStore,
@@ -21,7 +21,7 @@ interface Db {
   docs: Record<Collection, Record<string, VDoc>>;
   teams: Record<string, { name: string; prefs: object; members: Record<string, string[]> }>;
   files: Record<string, Record<string, { name: string; createdAt: string; b64: string }>>;
-  users: Record<string, { email: string; name: string; hash: string; salt: string; verified?: boolean }>;
+  users: Record<string, { email: string; name: string; hash: string; salt: string; verified?: boolean; createdAt?: string; prefs?: { termsAcceptedAt?: string; guest?: boolean } }>;
   /** One-time recovery and verification tokens, keyed by secret. */
   tokens?: Record<string, { userId: string; kind: "recovery" | "verify"; expire: string }>;
   sessions: Record<string, { userId: string; expire: string; createdAt?: string }>;
@@ -212,7 +212,7 @@ class LocalAuth implements AuthStore {
     if (password.length < 8) throw new EngramError("bad_request", "Password must be at least 8 characters.");
     const id = "u" + randomBytes(9).toString("hex");
     const salt = randomBytes(16).toString("hex");
-    this.s.db.users[id] = { email, name, salt, hash: scryptSync(password, salt, 32).toString("hex") };
+    this.s.db.users[id] = { email, name, salt, hash: scryptSync(password, salt, 32).toString("hex"), createdAt: now() };
     this.s.save();
     return { id, email, name };
   }
@@ -240,7 +240,17 @@ class LocalAuth implements AuthStore {
     const s = this.s.db.sessions[secret];
     if (!s || s.expire < now()) return null;
     const u = this.s.db.users[s.userId];
-    return u ? { id: s.userId, email: u.email, name: u.name, emailVerified: !!u.verified } : null;
+    return u ? this.toUser(s.userId) : null;
+  }
+  private toUser(id: string): User {
+    const u = this.s.db.users[id];
+    return { id, email: u.email, name: u.name, emailVerified: !!u.verified, termsAcceptedAt: u.prefs?.termsAcceptedAt ?? null, guest: isGuestEmail(u.email) };
+  }
+  async acceptTerms(userId: string) {
+    const u = this.s.db.users[userId];
+    if (!u) throw new EngramError("not_found", "User not found.");
+    u.prefs = { ...u.prefs, termsAcceptedAt: now() };
+    this.s.save();
   }
   async signOut(secret: string) { delete this.s.db.sessions[secret]; this.s.save(); }
   async createJwt() { return null; }
@@ -298,7 +308,7 @@ class LocalAuth implements AuthStore {
     if (!user) throw new EngramError("unauthorized", "Sign in to continue.");
     this.s.db.users[user.id].name = name;
     this.s.save();
-    return { ...user, name };
+    return this.toUser(user.id);
   }
   async updatePassword(sessionSecret: string, oldPassword: string, password: string) {
     const user = await this.getUser(sessionSecret);

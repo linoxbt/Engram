@@ -71,6 +71,27 @@ describe("Appwrite sign-up and alerts", () => {
   });
 });
 
+describe("Appwrite terms", () => {
+  const base = { $id: "u1", $createdAt: "2026-10-01T00:00:00.000Z", email: "u1@example.com", name: "U", emailVerification: true };
+  it("counts only the server-set label, not prefs a user could write through Appwrite directly", async () => {
+    const get = vi.spyOn(Account.prototype, "get");
+    const b = backend();
+    get.mockResolvedValueOnce({ ...base, labels: [], prefs: { termsAcceptedAt: "2026-10-02T00:00:00.000Z" } } as never);
+    expect((await b.auth.getUser("s"))?.termsAcceptedAt).toBeNull();
+    get.mockResolvedValueOnce({ ...base, labels: ["terms"], prefs: { termsAcceptedAt: "2026-10-02T00:00:00.000Z" } } as never);
+    expect((await b.auth.getUser("s"))?.termsAcceptedAt).toBe("2026-10-02T00:00:00.000Z");
+  });
+
+  it("accepting sets the prefs timestamp and the label, keeping existing ones", async () => {
+    vi.spyOn(Users.prototype, "get").mockResolvedValue({ ...base, labels: ["beta"], prefs: { theme: "dark" } } as never);
+    const prefs = vi.spyOn(Users.prototype, "updatePrefs").mockResolvedValue({} as never);
+    const labels = vi.spyOn(Users.prototype, "updateLabels").mockResolvedValue({} as never);
+    await backend().auth.acceptTerms("u1");
+    expect(prefs).toHaveBeenCalledWith({ userId: "u1", prefs: { theme: "dark", termsAcceptedAt: expect.any(String) } });
+    expect(labels).toHaveBeenCalledWith({ userId: "u1", labels: ["beta", "terms"] });
+  });
+});
+
 describe("Appwrite sessions", () => {
   it("only a 401 means signed out; an outage is an error", async () => {
     const get = vi.spyOn(Account.prototype, "get");

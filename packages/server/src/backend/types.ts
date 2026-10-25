@@ -81,7 +81,22 @@ export interface FileStore {
   delete(bucket: string, fileId: string): Promise<void>;
 }
 
-export interface User { id: string; email: string; name: string; emailVerified?: boolean }
+export interface User {
+  id: string; email: string; name: string; emailVerified?: boolean;
+  /**
+   * When the account accepted the Terms; null when it never did through Engram (e.g. it was created directly
+   * against Appwrite with the public project ID). Set only by the server (`acceptTerms`).
+   */
+  termsAcceptedAt?: string | null;
+  /** A throwaway read-only demo account (POST /api/demo/enter), deleted after 24 hours. */
+  guest?: boolean;
+}
+
+/** Demo guests live under a reserved domain that can never receive mail (RFC 2606). */
+export const GUEST_EMAIL_DOMAIN = "guest.engram.invalid";
+export const isGuestEmail = (email: string) => email.trim().toLowerCase().endsWith("@" + GUEST_EMAIL_DOMAIN);
+/** Guests older than this are deleted. */
+export const GUEST_TTL_MS = 24 * 3_600_000;
 
 /**
  * Sign-up with an address that already has an account. Worded so it does not confirm the account to whoever is
@@ -117,6 +132,11 @@ export interface AuthStore {
   updatePassword(sessionSecret: string, oldPassword: string, password: string): Promise<void>;
   /** Permanently remove the account and every session it holds. */
   deleteUser(userId: string): Promise<void>;
+  /**
+   * Record that the account accepted the Terms, now: `termsAcceptedAt` in the user's prefs, plus (Appwrite) a
+   * server-only "terms" label, since prefs are writable by the user through Appwrite directly and the label is not.
+   */
+  acceptTerms(userId: string): Promise<void>;
   /**
    * Passkeys (WebAuthn). Adding or removing one needs a session that signed in within the last 10 minutes
    * (otherwise `reauth_required`). `origin` is the site the browser is on: Appwrite takes the relying party

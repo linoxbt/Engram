@@ -20,6 +20,8 @@ export const POST = route(async (req) => {
   rateLimit("signup-ip", clientIp(req), 8, HOUR, "Too many accounts created from this network.");
   const b = getBackend();
   const user = await b.auth.signUp(body.email, body.password, body.name);
+  // The form required the box; record it with the account (accounts made elsewhere are asked on first use).
+  await b.auth.acceptTerms(user.id);
   const s = await b.auth.signIn(body.email, body.password);
   await setSession(s.secret, s.expire);
   // Best effort: the account works without it, and the banner offers to resend.

@@ -1,6 +1,6 @@
 /** Appwrite backend: VectorsDB, Embeddings, Teams, Storage, Auth, Functions and Messaging. */
 import {
-  Account, AppwriteException, Client, Embeddings, EmbeddingModel, Functions, ID, Messaging, Query, Storage, Teams, Users, VectorsDB,
+  Account, AppwriteException, Client, Embeddings, EmbeddingModel, Functions, ID, Messaging, Query, Storage, Teams, Users, VectorsDB, type Models,
 } from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
 import { bool, type EngramConfig } from "../config";
@@ -8,7 +8,7 @@ import { ConflictError, EngramError, isEngramError, REAUTH_WINDOW_MS, reauthRequ
 import { evaluate } from "./query";
 import { clearAttempts, guardedSignIn, type AttemptStore } from "./login-guard";
 import { cosine } from "@engram/core";
-import { SIGNUP_CONFLICT } from "./types";
+import { isGuestEmail, SIGNUP_CONFLICT } from "./types";
 import type {
   AuthStore, Backend, Collection, Embedder, EmbedModel, FileInfo, FileStore, Filter, Jobs, PasskeyChallenge, PasskeyInfo, QuerySpec, TeamInfo, TeamMember, TeamStore, TxOp,
   User, VDoc, VectorStore,
@@ -328,6 +328,17 @@ async function toBytes(x: unknown): Promise<Uint8Array> {
   throw new EngramError("internal", `Unexpected file body type: ${Object.prototype.toString.call(x)}`);
 }
 
+/**
+ * Accepting the Terms sets a label as well as `prefs.termsAcceptedAt`: a user can write their own prefs through
+ * Appwrite with the public project ID, but only the API key can set labels, so the label is what counts.
+ */
+const TERMS_LABEL = "terms";
+function toUser(u: Models.User<Models.Preferences>): User {
+  const prefs = (u.prefs ?? {}) as Record<string, unknown>;
+  const at = typeof prefs.termsAcceptedAt === "string" ? prefs.termsAcceptedAt : u.$createdAt;
+  return { id: u.$id, email: u.email, name: u.name, emailVerified: u.emailVerification, termsAcceptedAt: u.labels?.includes(TERMS_LABEL) ? at : null, guest: isGuestEmail(u.email) };
+}
+
 const toPasskeyInfo = (p: { $id: string; $createdAt: string; name: string; accessedAt: string }): PasskeyInfo =>
   ({ id: p.$id, name: p.name, createdAt: p.$createdAt, lastUsedAt: p.accessedAt || null });
 const passkeyMessage = (e: AppwriteException) =>
@@ -365,8 +376,7 @@ class AppwriteAuth implements AuthStore {
   }
   async getUser(secret: string): Promise<User | null> {
     try {
-      const u = await new Account(this.anon().setSession(secret)).get();
-      return { id: u.$id, email: u.email, name: u.name, emailVerified: u.emailVerification };
+      return toUser(await new Account(this.anon().setSession(secret)).get());
     } catch (e) {
       // Only Appwrite's 401 means the session is gone. Anything else (an outage, a network error) must not look
       // like being signed out, which would clear the cookie and bounce people to the login page.
@@ -433,8 +443,7 @@ class AppwriteAuth implements AuthStore {
     }
   }
   async updateName(sessionSecret: string, name: string): Promise<User> {
-    const u = await call(() => new Account(this.anon().setSession(sessionSecret)).updateName({ name }));
-    return { id: u.$id, email: u.email, name: u.name, emailVerified: u.emailVerification };
+    return toUser(await call(() => new Account(this.anon().setSession(sessionSecret)).updateName({ name })));
   }
   async updatePassword(sessionSecret: string, oldPassword: string, password: string) {
     try {
@@ -449,6 +458,12 @@ class AppwriteAuth implements AuthStore {
   }
   async deleteUser(userId: string) {
     await call(() => new Users(this.admin).delete({ userId }));
+  }
+  async acceptTerms(userId: string) {
+    const users = new Users(this.admin);
+    const u = await call(() => users.get({ userId }));
+    await call(() => users.updatePrefs({ userId, prefs: { ...u.prefs, termsAcceptedAt: new Date().toISOString() } }));
+    if (!u.labels.includes(TERMS_LABEL)) await call(() => users.updateLabels({ userId, labels: [...u.labels, TERMS_LABEL] }));
   }
 
   // ---- passkeys
