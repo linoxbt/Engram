@@ -1,6 +1,6 @@
 import { entryId, seqOf } from "@engram/core";
 import { chainHead, checkClassifier, getBackend, getConfig, getEntry, isEngramError, listAllSpaces, type Backend, type EngramConfig } from "@engram/server";
-import { json } from "@/lib/server/api";
+import { json, withRequestId } from "@/lib/server/api";
 import { currentUser } from "@/lib/server/session";
 
 export const runtime = "nodejs";
@@ -49,7 +49,7 @@ async function check(what: string, generic: string, fn: () => Promise<unknown>):
   catch (e) { return { ok: false, ms: Date.now() - t, ...publicError(what, e, generic) }; }
 }
 
-export async function GET(req: Request) {
+export const GET = withRequestId(async (req) => {
   const fresh = new URL(req.url).searchParams.has("fresh");
   // An auth outage must not take the health check down with it.
   const user = await currentUser().catch(() => null);
@@ -72,7 +72,7 @@ export async function GET(req: Request) {
     classifierCheck: cfg.classifierModel ? classifier?.value ?? null : null,
     checkedAt: new Date(core.at).toISOString(),
   }, { status, headers: { "Cache-Control": "no-store" } });
-}
+});
 
 async function runClassifier(cfg: EngramConfig): Promise<Check | null> {
   const r = await checkClassifier(cfg);
@@ -157,7 +157,9 @@ async function runFreshness(b: Backend, cfg: EngramConfig) {
     if (size > covered) {
       behind++;
       const first = await getEntry(b, entryId(s.key, covered));
-      const at = first?.metadata.createdAt ?? head?.metadata.createdAt ?? null;
+      // The wall-clock write time, not metadata.createdAt: seeded stories backdate the latter by days.
+      const doc = (first ?? head) as ({ $createdAt?: string; metadata: { createdAt: string } } | null);
+      const at = doc?.$createdAt ?? doc?.metadata.createdAt ?? null;
       if (at && (!oldestUncovered || at < oldestUncovered)) oldestUncovered = at;
       if (at && cfg.appwrite.checkpointFunctionId && now - Date.parse(at) > CHECKPOINT_STALE_MS) staleCheckpoints++;
     }

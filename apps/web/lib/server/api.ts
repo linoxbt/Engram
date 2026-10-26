@@ -44,6 +44,10 @@ async function handle(req: NextRequest, run: (info: RequestInfo) => Promise<Resp
   });
 }
 
+/** For routes with bespoke responses (health): the same request-id and 5xx logging as the route wrappers. */
+export const withRequestId = (run: (req: NextRequest) => Promise<Response>) =>
+  (req: NextRequest) => handle(req, () => run(req));
+
 export async function readJson<T = unknown>(req: NextRequest | Request): Promise<T> {
   const text = await req.text();
   if (!text) return {} as T;

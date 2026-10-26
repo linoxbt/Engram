@@ -2,18 +2,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { entryId, generateKeyPair, iso } from "@engram/core";
 import { createLocalBackend, createSpace, getConfig, resetConfig, setBackend, setConfig, updateSettings, type Backend } from "@engram/server";
 
-const state = vi.hoisted(() => ({ user: null as null | { id: string }, classifier: vi.fn() }));
+const state = vi.hoisted(() => ({ user: null as null | { id: string }, classifier: vi.fn(), writtenAt: null as string | null }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/server/session", () => ({ currentUser: async () => state.user }));
-vi.mock("@/lib/server/api", () => ({ json: (data: unknown, init?: ResponseInit) => Response.json(data, init) }));
-vi.mock("@engram/server", async (orig) => ({ ...(await orig<typeof import("@engram/server")>()), checkClassifier: state.classifier }));
+vi.mock("@/lib/server/api", () => ({
+  json: (data: unknown, init?: ResponseInit) => Response.json(data, init),
+  withRequestId: (run: (req: Request) => Promise<Response>) => run,
+}));
+vi.mock("@engram/server", async (orig) => {
+  const real = await orig<typeof import("@engram/server")>();
+  return {
+    ...real,
+    checkClassifier: state.classifier,
+    // Freshness measures the real write time ($createdAt); the local backend always writes "now", so tests backdate it here.
+    getEntry: async (...args: Parameters<typeof real.getEntry>) => {
+      const d = await real.getEntry(...args);
+      return d && state.writtenAt ? { ...d, $createdAt: state.writtenAt } : d;
+    },
+  };
+});
 
 async function route() {
   vi.resetModules();
   return import("../app/api/v1/health/route");
 }
 const get = async (url = "http://x/api/v1/health") => {
-  const res = await (await route()).GET(new Request(url));
+  const res = await (await route()).GET(new Request(url) as never);
   return { status: res.status, body: (await res.json()) as Record<string, any> };
 };
 
@@ -23,6 +37,7 @@ beforeEach(async () => {
   setConfig({ backend: "local", classifierModel: null, checkpoint: { privateKey: keys.privateKey, publicKey: keys.publicKey, keyId: "test" } });
   setBackend(createLocalBackend({ dir: null }));
   state.user = null;
+  state.writtenAt = null;
   state.classifier.mockReset().mockResolvedValue({ ok: true, ms: 5 });
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
@@ -68,6 +83,7 @@ describe("health", () => {
     setBackend(b);
     const space = await createSpace(b, { name: "S", ownerId: "" });
     const old = iso(Date.now() - 3 * 3600_000);
+    state.writtenAt = old;
     for (let i = 0; i < 5; i++) await b.vectors.create("memories", entryId(space.key, i), { embeddings: [1, 0], metadata: { space: space.key, createdAt: old } }, []);
     await updateSettings(b, space.key, { latestCheckpoint: { fileId: "cp", seq: 1, size: 2, root: "r", createdAt: old }, integrity: { status: "valid", validThrough: 4, entries: 5, findings: 0, critical: 0, checkedAt: iso(), firstFinding: null } });
     const fetchMock = vi.fn(async (_url: string) => new Response("{}", { status: 401 }));
