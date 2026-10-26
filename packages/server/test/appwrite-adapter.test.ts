@@ -201,8 +201,8 @@ describe("conditional writes", () => {
     const staged = ops.mock.calls[0][0] as { transactionId: string; operations: ({ action: string; databaseId: string; collectionId: string; documentId: string } & { data?: { metadata: { x: string; _rev: string } } })[] };
     expect(staged.transactionId).toBe("tx");
     expect(staged.operations[0]).toMatchObject({ action: "update", databaseId: DB, collectionId: "memories", documentId: "a" });
-    expect(staged.operations[0].data.metadata.x).toBe("1");
-    expect(staged.operations[0].data.metadata._rev).toMatch(/^[0-9a-f]{10}$/);
+    expect(staged.operations[0]?.data?.metadata.x).toBe("1");
+    expect(staged.operations[0]?.data?.metadata._rev).toMatch(/^[0-9a-f]{10}$/);
     expect(staged.operations[1]).toEqual({ action: "delete", databaseId: DB, collectionId: "memories", documentId: "b" });
     expect(upd).toHaveBeenCalledWith({ transactionId: "tx", commit: true });
   });
