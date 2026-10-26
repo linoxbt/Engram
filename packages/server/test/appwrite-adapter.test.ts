@@ -150,12 +150,19 @@ describe("conditional writes", () => {
     mock(sdk.vdb, "getDocument", async () => ({ $id: "m1", $updatedAt: "t2", metadata: { n: "1" } }));
     const b = backend();
 
+    // Tokens come from adapter reads: "<updatedAt>~<rev>". A legacy token with no rev falls back to $updatedAt;
+    // one with a rev matches on metadata._rev, so same-millisecond writes cannot defeat the check.
     const doc = await b.vectors.update("memories", "m1", { metadata: { n: "1" } }, undefined, { ifUpdatedAt: "t1" });
-    expect(doc.$updatedAt).toBe("t2");
+    expect(doc.$updatedAt).toBe("t2~");
     expect(rollback).toHaveBeenCalledWith({ transactionId: "tx1", rollback: true });
-    expect(updateDocuments).toHaveBeenCalledWith({ databaseId: DB, collectionId: "memories", data: { metadata: { n: "1" } }, queries: [Query.equal("$id", ["m1"]), Query.equal("$updatedAt", ["t1"])] });
+    const legacy = updateDocuments.mock.calls[0][0];
+    expect(legacy.queries).toEqual([Query.equal("$id", ["m1"]), Query.equal("$updatedAt", ["t1"])]);
+    expect(legacy.data.metadata.n).toBe("1");
+    expect(legacy.data.metadata._rev).toMatch(/^[0-9a-f]{10}$/);
 
-    await b.vectors.update("memories", "m1", { metadata: { n: "2" } }, undefined, { ifUpdatedAt: "t2" });
+    await b.vectors.update("memories", "m1", { metadata: { n: "2" } }, undefined, { ifUpdatedAt: "t2~abcdef0123" });
+    const revved = updateDocuments.mock.calls[1][0];
+    expect(revved.queries).toEqual([Query.equal("$id", ["m1"]), Query.equal("metadata._rev", ["abcdef0123"])]);
     expect(createTransaction).toHaveBeenCalledTimes(1);
     expect(updateDocuments).toHaveBeenCalledTimes(2);
   });
@@ -174,7 +181,7 @@ describe("conditional writes", () => {
     mock(sdk.vdb, "deleteDocument", async () => { order.push("delete"); throw ex(404, "document_not_found"); });
     mock(sdk.vdb, "createDocument", async (a: { permissions?: string[] }) => { order.push(`create:${a.permissions?.join(",")}`); return {}; });
     await backend().vectors.transact([
-      { action: "update", coll: "memories", id: "a", data: { metadata: {} }, ifUpdatedAt: "t" },
+      { action: "update", coll: "memories", id: "a", data: { metadata: {} }, ifUpdatedAt: "t~" },
       { action: "update", coll: "memories", id: "b", data: { metadata: {} } },
       { action: "delete", coll: "recalls", id: "c" },
       { action: "create", coll: "concepts", id: "d", data: { embeddings: [1], metadata: {} }, perms: ['read("team:sp_x")'] },
@@ -188,16 +195,15 @@ describe("conditional writes", () => {
     mock(sdk.vdb, "getDocument", async () => ({ $id: "a", $updatedAt: "t" }));
     const upd = mock(sdk.vdb, "updateTransaction", async () => ({}));
     await backend().vectors.transact([
-      { action: "update", coll: "memories", id: "a", data: { metadata: { x: "1" } }, ifUpdatedAt: "t" },
+      { action: "update", coll: "memories", id: "a", data: { metadata: { x: "1" } }, ifUpdatedAt: "t~" },
       { action: "delete", coll: "memories", id: "b" },
     ]);
-    expect(ops.mock.calls[0][0]).toEqual({
-      transactionId: "tx",
-      operations: [
-        { action: "update", databaseId: DB, collectionId: "memories", documentId: "a", data: { metadata: { x: "1" } } },
-        { action: "delete", databaseId: DB, collectionId: "memories", documentId: "b" },
-      ],
-    });
+    const staged = ops.mock.calls[0][0];
+    expect(staged.transactionId).toBe("tx");
+    expect(staged.operations[0]).toMatchObject({ action: "update", databaseId: DB, collectionId: "memories", documentId: "a" });
+    expect(staged.operations[0].data.metadata.x).toBe("1");
+    expect(staged.operations[0].data.metadata._rev).toMatch(/^[0-9a-f]{10}$/);
+    expect(staged.operations[1]).toEqual({ action: "delete", databaseId: DB, collectionId: "memories", documentId: "b" });
     expect(upd).toHaveBeenCalledWith({ transactionId: "tx", commit: true });
   });
 
@@ -206,7 +212,7 @@ describe("conditional writes", () => {
     mock(sdk.vdb, "createOperations", async () => ({}));
     mock(sdk.vdb, "getDocument", async () => ({ $id: "a", $updatedAt: "newer" }));
     const upd = mock(sdk.vdb, "updateTransaction", async () => ({}));
-    await expect(backend().vectors.transact([{ action: "update", coll: "memories", id: "a", data: { metadata: {} }, ifUpdatedAt: "t" }])).rejects.toBeInstanceOf(ConflictError);
+    await expect(backend().vectors.transact([{ action: "update", coll: "memories", id: "a", data: { metadata: {} }, ifUpdatedAt: "t~" }])).rejects.toBeInstanceOf(ConflictError);
     expect(upd).toHaveBeenCalledWith({ transactionId: "tx", rollback: true });
     expect(upd).not.toHaveBeenCalledWith({ transactionId: "tx", commit: true });
   });
@@ -216,7 +222,7 @@ describe("conditional writes", () => {
     mock(sdk.vdb, "createOperations", async () => { throw ex(409, "document_already_exists"); });
     mock(sdk.vdb, "updateTransaction", async () => ({}));
     const updateDocuments = mock(sdk.vdb, "updateDocuments", async () => ({ documents: [{}] }));
-    await expect(backend().vectors.transact([{ action: "update", coll: "memories", id: "a", data: { metadata: {} }, ifUpdatedAt: "t" }])).rejects.toSatisfy(isConflict);
+    await expect(backend().vectors.transact([{ action: "update", coll: "memories", id: "a", data: { metadata: {} }, ifUpdatedAt: "t~" }])).rejects.toSatisfy(isConflict);
     expect(updateDocuments).not.toHaveBeenCalled();
   });
 

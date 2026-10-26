@@ -26,22 +26,38 @@ Run by `pnpm experiments` on 2026-10-25T08:28:04.389Z against `https://fra.cloud
 <!-- engram:section events -->
 ## Realtime and Function events
 
-**Not yet verified live.** Run the `events` provisioning step (`ENGRAM_PROVISION_STEPS=events`) to replace this section. Until then:
+Run by the `events` step on 2026-10-26T20:24:30.988Z against `https://fra.cloud.appwrite.io/v1`, database `engram`, reserved test space `test0000`.
+Verified channel for the live feed: **vectorsdb.engram.collections.memories.documents**. Function events that fired: **event execution 6adfb6f909acf3aa59b4 (no x-appwrite-event header logged), event execution 6adfb6f5ce19c006e6f4 (no x-appwrite-event header logged)**.
 
 | # | Item | Result | OK | What Engram does |
 |---|------|--------|----|------------------|
-| 11 | Realtime channel for VectorsDB documents | manual: open the dashboard; the sidebar shows Realtime or polling | info | Engine subscribes to databases.<db>.collections.memories.documents with a JWT, else polls every 3 s |
-| 12 | Function trigger on a VectorsDB document event | manual: create a concept and check the labeler's executions | info | The app labels inline when events do not fire |
+| 11 | Realtime channel for VectorsDB documents | fired: documents, vectorsdb.engram.collections.memories.documents, vectorsdb.engram.collections.memories.documents.m_test0000_900214980269; not fired: databases.engram.collections.memories.documents, databases.engram.collections.memories.documents.m_test0000_900214980269, tablesdb.engram.tables.memories.rows, rows; Appwrite reported channels documents, vectorsdb.engram.collections.memories.documents, vectorsdb.engram.collections.memories.documents.m_test0000_900214980269, documents.create, vectorsdb.engram.collections.memories.documents.create, vectorsdb.engram.collections.memories.documents.m_test0000_900214980269.create; events vectorsdb.engram.collections.memories.documents.m_test0000_900214980269.create, vectorsdb.engram.collections.memories.documents.m_test0000_900214980269, vectorsdb.engram.collections.memories, vectorsdb.engram | yes | Subscribe to vectorsdb.engram.collections.memories.documents (apps/web/lib/client/live.ts) |
+| 12 | Function trigger on a VectorsDB document event | accepted names: databases.engram.collections.concepts.documents.*.create, databases.engram.collections.concepts.documents.*.update, vectorsdb.engram.collections.concepts.documents.*.create, vectorsdb.engram.collections.concepts.documents.*.update, databases.*.collections.*.documents.*.create, vectorsdb.*.collections.*.documents.*.create, databases.engram.collections.concepts.documents.*, vectorsdb.engram.collections.concepts.documents.*; rejected: none; fired: event execution 6adfb6f909acf3aa59b4 (no x-appwrite-event header logged) [completed], event execution 6adfb6f5ce19c006e6f4 (no x-appwrite-event header logged) [completed]; labeler events restored to databases.engram.collections.concepts.documents.*.update | yes | Set the labeler's events in appwrite.json to the namespace that fired (event execution 6adfb6f909acf3aa59b4 (no x-appwrite-event header logged)) |
 <!-- engram:end events -->
 
 <!-- engram:section appwrite-live -->
 ## Adapter integration suite (live)
 
-**Not yet run.** The `appwrite-live` provisioning step runs `packages/server/test/appwrite-live.test.ts` (create-first conflict, three-writer compare-and-swap race, a conditional bulk update that includes `embeddings` as in the forget path, `transact()`, file create-first conflict) against the reserved test space `test0000` and replaces this section.
+Run by the `appwrite-live` step on 2026-10-26T20:22:34.588Z against `https://fra.cloud.appwrite.io/v1`, reserved test space `test0000`: 4/5 passed. Every test document and file is deleted afterwards.
+
+| # | Item | Result | OK | What Engram does |
+|---|------|--------|----|------------------|
+| L1 | create-first: a second create with the same ID is a conflict and does not overwrite | passed in 1213 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
+| L2 | compare-and-swap: of three writers racing on one read, exactly one lands; a later stale write is rejected | failed: AssertionError: expected [ { status: 'fulfilled', …(1) }, …(1) ] to have a length of 1 but got 2 | **no** | Adapter integration (packages/server/test/appwrite-live.test.ts) |
+| L3 | a conditional bulk update that includes embeddings replaces the vector (the forget path) | passed in 1448 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
+| L4 | a batch applied through transact() lands (transactions or the conditional fallback) | passed in 1597 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
+| L5 | files: create-first with a duplicate file ID is a conflict; the prefix listing finds the file | passed in 813 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
 <!-- engram:end appwrite-live -->
 
 <!-- engram:section quality -->
 ## Quality fixtures
 
-**Not yet run against the live model.** Offline (rule-based classifier, hashing embedder; `pnpm quality -- --offline`): relation accuracy 17/30, recall hit rate @3 13/15. The `quality` provisioning step runs the gate (classifier ≥ 22/30) against the configured model and Appwrite embeddings and replaces this section.
+Run by the `quality` step on 2026-10-26T20:23:38.484Z. Fixtures: `scripts/fixtures/quality.ts`.
+
+| Check | Setup | Score | Gate |
+|-------|-------|-------|------|
+| Relation accuracy (30 labelled pairs, 6 per relation) | anthropic:claude-haiku-5-5 (through relate()) | **25/30** (duplicate 6/6, supersedes 6/6, contradicts 1/6, refines 6/6, unrelated 6/6) | ≥ 22/30: pass |
+| Recall hit rate @3 (15 queries, 40 memories) | Appwrite nomic-embed-text with task prefixes, cosine top-3 | **15/15** (top-1 15/15, MRR 1.000) | reported |
+
+Misclassified: con-1 (expected contradicts, got supersedes); con-3 (expected contradicts, got supersedes); con-4 (expected contradicts, got supersedes); con-5 (expected contradicts, got supersedes); con-6 (expected contradicts, got supersedes).
 <!-- engram:end quality -->

@@ -37,7 +37,8 @@ export function useLive(spaceKey: string): LiveMode {
         const { Client, Channel } = await import("appwrite");
         if (cancelled) return;
         const client = new Client().setEndpoint(endpoint).setProject(projectId).setJWT(jwt);
-        const channel = Channel.database(databaseId).collection("memories").document();
+        // Verified live (docs/verified.md, events): VectorsDB documents publish on "vectorsdb.<db>...", not "databases.<db>...".
+        const channel = Channel.database(databaseId).collection("memories").document().toString().replace(/^databases\./, "vectorsdb.");
         unsub?.();
         unsub = client.subscribe(channel, (msg: { payload?: { metadata?: { space?: string } } }) => {
           if (cancelled) return;

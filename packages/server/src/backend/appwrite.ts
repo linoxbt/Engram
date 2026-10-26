@@ -67,16 +67,39 @@ function toQueries(f: Filter): string {
   }
 }
 
+/**
+ * $updatedAt has millisecond precision, so two writes in one millisecond would defeat a timestamp-only
+ * compare-and-swap (seen live: docs/verified.md, appwrite-live). Every write therefore stamps a random revision
+ * into the stored metadata (`_rev`), reads fold it into the opaque version token the engine passes back as
+ * `ifUpdatedAt`, and conditional writes match on the revision. The engine never sees `_rev`: reads strip it.
+ */
+const newRev = () => Math.random().toString(16).slice(2, 12).padEnd(10, "0");
+const stamp = <T extends { metadata?: unknown }>(data: T): T =>
+  data.metadata && typeof data.metadata === "object" ? { ...data, metadata: { ...(data.metadata as object), _rev: newRev() } } : data;
+function untoken(d: { $updatedAt?: string; metadata?: { _rev?: string } } | null | undefined) {
+  if (!d) return d;
+  const rev = d.metadata?._rev ?? "";
+  if (d.metadata && "_rev" in d.metadata) delete d.metadata._rev;
+  d.$updatedAt = `${d.$updatedAt}~${rev}`;
+  return d;
+}
+const splitToken = (token: string) => {
+  const i = token.lastIndexOf("~");
+  return i < 0 ? { at: token, rev: "" } : { at: token.slice(0, i), rev: token.slice(i + 1) };
+};
+
 class AppwriteVectors implements VectorStore {
   private selectOk = true;
   constructor(private vdb: VectorsDB, private db: string, private cfg: EngramConfig) {}
 
   async create<M>(coll: Collection, id: string, data: { embeddings: number[]; metadata: M }, perms?: string[]) {
-    return call(() => this.vdb.createDocument({ databaseId: this.db, collectionId: coll, documentId: id, data: data as any, permissions: perms })) as unknown as Promise<VDoc<M>>;
+    const doc = await call(() => this.vdb.createDocument({ databaseId: this.db, collectionId: coll, documentId: id, data: stamp(data) as any, permissions: perms }));
+    return untoken(doc as any) as unknown as VDoc<M>;
   }
   async get<M>(coll: Collection, id: string): Promise<VDoc<M> | null> {
     try {
-      return (await this.vdb.getDocument({ databaseId: this.db, collectionId: coll, documentId: id })) as unknown as VDoc<M>;
+      const doc = await this.vdb.getDocument({ databaseId: this.db, collectionId: coll, documentId: id });
+      return untoken(doc as any) as unknown as VDoc<M>;
     } catch (e) {
       if (isNotFound(e)) return null;
       throw mapError(e);
@@ -87,7 +110,8 @@ class AppwriteVectors implements VectorStore {
       await this.transact([{ action: "update", coll, id, data, perms, ifUpdatedAt: opts.ifUpdatedAt }]);
       return (await this.get<M>(coll, id))!;
     }
-    return call(() => this.vdb.updateDocument({ databaseId: this.db, collectionId: coll, documentId: id, data: data as any, permissions: perms })) as unknown as Promise<VDoc<M>>;
+    const doc = await call(() => this.vdb.updateDocument({ databaseId: this.db, collectionId: coll, documentId: id, data: stamp(data) as any, permissions: perms }));
+    return untoken(doc as any) as unknown as VDoc<M>;
   }
   async delete(coll: Collection, id: string) {
     try { await this.vdb.deleteDocument({ databaseId: this.db, collectionId: coll, documentId: id }); }
@@ -129,6 +153,7 @@ class AppwriteVectors implements VectorStore {
         if (q.withVectors === false) delete d.embeddings;
       }
     }
+    for (const d of docs) untoken(d as { $updatedAt?: string; metadata?: { _rev?: string } });
     return docs;
   }
 
@@ -150,9 +175,9 @@ class AppwriteVectors implements VectorStore {
     }
     for (const op of ops) {
       if (op.action === "update" && op.ifUpdatedAt) await this.compareAndSwap(op.coll, op.id, op.data, op.ifUpdatedAt);
-      else if (op.action === "update") await call(() => this.vdb.updateDocument({ databaseId: this.db, collectionId: op.coll, documentId: op.id, data: op.data as any }));
+      else if (op.action === "update") await call(() => this.vdb.updateDocument({ databaseId: this.db, collectionId: op.coll, documentId: op.id, data: stamp(op.data) as any }));
       else if (op.action === "delete") await this.delete(op.coll, op.id);
-      else await call(() => this.vdb.createDocument({ databaseId: this.db, collectionId: op.coll, documentId: op.id, data: op.data as any, permissions: op.perms }));
+      else await call(() => this.vdb.createDocument({ databaseId: this.db, collectionId: op.coll, documentId: op.id, data: stamp(op.data) as any, permissions: op.perms }));
     }
   }
   private txOk = true;
@@ -167,15 +192,15 @@ class AppwriteVectors implements VectorStore {
           databaseId: this.db,
           collectionId: op.coll,
           documentId: op.id,
-          ...(op.action === "delete" ? {} : { data: op.data }),
+          ...(op.action === "delete" ? {} : { data: stamp(op.data as { metadata?: unknown }) }),
         })),
       });
       // Conditional updates: once staged, Appwrite's commit fails if a staged document changes.
       // Re-reading now closes the window between our read and the staging.
       for (const op of ops) {
         if (op.action !== "update" || !op.ifUpdatedAt) continue;
-        const cur = await this.vdb.getDocument({ databaseId: this.db, collectionId: op.coll, documentId: op.id });
-        if (cur.$updatedAt !== op.ifUpdatedAt) throw new ConflictError(`Document ${op.id} changed since it was read`);
+        const cur = await this.vdb.getDocument({ databaseId: this.db, collectionId: op.coll, documentId: op.id }) as { $updatedAt: string; metadata?: { _rev?: string } };
+        if (`${cur.$updatedAt}~${cur.metadata?._rev ?? ""}` !== op.ifUpdatedAt) throw new ConflictError(`Document ${op.id} changed since it was read`);
       }
       await this.vdb.updateTransaction({ transactionId: tx.$id, commit: true });
     } catch (e) {
@@ -184,11 +209,16 @@ class AppwriteVectors implements VectorStore {
     }
   }
 
-  /** Update one document only if it is still the version we read: an update filtered on its ID and $updatedAt. */
-  private async compareAndSwap(coll: Collection, id: string, data: unknown, ifUpdatedAt: string) {
+  /**
+   * Update one document only if it is still the version we read: an update filtered on its ID and the revision
+   * stamped by the write that produced that version. Documents written before revisions existed fall back to the
+   * millisecond $updatedAt match once; the update itself stamps a revision, so the fallback never repeats.
+   */
+  private async compareAndSwap(coll: Collection, id: string, data: unknown, token: string) {
+    const { at, rev } = splitToken(token);
     const res = await call(() => this.vdb.updateDocuments({
-      databaseId: this.db, collectionId: coll, data: data as object,
-      queries: [Query.equal("$id", [id]), Query.equal("$updatedAt", [ifUpdatedAt])],
+      databaseId: this.db, collectionId: coll, data: stamp(data as { metadata?: unknown }) as object,
+      queries: [Query.equal("$id", [id]), rev ? Query.equal("metadata._rev", [rev]) : Query.equal("$updatedAt", [at])],
     }));
     if (!res.documents.length) throw new ConflictError(`Document ${id} changed since it was read`);
   }

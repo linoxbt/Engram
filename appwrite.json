@@ -57,7 +57,8 @@
       "timeout": 60,
       "execute": [],
       "events": [
-        "databases.engram.collections.concepts.documents.*.update"
+        "databases.engram.collections.concepts.documents.*.update",
+        "vectorsdb.engram.collections.concepts.documents.*.update"
       ],
       "scopes": [
         "teams.read",
