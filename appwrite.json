@@ -35,7 +35,9 @@
       "execute": [],
       "events": [],
       "scopes": [
+        "embeddings.write",
         "files.read",
+        "files.write",
         "messages.write",
         "teams.read",
         "teams.write",
