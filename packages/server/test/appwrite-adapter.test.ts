@@ -146,14 +146,15 @@ describe("conditional writes", () => {
     const createTransaction = mock(sdk.vdb, "createTransaction", async () => ({ $id: "tx1" }));
     mock(sdk.vdb, "createOperations", async () => { throw ex(404, "transaction_not_found"); });
     const rollback = mock(sdk.vdb, "updateTransaction", async () => { throw ex(404, "transaction_not_found"); });
-    const updateDocuments = mock(sdk.vdb, "updateDocuments", async () => ({ total: 1, documents: [{ $id: "m1" }] }));
-    mock(sdk.vdb, "getDocument", async () => ({ $id: "m1", $updatedAt: "t2", metadata: { n: "1" } }));
+    let written: { n?: string } | undefined;
+    const updateDocuments = mock(sdk.vdb, "updateDocuments", async (a: { data: { metadata?: { n?: string } } }) => { written = a.data.metadata; return { total: 1, documents: [{ $id: "m1" }] }; });
+    mock(sdk.vdb, "getDocument", async () => ({ $id: "m1", $updatedAt: "t2", metadata: { ...written } }));
     const b = backend();
 
     // Tokens come from adapter reads: "<updatedAt>~<rev>". A legacy token with no rev falls back to $updatedAt;
     // one with a rev matches on metadata._rev, so same-millisecond writes cannot defeat the check.
     const doc = await b.vectors.update("memories", "m1", { metadata: { n: "1" } }, undefined, { ifUpdatedAt: "t1" });
-    expect(doc.$updatedAt).toBe("t2~");
+    expect(doc.$updatedAt).toMatch(/^t2~[0-9a-f]{10}$/);
     expect(rollback).toHaveBeenCalledWith({ transactionId: "tx1", rollback: true });
     const legacy = updateDocuments.mock.calls[0][0] as { queries: string[]; data: { metadata: { n: string; _rev: string } } };
     expect(legacy.queries).toEqual([Query.equal("$id", ["m1"]), Query.equal("$updatedAt", ["t1"])]);
@@ -167,6 +168,20 @@ describe("conditional writes", () => {
     expect(updateDocuments).toHaveBeenCalledTimes(2);
   });
 
+  it("demotes a writer whose write the server admitted but then clobbered (filtered updates are not atomic live)", async () => {
+    mock(sdk.vdb, "createTransaction", async () => { throw ex(404, "transaction_not_found"); });
+    const revs: string[] = [];
+    mock(sdk.vdb, "updateDocuments", async (a: { data: { metadata: { _rev: string } } }) => { revs.push(a.data.metadata._rev); return { documents: [{ $id: "m1" }] }; });
+    // Whatever each writer wrote, the document ends up holding the LAST writer's revision.
+    mock(sdk.vdb, "getDocument", async () => ({ $id: "m1", $updatedAt: "t9", metadata: { _rev: revs[revs.length - 1] } }));
+    const b = backend();
+    const first = b.vectors.update("memories", "m1", { metadata: { n: "1" } }, undefined, { ifUpdatedAt: "t0~aaaaaaaaaa" });
+    const second = b.vectors.update("memories", "m1", { metadata: { n: "2" } }, undefined, { ifUpdatedAt: "t0~aaaaaaaaaa" });
+    const settled = await Promise.allSettled([first, second]);
+    expect(settled.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(settled.filter((r) => r.status === "rejected" && r.reason instanceof ConflictError)).toHaveLength(1);
+  });
+
   it("raises ConflictError when the filtered update matches no document (someone wrote first)", async () => {
     mock(sdk.vdb, "createTransaction", async () => { throw ex(404, "transaction_not_found"); });
     mock(sdk.vdb, "updateDocuments", async () => ({ total: 0, documents: [] }));
@@ -176,7 +191,9 @@ describe("conditional writes", () => {
   it("applies a fallback batch in order: CAS updates, plain updates, deletes (404 ignored) and creates", async () => {
     mock(sdk.vdb, "createTransaction", async () => { throw ex(404, "transaction_not_found"); });
     const order: string[] = [];
-    mock(sdk.vdb, "updateDocuments", async () => { order.push("cas"); return { documents: [{}] }; });
+    let written: unknown;
+    mock(sdk.vdb, "updateDocuments", async (a: { data: { metadata?: unknown } }) => { order.push("cas"); written = a.data.metadata; return { documents: [{}] }; });
+    mock(sdk.vdb, "getDocument", async () => ({ $id: "a", $updatedAt: "t2", metadata: written }));
     mock(sdk.vdb, "updateDocument", async () => { order.push("update"); return {}; });
     mock(sdk.vdb, "deleteDocument", async () => { order.push("delete"); throw ex(404, "document_not_found"); });
     mock(sdk.vdb, "createDocument", async (a: { permissions?: string[] }) => { order.push(`create:${a.permissions?.join(",")}`); return {}; });

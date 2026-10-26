@@ -213,14 +213,25 @@ class AppwriteVectors implements VectorStore {
    * Update one document only if it is still the version we read: an update filtered on its ID and the revision
    * stamped by the write that produced that version. Documents written before revisions existed fall back to the
    * millisecond $updatedAt match once; the update itself stamps a revision, so the fallback never repeats.
+   *
+   * Seen live (docs/verified.md, appwrite-live): under true concurrency the filtered update is not atomic — two
+   * writers racing on one read can both match before either write lands. The write is therefore confirmed by
+   * reading the document back: only the writer whose stamped revision is what ended up stored reports success,
+   * every other racer gets a ConflictError and re-reads. A write that was clobbered in the remaining microsecond
+   * window is still caught by the next writer's replay and by the verifier's resurrection rules.
    */
   private async compareAndSwap(coll: Collection, id: string, data: unknown, token: string) {
     const { at, rev } = splitToken(token);
+    const stamped = stamp(data as { metadata?: unknown }) as { metadata?: { _rev?: string } };
     const res = await call(() => this.vdb.updateDocuments({
-      databaseId: this.db, collectionId: coll, data: stamp(data as { metadata?: unknown }) as object,
+      databaseId: this.db, collectionId: coll, data: stamped as object,
       queries: [Query.equal("$id", [id]), rev ? Query.equal("metadata._rev", [rev]) : Query.equal("$updatedAt", [at])],
     }));
     if (!res.documents.length) throw new ConflictError(`Document ${id} changed since it was read`);
+    if (stamped.metadata?._rev) {
+      const cur = await call(() => this.vdb.getDocument({ databaseId: this.db, collectionId: coll, documentId: id })) as { metadata?: { _rev?: string } };
+      if (cur.metadata?._rev !== stamped.metadata._rev) throw new ConflictError(`Document ${id} changed since it was read`);
+    }
   }
 }
 
