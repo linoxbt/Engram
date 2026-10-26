@@ -38,15 +38,15 @@ Verified channel for the live feed: **vectorsdb.engram.collections.memories.docu
 <!-- engram:section appwrite-live -->
 ## Adapter integration suite (live)
 
-Run by the `appwrite-live` step on 2026-10-26T20:22:34.588Z against `https://fra.cloud.appwrite.io/v1`, reserved test space `test0000`: 4/5 passed. Every test document and file is deleted afterwards.
+Run by the `appwrite-live` step on 2026-10-26T20:39:26.580Z against `https://fra.cloud.appwrite.io/v1`, reserved test space `test0000`: 5/5 passed. Every test document and file is deleted afterwards.
 
 | # | Item | Result | OK | What Engram does |
 |---|------|--------|----|------------------|
-| L1 | create-first: a second create with the same ID is a conflict and does not overwrite | passed in 1213 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
-| L2 | compare-and-swap: of three writers racing on one read, exactly one lands; a later stale write is rejected | failed: AssertionError: expected [ { status: 'fulfilled', …(1) }, …(1) ] to have a length of 1 but got 2 | **no** | Adapter integration (packages/server/test/appwrite-live.test.ts) |
-| L3 | a conditional bulk update that includes embeddings replaces the vector (the forget path) | passed in 1448 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
-| L4 | a batch applied through transact() lands (transactions or the conditional fallback) | passed in 1597 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
-| L5 | files: create-first with a duplicate file ID is a conflict; the prefix listing finds the file | passed in 813 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
+| L1 | create-first: a second create with the same ID is a conflict and does not overwrite | passed in 992 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
+| L2 | compare-and-swap: of three writers racing on one read, exactly one lands; a later stale write is rejected | passed in 1534 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
+| L3 | a conditional bulk update that includes embeddings replaces the vector (the forget path) | passed in 1888 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
+| L4 | a batch applied through transact() lands (transactions or the conditional fallback) | passed in 1346 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
+| L5 | files: create-first with a duplicate file ID is a conflict; the prefix listing finds the file | passed in 797 ms | yes | Adapter integration (packages/server/test/appwrite-live.test.ts) |
 <!-- engram:end appwrite-live -->
 
 <!-- engram:section quality -->
