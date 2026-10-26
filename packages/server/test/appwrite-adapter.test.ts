@@ -155,13 +155,13 @@ describe("conditional writes", () => {
     const doc = await b.vectors.update("memories", "m1", { metadata: { n: "1" } }, undefined, { ifUpdatedAt: "t1" });
     expect(doc.$updatedAt).toBe("t2~");
     expect(rollback).toHaveBeenCalledWith({ transactionId: "tx1", rollback: true });
-    const legacy = updateDocuments.mock.calls[0][0];
+    const legacy = updateDocuments.mock.calls[0][0] as { queries: string[]; data: { metadata: { n: string; _rev: string } } };
     expect(legacy.queries).toEqual([Query.equal("$id", ["m1"]), Query.equal("$updatedAt", ["t1"])]);
     expect(legacy.data.metadata.n).toBe("1");
     expect(legacy.data.metadata._rev).toMatch(/^[0-9a-f]{10}$/);
 
     await b.vectors.update("memories", "m1", { metadata: { n: "2" } }, undefined, { ifUpdatedAt: "t2~abcdef0123" });
-    const revved = updateDocuments.mock.calls[1][0];
+    const revved = updateDocuments.mock.calls[1][0] as { queries: string[] };
     expect(revved.queries).toEqual([Query.equal("$id", ["m1"]), Query.equal("metadata._rev", ["abcdef0123"])]);
     expect(createTransaction).toHaveBeenCalledTimes(1);
     expect(updateDocuments).toHaveBeenCalledTimes(2);
@@ -198,7 +198,7 @@ describe("conditional writes", () => {
       { action: "update", coll: "memories", id: "a", data: { metadata: { x: "1" } }, ifUpdatedAt: "t~" },
       { action: "delete", coll: "memories", id: "b" },
     ]);
-    const staged = ops.mock.calls[0][0];
+    const staged = ops.mock.calls[0][0] as { transactionId: string; operations: ({ action: string; databaseId: string; collectionId: string; documentId: string } & { data?: { metadata: { x: string; _rev: string } } })[] };
     expect(staged.transactionId).toBe("tx");
     expect(staged.operations[0]).toMatchObject({ action: "update", databaseId: DB, collectionId: "memories", documentId: "a" });
     expect(staged.operations[0].data.metadata.x).toBe("1");
