@@ -13,5 +13,5 @@ export const GET = route<{ key: string; id: string }>(async (req, { key, id }) =
   const proof = await proofFor(getBackend(), await publicSpace(key), id);
   const asked = req.nextUrl.searchParams.get("checkpoint");
   const pinned = asked != null && /^\d{1,12}$/.test(asked) && Number(asked) === Number(proof.checkpoint.seq);
-  return json(proof, { headers: { "Cache-Control": pinned ? "public, max-age=3600, s-maxage=86400, immutable" : "public, max-age=0, s-maxage=60" } });
+  return json(proof, { headers: { "Cache-Control": pinned ? "public, max-age=3600, s-maxage=86400, immutable" : "public, max-age=0, s-maxage=60", "Netlify-Vary": "query" } });
 });

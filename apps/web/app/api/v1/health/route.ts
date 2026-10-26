@@ -52,7 +52,9 @@ async function check(what: string, generic: string, fn: () => Promise<unknown>):
 export const GET = withRequestId(async (req) => {
   const fresh = new URL(req.url).searchParams.has("fresh");
   // An auth outage must not take the health check down with it.
-  const user = await currentUser().catch(() => null);
+  const me = await currentUser().catch(() => null);
+  // A demo guest is an anonymous visitor with a session: verdict only, no backend internals.
+  const user = me && !me.guest ? me : null;
   const now = Date.now();
   const force = !!(fresh && user);
   const ttl = user ? USER_TTL_MS : ANON_TTL_MS;

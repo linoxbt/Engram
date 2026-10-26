@@ -21,5 +21,5 @@ export const GET = route<{ key: string }>(async (req, { key }) => {
   return json({
     entries: docs.map((d) => ({ $id: d.$id, h: d.metadata.h, hash: d.metadata.hash })),
     next: docs.length === limit ? docs[docs.length - 1].$id : null,
-  }, { headers: { "Cache-Control": "public, max-age=0, s-maxage=10" } });
+  }, { headers: { "Cache-Control": "public, max-age=0, s-maxage=10", "Netlify-Vary": "query" } });
 });

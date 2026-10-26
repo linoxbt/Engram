@@ -37,7 +37,7 @@ const RIGHT_COLLAPSE_KEY = "engram.spacebar.mini";
  * and becomes a drawer under the app bar on phones. The logo always leads to the landing page.
  */
 export function WorkspaceShell({ user, space, header, wide, children }: {
-  user: { name: string; email: string; emailVerified?: boolean };
+  user: { name: string; email: string; emailVerified?: boolean; guest?: boolean };
   space?: SpaceSection;
   header?: ReactNode;
   wide?: boolean;
@@ -216,7 +216,7 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
             {menu ? <IconCross size={16} /> : <IconMenu size={16} />}
           </button>
         </header>
-        {user.emailVerified === false && <VerifyBanner email={user.email} />}
+        {user.emailVerified === false && !user.guest && <VerifyBanner email={user.email} />}
         {header && (
           <div ref={headerRef} className="sticky top-14 z-10 border-b border-line bg-bg/90 backdrop-blur lg:top-0">{header}</div>
         )}
