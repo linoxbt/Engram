@@ -131,7 +131,8 @@ export function heuristicLabel(texts: string[]): { label: string; summary: strin
       const k = w.toLowerCase();
       if (k.length < 3 || STOP.has(k) || seen.has(k)) continue;
       seen.add(k);
-      counts.set(w[0] === w[0]?.toUpperCase() ? w : k, (counts.get(w) ?? 0) + 1 + (w[0] === w[0]?.toUpperCase() ? 0.5 : 0));
+      const key = w[0] === w[0]?.toUpperCase() ? w : k;
+      counts.set(key, (counts.get(key) ?? 0) + 1 + (w[0] === w[0]?.toUpperCase() ? 0.5 : 0));
     }
   }
   const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w]) => w);

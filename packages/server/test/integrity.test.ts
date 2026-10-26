@@ -250,6 +250,30 @@ describe("tamper alerts", () => {
     await verifyAndRecord(b, await fresh(b, key));
     expect(notify).toHaveBeenCalledTimes(3);
   });
+
+  it("two recorders racing on a fresh incident send one email: the claim is decided by the state store", async () => {
+    const { b, ctx } = await setup();
+    const key = ctx.space.key;
+    await fill(ctx, 2);
+    const notify = vi.spyOn(b.jobs, "notifyTamper").mockResolvedValue();
+    const id = `m_${key}_000000000000`;
+    const m = (await getEntry(b, id))!.metadata;
+    await b.vectors.update<EntryMeta>("memories", id, { metadata: { ...m, c: { ...m.c, text: "evil" }, text: "evil" } });
+    const space = await fresh(b, key);
+    await Promise.all([verifyAndRecord(b, space), verifyAndRecord(b, space)]);
+    expect(notify).toHaveBeenCalledTimes(1);
+
+    // A failed send gives the claim back, so the next recorder retries the email.
+    await b.vectors.update<EntryMeta>("memories", id, { metadata: m });
+    await verifyAndRecord(b, await fresh(b, key));
+    await b.vectors.update<EntryMeta>("memories", id, { metadata: { ...m, c: { ...m.c, text: "worse" }, text: "worse" } });
+    notify.mockRejectedValueOnce(new Error("smtp down"));
+    await verifyAndRecord(b, await fresh(b, key));
+    expect(((await fresh(b, key)).settings.integrity as { alertedAt?: string | null }).alertedAt).toBeFalsy();
+    await verifyAndRecord(b, await fresh(b, key));
+    expect(notify).toHaveBeenCalledTimes(3);
+    expect(((await fresh(b, key)).settings.integrity as { alertedAt?: string | null }).alertedAt).toBeTruthy();
+  });
 });
 
 describe("verify tool", () => {

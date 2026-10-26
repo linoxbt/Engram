@@ -10,7 +10,7 @@ import type { Ctx, SpaceInfo } from "./context";
 import { latestCheckpoint, loadChainRange, loadCheckpointFiles } from "./checkpoints";
 import { EngramError } from "./errors";
 import type { CheckpointPointer, IntegrityStatus } from "./settings";
-import { getSpace, updateSettings } from "./spaces";
+import { getSpace, updateSettings, updateSpaceState } from "./spaces";
 
 /**
  * The newest checkpoint the signer recorded in team prefs: the server-side trust anchor. Someone with database and
@@ -126,22 +126,39 @@ export type AlertedIntegrity = IntegrityStatus & { alertedAt?: string | null; al
  * the first one that has not been alerted sends the email and stores alertedAt/alertedFor; later ones carry them over.
  */
 export async function recordIntegrity(b: Backend, space: SpaceInfo, integrity: IntegrityStatus): Promise<AlertedIntegrity> {
+  if (integrity.status !== "tampered" || space.settings.sandbox) {
+    const next: AlertedIntegrity = integrity;
+    await updateSettings(b, space.key, { integrity: next });
+    return next;
+  }
+  // The claim is decided inside the state store's compare-and-swap, so two recorders racing on a fresh incident
+  // cannot both email the owner: whoever lands the stamp sends; everyone else carries it over.
+  const stamp = iso();
   let next: AlertedIntegrity = integrity;
-  if (integrity.status === "tampered") {
-    const fresh = (await getSpace(b, space.key)) ?? space;
-    const cur = fresh.settings.integrity as AlertedIntegrity | null;
-    if (cur?.status === "tampered" && cur.alertedAt) {
-      next = { ...integrity, alertedAt: cur.alertedAt, alertedFor: cur.alertedFor ?? null };
-    } else if (!fresh.settings.sandbox) {
-      try {
-        await b.jobs.notifyTamper({ spaceKey: space.key, spaceName: fresh.settings.name, ownerId: fresh.settings.ownerId || undefined, message: integrity.firstFinding ?? "Tampering detected." });
-        next = { ...integrity, alertedAt: iso(), alertedFor: integrity.firstFinding ?? null };
-      } catch (e) {
-        console.error("[engram] tamper alert failed; the next record retries", e);
-      }
+  // `won` is decided by the mutate's final run: it re-runs on fresh state whenever the compare-and-swap retries,
+  // so after a lost race it sees the winner's claim. Two racers can share a millisecond, so the stamp alone cannot tell.
+  let won = false;
+  await updateSpaceState(b, space.key, (st) => {
+    const cur = st.integrity as AlertedIntegrity | null;
+    won = !(cur?.status === "tampered" && cur.alertedAt);
+    next = won
+      ? { ...integrity, alertedAt: stamp, alertedFor: integrity.firstFinding ?? null }
+      : { ...integrity, alertedAt: cur!.alertedAt!, alertedFor: cur!.alertedFor ?? null };
+    return { integrity: next };
+  });
+  if (won) {
+    try {
+      await b.jobs.notifyTamper({ spaceKey: space.key, spaceName: space.settings.name, ownerId: space.settings.ownerId || undefined, message: integrity.firstFinding ?? "Tampering detected." });
+    } catch (e) {
+      console.error("[engram] tamper alert failed; the next record retries", e);
+      // Give the claim back so the next recorder of this incident retries the email.
+      await updateSpaceState(b, space.key, (st) => {
+        const cur = st.integrity as AlertedIntegrity | null;
+        return cur?.alertedAt === stamp ? { integrity: { ...cur, alertedAt: null, alertedFor: null } } : null;
+      }).catch(() => undefined);
+      next = { ...next, alertedAt: null, alertedFor: null };
     }
   }
-  await updateSettings(b, space.key, { integrity: next });
   return next;
 }
 
