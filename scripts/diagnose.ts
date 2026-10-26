@@ -68,7 +68,7 @@ if (space) {
 const executions: Record<string, unknown> = {};
 for (const id of ["checkpoint", "sentinel", "labeler", "reflect"]) {
   executions[id] = await fns.listExecutions({ functionId: id, queries: [Query.limit(4), Query.orderDesc("$createdAt")] }).then(
-    (r) => r.executions.map((e) => ({ at: e.$createdAt, trigger: e.trigger, status: e.status, code: e.responseStatusCode, ms: Math.round(e.duration * 1000), errors: e.errors?.slice(-600), logs: e.logs?.slice(-400) })),
+    (r) => r.executions.map((e) => ({ at: e.$createdAt, trigger: e.trigger, status: e.status, code: e.responseStatusCode, ms: Math.round(e.duration * 1000), errors: e.errors?.slice(-2000), logs: e.logs?.slice(-3000) })),
     err,
   );
 }
