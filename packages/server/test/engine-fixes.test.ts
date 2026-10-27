@@ -4,7 +4,7 @@ import { sha256Hex, type EntryMeta } from "@engram/core";
 import {
   ConflictError, DATA_END, LINK_TEXT, REFLECT_AGENT, RELATE_SYSTEM, RecallInput, RememberInput, append, applyPending, attack, authAgent, buildPrompt, capSupersessions, createAgent, embedDocument,
   formatRecall, formatTimeline, getEntry, relate, getSpace, loadChain, notesOf, recall, reflect, remember, resetSandbox, resolveConflict, retryRelate, timeline, verifyStoredSpace,
-  SEED_EMBED_BATCH, SEED_SAVE_EVERY, assignConcept, forget, latestCheckpoint, linkFound, listConflicts, runCheckpoint, sealSandbox, seedStory,
+  SEED_EMBED_BATCH, SEED_SAVE_EVERY, verifyAndRecord, assignConcept, forget, latestCheckpoint, linkFound, listConflicts, runCheckpoint, sealSandbox, seedStory,
   type Backend, type Ctx, type SpaceInfo, type TxOp,
 } from "../src/index";
 import { setup } from "./helpers";
@@ -505,11 +505,12 @@ describe("changed facts are never dropped as duplicates", () => {
     text, kind: "fact", subject: "test:widget", createdAt: "2026-10-21T10:00:00.000Z", agentName: "agent-a", agent: "agent:a",
   });
 
-  it("an embedding-close neighbour with different wording is not fast-pathed to duplicate", async () => {
+  it("an embedding-close neighbour with different wording reaches the classifier instead", async () => {
     const { ctx } = await setup();
     const res = await relate(ctx, mem("The widget color is red."), [neighbour("The widget color is blue.")]);
-    const rel = res.relations.find((r) => r.id === "m_testspace_000000000001");
-    expect(rel?.relation).not.toBe("duplicate");
+    // Not just "not a duplicate": the relation is decided, by the rule-based classifier for want of a model.
+    expect(res.relations).toEqual([{ id: "m_testspace_000000000001", relation: "contradicts", confidence: 0.6, reason: expect.stringContaining("different values") }]);
+    expect(res.via).toBe("heuristic");
   });
 
   it("the same statement still fast-paths to duplicate, ignoring case and punctuation", async () => {
@@ -522,28 +523,29 @@ describe("changed facts are never dropped as duplicates", () => {
 
   it("remembering a changed value after the original creates a new entry instead of dropping it", async () => {
     const { ctx, drain } = await setup();
-    const blue = await remember(ctx, { text: "The widget color is blue.", subject: "test:widget" });
-    expect(blue.status).toBe("created");
-    const red = await remember(ctx, { text: "The widget color is red.", subject: "test:widget" });
-    expect(red.status).toBe("created");
-    expect(red.id).not.toBe(blue.id);
+    // These two embed identically (they differ only in a word the embedder drops), so the duplicate fast path is
+    // reached: the wording check is the only thing standing between the second fact and being thrown away.
+    const sent = await remember(ctx, { text: "The invoice was sent by Ada.", subject: "test:invoice" });
+    expect(sent.status).toBe("created");
+    const to = await remember(ctx, { text: "The invoice was sent to Ada.", subject: "test:invoice" });
+    expect(to.status).toBe("created");
+    expect(to.id).not.toBe(sent.id);
     // The exact same sentence again is still deduplicated.
-    const again = await remember(ctx, { text: "The widget color is blue.", subject: "test:widget" });
+    const again = await remember(ctx, { text: "The invoice was sent by Ada.", subject: "test:invoice" });
     expect(again.status).toBe("duplicate");
-    expect(again.id).toBe(blue.id);
+    expect(again.id).toBe(sent.id);
     await drain();
   });
 
   it("recall without verify labels the integrity badge as the monitor's, not this instant's", async () => {
-    const { ctx, drain } = await setup();
+    const { b, ctx, drain } = await setup();
     await remember(ctx, { text: "The widget ships from Lagos.", subject: "test:widget" });
     await drain();
-    const res = await recall(ctx, { query: "widget", k: 3 });
-    if (res.integrity) {
-      expect(res.integritySource).toBe("monitor");
-      expect(formatRecall(res)).toMatch(/last background check/);
-    } else {
-      expect(res.integritySource).toBeNull();
-    }
+    // A fresh space has no integrity status at all, so record one first: otherwise there is no badge to label.
+    await verifyAndRecord(b, ctx.space);
+    const res = await recall({ ...ctx, space: (await getSpace(b, ctx.space.key))! }, { query: "widget", k: 3 });
+    expect(res.integrity?.status).toBe("valid");
+    expect(res.integritySource).toBe("monitor");
+    expect(formatRecall(res)).toMatch(/last background check/);
   });
 });
