@@ -22,6 +22,7 @@ import type { Ctx, SpaceInfo } from "./context";
 import { isConflict } from "./errors";
 import type { IntegrityStatus } from "./settings";
 import { getSpace, updateSettings } from "./spaces";
+import { LruCache } from "./cache";
 import { integrityOf, recordIntegrity, verifyStoredSpace } from "./verify";
 
 const dec = new TextDecoder();
@@ -35,7 +36,8 @@ type Parsed = { cp: Checkpoint } | { bad: MalformedCheckpoint };
  * and size; a file deleted and recreated under the same ID (which changes both) is downloaded again. Files this
  * process wrote itself are not cached (the write does not return a stamp), so a replacement is never masked.
  */
-const fileCache = new Map<string, { stamp: string; parsed: Parsed }>();
+export const FILE_CACHE_FILES = 2000;
+const fileCache = new LruCache<{ stamp: string; parsed: Parsed }>(FILE_CACHE_FILES);
 const stampOf = (f: FileInfo) => `${f.createdAt}|${f.size}`;
 
 function parseCheckpoint(fileId: string, bytes: Uint8Array, spaceKey: string): Parsed {

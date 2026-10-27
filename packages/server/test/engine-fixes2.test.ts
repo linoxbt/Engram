@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { iso, recallId } from "@engram/core";
 import {
   append, applyRetention, authAgent, capSupersessions, createAgent, embedDocument, ERASE_ATTEMPTS, forget, listRecalls, getEntry, getSpace, heuristicRelate, listConflicts, notesOf, recall, relate, remember,
-  retryRelate, runCheckpoint, SUPERSEDE_PER_HOUR, sweepPendingRelate, updateSettings, verifyStoredSpace, verifyThrottled,
+  LruCache, retryRelate, runCheckpoint, SUPERSEDE_PER_HOUR, sweepPendingRelate, updateSettings, verifyStoredSpace, verifyThrottled,
   type Neighbour, type NewMemory, type Scope,
 } from "../src/index";
 import { setup } from "./helpers";
@@ -258,5 +258,38 @@ describe("recall logs are pruned by the space's retention setting", () => {
     await updateSettings(b, ctx.space.key, { retentionDays: 30 });
     expect(await applyRetention(b, (await getSpace(b, ctx.space.key))!)).toBe(0);
     expect((await listRecalls(ctx, { limit: 100 })).map((l) => l.query)).toEqual(["recent"]);
+  });
+});
+
+describe("per-process caches are bounded by what they hold", () => {
+  it("evicts the least recently used entries once the weight budget is passed", () => {
+    const c = new LruCache<string[]>(10, (v) => v.length);
+    c.set("a", new Array(4).fill("x"));
+    c.set("b", new Array(4).fill("x"));
+    expect([c.size, c.weight]).toEqual([2, 8]);
+    // Reading "a" makes "b" the least recently used, so "b" is what goes.
+    expect(c.get("a")).toHaveLength(4);
+    c.set("c", new Array(4).fill("x"));
+    expect(c.get("b")).toBeUndefined();
+    expect(c.get("a")).toHaveLength(4);
+    expect([c.size, c.weight]).toEqual([2, 8]);
+  });
+
+  it("counts entries, not keys: one huge space cannot hold the whole budget behind one key", () => {
+    const c = new LruCache<string[]>(10, (v) => v.length);
+    for (let i = 0; i < 20; i++) c.set(`k${i}`, ["x"]);
+    expect(c.weight).toBeLessThanOrEqual(10);
+    // A single value over the whole budget is kept rather than evicted the instant it is stored.
+    c.set("huge", new Array(100).fill("x"));
+    expect(c.get("huge")).toHaveLength(100);
+    expect(c.size).toBe(1);
+  });
+
+  it("re-setting a key replaces its weight instead of adding to it", () => {
+    const c = new LruCache<string[]>(10, (v) => v.length);
+    for (let i = 0; i < 5; i++) c.set("a", new Array(3).fill("x"));
+    expect([c.size, c.weight]).toEqual([1, 3]);
+    c.delete("a");
+    expect([c.size, c.weight]).toEqual([0, 0]);
   });
 });

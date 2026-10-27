@@ -1,5 +1,6 @@
 export * from "./config";
 export * from "./errors";
+export * from "./cache";
 export * from "./backend/index";
 export * from "./context";
 export * from "./settings";
