@@ -6,6 +6,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { PREFETCH_CSP } from "@/lib/csp";
+import { cleanDisplayName } from "@/lib/server/names";
 import { SPACE_WORK_LIMITS } from "@/lib/server/limits";
 
 const read = (p: string) => readFileSync(fileURLToPath(new URL("../" + p, import.meta.url)), "utf8");
@@ -68,3 +70,26 @@ describe("the route wrappers", () => {
   });
 });
 
+describe("space names and descriptions", () => {
+  it("are scrubbed to one plain line where they are accepted, not only where they are shown", () => {
+    // They reach an email subject line (the integrity alert), the unauthenticated invite preview and the logs.
+    expect(read("app/api/app/spaces/route.ts")).toContain("cleanDisplayName");
+    expect(space("settings/route.ts")).toContain("cleanDisplayName");
+    expect(cleanDisplayName("Ops\nBcc: victim@example.com")).toBe("Ops Bcc: victim@example.com");
+  });
+});
+
+describe("page responses", () => {
+  it("carry a request ID, so a report about a page can be joined to its log line", () => {
+    expect(read("proxy.ts")).toContain('res.headers.set("x-request-id", requestIdFor(req.headers))');
+  });
+
+  it("have a policy even when the nonce middleware stands aside for a prefetch", () => {
+    const cfg = read("next.config.ts");
+    expect(cfg).toContain("PREFETCH_CSP");
+    for (const key of ["next-router-prefetch", "purpose"]) expect(cfg).toContain(key);
+    // The middleware skips exactly these, so the fallback must not let anything execute.
+    expect(PREFETCH_CSP).toContain("script-src 'none'");
+    expect(PREFETCH_CSP).toContain("frame-ancestors 'none'");
+  });
+});

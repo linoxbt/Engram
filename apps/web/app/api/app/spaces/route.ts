@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { assertSpaceQuota, createSpace, getBackend, getSpace, listSpacesForUser, personCtx, seedStory } from "@engram/server";
 import { defer, readJson, route } from "@/lib/server/api";
+import { cleanDisplayName } from "@/lib/server/names";
 import { requireUser } from "@/lib/server/session";
 
 export const runtime = "nodejs";
@@ -18,9 +19,16 @@ export const GET = route(async () => {
   };
 });
 
+/**
+ * A space name reaches an email subject line, the unauthenticated invite preview and the logs, so it goes
+ * through the same scrubber as a person's display name: `trim()` alone leaves interior newlines, which is a
+ * header injection waiting to happen ("Ops\nBcc: ...").
+ */
+const plainLine = (max: number) => z.string().max(max * 4).transform((s) => cleanDisplayName(s, max));
+
 const Body = z.object({
-  name: z.string().trim().min(2).max(64),
-  description: z.string().trim().max(300).default(""),
+  name: plainLine(64).refine((s) => s.length >= 2, "A name needs at least 2 characters."),
+  description: z.string().default("").pipe(plainLine(300)),
   publicVerify: z.boolean().default(false),
   sandbox: z.boolean().default(false),
   seed: z.enum(["none", "demo"]).default("none"),

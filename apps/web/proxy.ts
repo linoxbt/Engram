@@ -1,10 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { newNonce, pageCsp } from "./lib/csp";
+import { requestIdFor } from "./lib/server/log";
 
 /**
- * A per-request CSP nonce for every page. Next.js reads it from the request's Content-Security-Policy header and
- * puts it on its own scripts; the root layout puts it on its one inline script. Every page renders per request
- * (the layout reads the request headers), so no cached HTML carries a stale nonce.
+ * A per-request CSP nonce and request ID for every page. Next.js reads the nonce from the request's
+ * Content-Security-Policy header and puts it on its own scripts; the root layout puts it on its one inline
+ * script. Every page renders per request (the layout reads the request headers), so no cached HTML carries a
+ * stale nonce.
  */
 export function proxy(req: NextRequest) {
   const nonce = newNonce();
@@ -14,6 +16,8 @@ export function proxy(req: NextRequest) {
   headers.set("content-security-policy", csp);
   const res = NextResponse.next({ request: { headers } });
   res.headers.set("Content-Security-Policy", csp);
+  // The API wrappers stamp this on every response; without it here a report about a page has nothing to join on.
+  res.headers.set("x-request-id", requestIdFor(req.headers));
   return res;
 }
 
