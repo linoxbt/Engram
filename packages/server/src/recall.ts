@@ -137,6 +137,13 @@ export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {
       const at = picked.findIndex((p) => p.doc.metadata.d.contradictedBy.includes(d.$id));
       picked.splice(at + 1, 0, { id: d.$id, score: (picked[at]?.score ?? 0) - 0.001, vector: d.embeddings, doc: d });
     }
+    // A partner takes the place of the weakest answer, it is not an extra one: k is a promise, and a caller
+    // asking for 20 must not be handed 23. The partners themselves are kept, so a conflict is never half shown.
+    if (picked.length > input.k) {
+      const partner = new Set(docs.map((d) => d.$id));
+      for (let i = picked.length - 1; i >= 0 && picked.length > input.k; i--) if (!partner.has(picked[i].id)) picked.splice(i, 1);
+      picked.length = Math.min(picked.length, input.k);
+    }
   }
 
   // Erased since: memories valid at T whose content was forgotten later. Their vectors are erased too,

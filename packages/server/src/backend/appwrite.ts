@@ -267,8 +267,10 @@ class AppwriteTeams implements TeamStore {
   async membership(teamId: string, userId: string) {
     try {
       const res = await this.teams.listMemberships({ teamId, queries: [Query.equal("userId", [userId]), Query.limit(1)] });
+      // Exactly what listMembers() and listForUser() accept: an unconfirmed membership must not grant access
+      // while staying invisible in the member list.
       const m = res.memberships[0];
-      return m && m.confirm !== false ? { roles: m.roles } : null;
+      return m?.confirm ? { roles: m.roles } : null;
     } catch (e) { if (isNotFound(e)) return null; throw mapError(e); }
   }
   async listMembers(teamId: string): Promise<TeamMember[]> {

@@ -57,6 +57,8 @@ export async function createAgent(b: Backend, space: SpaceInfo, input: CreateAge
     writes: count8(0),
     recalls: count8(0),
   };
+  // No document permissions, unlike every other write: the agents collection has documentSecurity off (see
+  // scripts/setup.ts) and the document holds the key hash, so only the server's API key ever reads it.
   const doc = await b.vectors.create<AgentMeta>("agents", id, { embeddings: await embedAgentDescription(b, `${input.name}: ${input.description}`), metadata: meta });
   return { agent: toPublicAgent(doc), key };
 }

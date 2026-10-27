@@ -432,6 +432,8 @@ export async function anchorToGitHub(cfg: EngramConfig, cp: Checkpoint): Promise
     method: "PUT",
     headers: { Authorization: `Bearer ${cfg.anchor.token}`, Accept: "application/vnd.github+json", "User-Agent": "engram-anchor" },
     body: JSON.stringify({ message: `Anchor ${cp.space} checkpoint ${Number(cp.seq)}`, content: toBase64(enc.encode(body)) }),
+    // A signer run waits for this; without a deadline a hung GitHub would hold the Function to its timeout.
+    signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(`GitHub anchoring failed: ${res.status} ${await res.text()}`);
   const json = (await res.json()) as { commit?: { sha?: string } };

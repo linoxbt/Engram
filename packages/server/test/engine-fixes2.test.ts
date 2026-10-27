@@ -5,9 +5,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { cosine, iso, recallId } from "@engram/core";
 import {
-  append, applyRetention, authAgent, capSupersessions, checkpointAdvances, type CheckpointPointer, conceptGraph, hashEmbed, similarEdges, createAgent, embedDocument, ERASE_ATTEMPTS, forget, listRecalls, getEntry, getSpace, heuristicRelate, listConflicts, notesOf, recall, relate, remember,
-  latestCheckpoint, LruCache, retryRelate, runCheckpoint, SUPERSEDE_PER_HOUR, sweepPendingRelate, updateSettings, verifyStoredSpace, verifyThrottled,
-  type Neighbour, type NewMemory, type Scope,
+  acceptInvite, anchorToGitHub, append, applyRetention, authAgent, capSupersessions, checkpointAdvances, conceptGraph, createAgent,
+  createInvite, embedDocument, ERASE_ATTEMPTS, forget, getEntry, getSpace, hashEmbed, heuristicRelate,
+  latestCheckpoint, listConflicts, listRecalls, LruCache, notesOf, recall, relate, remember, removeMember,
+  ResolveInput, retryRelate, runCheckpoint, similarEdges, SUPERSEDE_PER_HOUR, sweepPendingRelate, updateSettings,
+  VerifyInput, verifyStoredSpace, verifyThrottled,
+  type CheckpointPointer, type Neighbour, type NewMemory, type Scope,
 } from "../src/index";
 import { setup } from "./helpers";
 
@@ -413,5 +416,61 @@ describe("the checkpoint signer checks its anchor before deciding there is nothi
     const again = await runCheckpoint(b, (await getSpace(b, ctx.space.key))!, { privateKey: keys.privateKey });
     expect(again).toMatchObject({ created: false, reason: "no new entries" });
     expect(again.refused).toBeFalsy();
+  });
+});
+
+describe("recall never returns more than the k it was asked for", () => {
+  it("fits both sides of a conflict inside k instead of adding to it", async () => {
+    const { ctx, drain } = await setup();
+    const pairs = [
+      ["The primary region is Frankfurt.", "The primary region is London."],
+      ["The deploy status is green.", "The deploy status is red."],
+      ["The retry limit is 3.", "The retry limit is 10."],
+    ];
+    for (const [a, c] of pairs) {
+      await remember(ctx, { text: a, subject: "infra:eu" });
+      await remember(ctx, { text: c, subject: "infra:eu" });
+    }
+    await drain();
+    const res = await recall(ctx, { query: "region status retry limit", k: 3 }, { log: false });
+    expect(res.conflicts).toBeGreaterThan(0);
+    expect(res.memories.length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("offboarding and input shapes", () => {
+  it("removing a member also removes their display name from the space", async () => {
+    const { b, ctx, user } = await setup();
+    const mate = await b.auth.signUp("mate@example.com", "password123", "Mate");
+    const { token } = await createInvite(b, ctx.space.key, { email: null, createdBy: user.id });
+    await acceptInvite(b, token, mate);
+    expect((await getSpace(b, ctx.space.key))!.settings.people[mate.id]).toBe("Mate");
+    await removeMember(b, ctx.space.key, mate.id);
+    expect((await getSpace(b, ctx.space.key))!.settings.people[mate.id]).toBeUndefined();
+  });
+
+  it("resolve and verify take memory IDs, checked the same way forget checks them", () => {
+    const id = "m_abcdefgh_000000000001";
+    expect(ResolveInput.safeParse({ winnerId: id, loserId: "../../etc/passwd" }).success).toBe(false);
+    expect(ResolveInput.safeParse({ winnerId: "not-an-id", loserId: id }).success).toBe(false);
+    expect(ResolveInput.safeParse({ winnerId: id, loserId: "m_abcdefgh_000000000002" }).success).toBe(true);
+    expect(VerifyInput.safeParse({ id: "r_abcdefgh_1_zz" }).success).toBe(false);
+    expect(VerifyInput.safeParse({ id }).success).toBe(true);
+    expect(VerifyInput.safeParse({}).success).toBe(true);
+  });
+});
+
+describe("outbound calls cannot hang the request that made them", () => {
+  it("anchoring to GitHub carries a timeout, like every other engine fetch", async () => {
+    const { cfg } = await setup();
+    let init: RequestInit | undefined;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_u, i) => {
+      init = i;
+      return new Response(JSON.stringify({ commit: { sha: "a".repeat(40) } }), { status: 200 });
+    });
+    const cp = { v: "1", space: "testspac", size: "00000003", seq: "000000000002", head: "a".repeat(64), root: "b".repeat(64), sig: "s", createdAt: iso(), keyId: "test", prevCheckpoint: null, prevCheckpointHash: null } as never;
+    await anchorToGitHub({ ...cfg, anchor: { ...cfg.anchor, token: "t", repo: "owner/repo" } }, cp);
+    fetchSpy.mockRestore();
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 });
