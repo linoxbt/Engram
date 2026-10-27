@@ -50,10 +50,10 @@ const VIEWER_READ_PATTERNS = [/^\/memories\/[^/]+$/, /^\/memories\/[^/]+\/proof$
 const VIEWER_POSTS = new Set(["/recall", "/verify"]);
 const VIEWER_POST_PATTERNS = [/^\/memories\/[^/]+\/proof$/];
 /**
- * Deliberately not readable by a viewer: /export (text and salts), /recalls (who asked what), /agents and
- * /agents/find (the key registry), /members (other people's addresses), /lab (the sandbox's attacks).
+ * Refuses a read a viewer (or any guest) must not make. Deliberately out: /export (text and salts), /recalls
+ * (who asked what), /agents and /agents/find (the key registry), /members (other people's addresses), /lab.
+ * Writes are refused before this by assertSpaceWriteAllowed, which keeps its own message.
  */
-
 export function assertViewerReadAllowed(user: Pick<User, "guest">, access: { viewer: boolean }, method: string, route: string): void {
   if (!access.viewer && !user.guest) return;
   const rest = spaceSubRoute(route);

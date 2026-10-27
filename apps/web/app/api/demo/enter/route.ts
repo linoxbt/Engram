@@ -12,9 +12,10 @@ export const runtime = "nodejs";
 const CLEANUP_BATCH = 10;
 
 /**
- * The read-only live demo: a throwaway guest account (no email, no password anyone knows) that is a "viewer" of the
- * demo space, signed in with a session cookie. Viewers can read everything a member reads and write nothing.
- * Guests are deleted after 24 hours, a few at a time, by later visits.
+ * The read-only live demo: a throwaway guest account (no email, no password anyone knows) that is a "viewer" of
+ * the demo space, signed in with a session cookie. Viewers read the routes a demo needs and write nothing.
+ * Admission is rationed per network and capped on live guests (guest-slots.ts), because each one below is a
+ * real Appwrite account. Guests are deleted after 24 hours, a few at a time, by later visits.
  */
 export const POST = route(async (req) => {
   requireCookieConsent(req);
