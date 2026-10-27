@@ -33,6 +33,9 @@ export function SpaceShell({ spaceKey, user, children }: { spaceKey: string; use
   const s = info.data?.settings;
   const role = info.data?.role ?? null;
   const base = `/app/${spaceKey}`;
+  // A viewer's reads of agents, recall logs, settings and the lab are refused by the server, so those pages
+  // are not offered at all rather than opened and then failed.
+  const viewer = role === "viewer";
   const nav: NavItem[] = [
     { href: base, label: "Overview", icon: IconHome, exact: true },
     { href: `${base}/memories`, label: "Memories", icon: IconList },
@@ -40,10 +43,12 @@ export function SpaceShell({ spaceKey, user, children }: { spaceKey: string; use
     { href: `${base}/time`, label: "Time Machine", icon: IconClock },
     { href: `${base}/conflicts`, label: "Conflicts", icon: IconInbox, badge: conflicts.data?.pairs.length || undefined },
     { href: `${base}/concepts`, label: "Concept map", icon: IconGraph },
-    { href: `${base}/agents`, label: "Agents", icon: IconAgents },
-    { href: `${base}/recalls`, label: "Recall audit", icon: IconAudit },
-    ...(s?.sandbox ? [{ href: `${base}/lab`, label: "Tamper Lab", icon: IconLab }] : []),
-    { href: `${base}/settings`, label: "Settings", icon: IconSettings },
+    ...(viewer ? [] : [
+      { href: `${base}/agents`, label: "Agents", icon: IconAgents },
+      { href: `${base}/recalls`, label: "Recall audit", icon: IconAudit },
+      ...(s?.sandbox ? [{ href: `${base}/lab`, label: "Tamper Lab", icon: IconLab }] : []),
+      { href: `${base}/settings`, label: "Settings", icon: IconSettings },
+    ]),
   ];
   const space: SpaceSection = {
     key: spaceKey,

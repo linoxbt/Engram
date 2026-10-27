@@ -47,7 +47,8 @@ export function OverviewView() {
   });
   const feedQ = useQuery({ enabled: q.isSuccess, queryKey: ["space", space, "feed"], queryFn: () => api<{ items: FeedItem[] }>(`/api/app/spaces/${space}/feed?limit=30`), refetchInterval: pollInterval(live), staleTime: pollInterval(live) });
   // The getting-started checklist is only shown for young spaces; only then are agents and recalls needed here.
-  const young = !!q.data && q.data.stats.entries < 40;
+  // A viewer may read neither list, so it never asks: two refused queries would be all it got.
+  const young = !!q.data && q.data.stats.entries < 40 && canWrite;
   const agents = useQuery({ enabled: young, queryKey: ["space", space, "agents"], queryFn: () => api<{ agents: { lastSeenAt: string | null; status: string }[] }>(`/api/app/spaces/${space}/agents`) });
   const recalls = useQuery({ enabled: young, queryKey: ["space", space, "recalls"], queryFn: () => api<{ recalls: unknown[] }>(`/api/app/spaces/${space}/recalls`) });
   const cps = useQuery({ enabled: q.isSuccess, queryKey: ["space", space, "checkpoints"], queryFn: () => api<{ checkpoints: Checkpoint[] }>(`/api/app/spaces/${space}/checkpoints`), staleTime: 30_000 });
@@ -87,7 +88,7 @@ export function OverviewView() {
     { done: (recalls.data?.recalls.length ?? 0) > 0, label: "Recall it from an agent", href: `/docs/mcp` },
     { done: !!o.integrity, label: "Run verification", href: `/app/${space}/chain` },
   ];
-  const showChecklist = checklist && checklist.some((c) => !c.done) && o.stats.entries < 40;
+  const showChecklist = checklist && canWrite && checklist.some((c) => !c.done) && o.stats.entries < 40;
 
   return (
     <div className="space-y-5">

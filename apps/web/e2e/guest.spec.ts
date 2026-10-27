@@ -41,6 +41,12 @@ test.describe.serial("the read-only guest demo", () => {
     await page.getByRole("button", { name: /Explore the live demo/ }).click();
     await page.waitForURL(`**/app/${DEMO_SPACE}`);
     await expect(page.getByText("You are exploring the live demo as a guest")).toBeVisible();
+    // Reads a viewer is refused are not offered as pages at all.
+    const sidebar = page.locator('aside[aria-label="Space navigation"]');
+    await expect(sidebar.getByRole("link", { name: "Memories" })).toBeVisible();
+    for (const hidden of ["Agents", "Recall audit", "Settings", "Tamper Lab"]) {
+      await expect(sidebar.getByRole("link", { name: hidden })).toHaveCount(0);
+    }
     await ctx.close();
   });
 

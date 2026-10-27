@@ -12,7 +12,7 @@ test.describe.serial("at phone width", () => {
     await page.goto("/");
     await expect(page.getByText(/Verified through #\d+ · signature valid/)).toBeVisible();
     await page.getByRole("button", { name: "Open menu" }).click();
-    await expect(page.getByRole("link", { name: "Docs" })).toBeVisible();
+    await expect(page.locator("#landing-menu").getByRole("link", { name: "Docs" })).toBeVisible();
   });
 
   test("the public verifier form fits and validates", async ({ page }) => {

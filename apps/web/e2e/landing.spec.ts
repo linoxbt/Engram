@@ -20,7 +20,7 @@ test.describe("the landing page", () => {
       Object.defineProperty(crypto, "subtle", { configurable: true, get: () => { throw new Error("blocked"); } });
     });
     await page.goto("/");
-    await expect(page.getByText("Could not build the demo chain")).toBeVisible();
+    await expect(page.getByText("Could not build the demo chain", { exact: true })).toBeVisible();
     await expect(page.getByText("Hashing…")).toHaveCount(0);
   });
 
