@@ -83,6 +83,8 @@ More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corre
 - Memory text is untrusted data: it is delimited in every model prompt and escaped in agent-facing output, one write can retire at most 2 facts and one agent at most 10 per hour, and the rule-based fallback never retires another agent's memory.
 - Every page gets a per-request nonce Content-Security-Policy; connections are limited to this site and the configured Appwrite host. Fonts are self-hosted and nothing loads from third parties before cookie consent.
 
+**Reporting a vulnerability.** Email `engramdb@gmail.com` with `SECURITY` in the subject, not a public issue. [SECURITY.md](SECURITY.md) says what is in scope and what to include; [CONTRIBUTING.md](CONTRIBUTING.md) covers everything else.
+
 **Operator notes.** The Appwrite project ID is public (the browser needs it for Realtime), so Appwrite's account API can be called directly, outside Engram's limits. In the Appwrite console enable the Auth protections: password dictionary, password history, personal-data check, session limit and the built-in rate limits. Accounts created directly get `terms_required` from Engram until they accept the Terms. Residual risks: sign-up still tells someone that an address already has an account (rate-limited, neutral wording); the read-only demo makes the demo space readable by anyone by design; subjects and sources are part of the public header on spaces with public verification, so they reject e-mail addresses and phone numbers.
 
 **Checkpoint public key** (`engram-cp-2026-10`, Ed25519):
