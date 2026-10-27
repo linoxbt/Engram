@@ -29,6 +29,8 @@ export function RecallsView() {
               <option value="">all agents</option>
               {agents.data?.agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </Select>
+            {/* Without this the filter silently stays on "all agents" and looks broken. */}
+            {agents.error ? <ErrorNote error={agents.error} /> : null}
             <ErrorNote error={q.error} />
             <Card>
               {q.isLoading && <div className="p-4"><Skeleton className="h-24" /></div>}

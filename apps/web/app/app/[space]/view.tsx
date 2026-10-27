@@ -158,7 +158,10 @@ export function OverviewView() {
 
           <div className="grid gap-4 lg:grid-cols-3">
             <Card title="Live feed" className="lg:col-span-2" action={<span className="text-2xs text-muted">{live === "realtime" ? "realtime" : "updates every 3s"}</span>}>
-              {feedItems.length ? <Feed items={feedItems} onOpen={open} fresh={fresh} /> : (
+              {feedItems.length ? <Feed items={feedItems} onOpen={open} fresh={fresh} /> : feedQ.error ? (
+                // An empty feed and a broken feed look the same otherwise.
+                <div className="p-4"><ErrorNote error={feedQ.error} /></div>
+              ) : (
                 <Empty title="Waiting for the first memory">Connect an agent over MCP and ask it to remember something. It will appear here the moment it is written.</Empty>
               )}
             </Card>

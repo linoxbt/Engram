@@ -63,7 +63,12 @@ export function ChainView() {
   const blocks = useMemo(() => (chain.data ?? []).map((e) => ({ seq: Number(e.metadata.seq), op: e.metadata.op, status: e.metadata.d?.status, hash: e.metadata.hash, text: e.metadata.c?.text })), [chain.data]);
   const cpSizes = useMemo(() => (cps.data?.checkpoints ?? []).map((c) => Number(c.size)), [cps.data]);
 
-  const recordServer = useMutation({ mutationFn: () => api(`/api/app/spaces/${space}/verify?mode=${mode}`, { method: "POST" }), onSuccess: () => qc.invalidateQueries({ queryKey: ["space", space, "info"] }) });
+  const recordServer = useMutation({
+    mutationFn: () => api(`/api/app/spaces/${space}/verify?mode=${mode}`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["space", space, "info"] }),
+    // The browser verdict above is the real one; only the stored badge is out of date.
+    onError: (e) => toast(`Verified here, but the stored badge could not be refreshed: ${e instanceof Error ? e.message : String(e)}`, "error"),
+  });
   const seal = useMutation({
     mutationFn: () => api<{ created: boolean; reason?: string }>(`/api/app/spaces/${space}/checkpoints`, { method: "POST" }),
     onSuccess: (r) => {
@@ -135,7 +140,13 @@ export function ChainView() {
 
       <Card title={`${blocks.length} entries · ${cpSizes.length} checkpoints`} state={tone}>
         <div className="p-4">
-          {chain.isLoading ? <Skeleton className="h-20" /> : blocks.length ? (
+          {chain.isLoading ? <Skeleton className="h-20" /> : chain.error ? (
+            // Never say "empty" when the fetch failed: this is the page that proves the chain exists.
+            <div className="space-y-2">
+              <ErrorNote error={chain.error} />
+              <Button size="sm" variant="outline" onClick={() => void chain.refetch()} loading={chain.isFetching}>Try again</Button>
+            </div>
+          ) : blocks.length ? (
             <ChainStrip blocks={blocks} checkpoints={cpSizes} states={states} focusSeq={focus} onOpen={(seq) => open(`m_${space}_${String(seq).padStart(12, "0")}`)} />
           ) : <p className="text-xs text-muted">The chain is empty.</p>}
           <div className="mt-3 flex flex-wrap gap-4 text-2xs text-muted">
@@ -178,6 +189,7 @@ export function ChainView() {
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Signed checkpoints" className="min-w-0 lg:col-span-2">
           {cps.isLoading && <div className="p-4"><Skeleton className="h-16" /></div>}
+          {cps.error ? <div className="p-4"><ErrorNote error={cps.error} /></div> : null}
           {cps.data && !cps.data.checkpoints.length && <p className="p-4 text-xs text-muted">No checkpoints yet. The checkpoint Function signs one every few minutes and after every {info.data?.settings.checkpointEvery ?? 16} writes.</p>}
           {cps.data && cps.data.checkpoints.length > 0 && (
             <div className="overflow-x-auto">
@@ -201,6 +213,7 @@ export function ChainView() {
         </Card>
         <Card title="Public key" state={trusted.key && trusted.pinned && !trusted.mismatch ? "sealed" : "warning"}>
           <div className="space-y-3 p-4 text-xs">
+            <ErrorNote error={info.error} />
             {trusted.key && <div className="flex items-start gap-1"><code className="min-w-0 break-all text-gold">{trusted.key}</code><CopyButton value={trusted.key} /></div>}
             {!hasPinnedKeys && <p className="text-warn">{pub ? "This site was built without a public key, so signatures are checked only against the key the server supplies, which is not an independent check." : "No public key configured."} Set NEXT_PUBLIC_CP_PUBLIC_KEYS when building the site so browsers check signatures independently.</p>}
             {hasPinnedKeys && !trusted.key && <p className="text-warn">No built-in key matches key ID {info.data?.keyId}.</p>}

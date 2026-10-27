@@ -70,7 +70,11 @@ export function AgentsView() {
           <Input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Who handles refunds?" aria-label="Capability" />
           <Button type="submit" loading={found.isPending}><IconSearch /> Search</Button>
         </form>
-        {found.data && (
+        {found.error ? <div className="border-t border-line p-4"><ErrorNote error={found.error} /></div> : null}
+        {found.data && !found.data.agents.length && (
+          <p className="border-t border-line px-4 py-3 text-xs text-muted">No agent matches that. Descriptions are matched by meaning, so try the capability itself — &ldquo;refunds&rdquo;, &ldquo;billing questions&rdquo;.</p>
+        )}
+        {found.data && found.data.agents.length > 0 && (
           <ul className="border-t border-line">
             {found.data.agents.map((a) => (
               <li key={a.id} className="flex items-center justify-between border-b border-line px-4 py-2 text-xs"><span><span className="text-accent">{a.name}</span> <span className="text-muted">· {a.description}</span></span><span className="tabular text-muted">{a.distance != null ? `${Math.round((1 - a.distance) * 100)}% match` : ""}</span></li>
@@ -87,7 +91,7 @@ export function AgentsView() {
       <Modal open={!!revoke} onClose={() => { setRevoke(null); del.reset(); }} title="Revoke key">
         <p className="text-xs text-muted">Revoke the key for <span className="text-text">{revoke?.name}</span>? The agent loses access immediately. Its past entries stay in the chain with its ID.</p>
         <ErrorNote error={del.error} />
-        <div className="mt-4 flex justify-end gap-2"><Button variant="ghost" onClick={() => setRevoke(null)}>Cancel</Button><Button variant="danger" loading={del.isPending} onClick={() => revoke && del.mutate(revoke.id)}>Revoke</Button></div>
+        <div className="mt-4 flex justify-end gap-2"><Button variant="ghost" onClick={() => { setRevoke(null); del.reset(); }}>Cancel</Button><Button variant="danger" loading={del.isPending} onClick={() => revoke && del.mutate(revoke.id)}>Revoke</Button></div>
       </Modal>
     </div>
   );

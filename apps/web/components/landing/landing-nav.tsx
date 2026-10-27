@@ -1,4 +1,5 @@
 "use client";
+import clsx from "clsx";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -11,7 +12,9 @@ const useSignedIn = () => !!useQuery({ queryKey: ["me"], queryFn: () => api<{ us
 /** "Sign in" for visitors who are not signed in (signed-in visitors get "Console" from the main button). */
 export function SignInLink({ className }: { className?: string }) {
   const signedIn = useSignedIn();
-  if (signedIn) return null;
+  // The link is in the server-rendered HTML (it works without JavaScript); once we know the visitor is signed in it
+  // keeps its width as empty space, so the nav beside it does not jump.
+  if (signedIn) return <span aria-hidden className={clsx(className, "invisible")}>Sign in</span>;
   return <Link href="/login" className={className}>Sign in</Link>;
 }
 

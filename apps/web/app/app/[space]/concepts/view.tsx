@@ -188,7 +188,13 @@ function Graph({ nodes, edges, selected, onSelect, highlight }: { nodes: GNode[]
       const hit = sim.current?.nodes.find((n) => Math.hypot(n.x! - wx, n.y! - wy) <= n.r + 4);
       if (hit) onSelect(hit.id);
     };
-    const wheel = (e: WheelEvent) => { e.preventDefault(); touched.current = true; const k = Math.min(4, Math.max(0.3, view.current.k * (e.deltaY < 0 ? 1.1 : 0.9))); view.current.k = k; draw.current(); };
+    // Zoom only with Ctrl/Cmd held (the Maps convention): a plain wheel over a 480px canvas must still scroll the page.
+    const wheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault(); touched.current = true;
+      view.current.k = Math.min(4, Math.max(0.3, view.current.k * (e.deltaY < 0 ? 1.1 : 0.9)));
+      draw.current();
+    };
     c.addEventListener("pointerdown", down); window.addEventListener("pointermove", move); window.addEventListener("pointerup", up); c.addEventListener("wheel", wheel, { passive: false });
     return () => { c.removeEventListener("pointerdown", down); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); c.removeEventListener("wheel", wheel); };
   }, [onSelect]);

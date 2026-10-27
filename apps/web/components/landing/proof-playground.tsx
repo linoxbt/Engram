@@ -15,19 +15,27 @@ export function ProofPlayground() {
   const [report, setReport] = useState<Report | null>(null);
   const [mode, setMode] = useState<Mode>("intact");
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // WebCrypto can be missing (an insecure origin) or blocked by a policy. Without this the demo pulses "Hashing…" forever.
   useEffect(() => {
+    let live = true;
     void (async () => {
-      const p = await buildPlayground();
-      setPg(p); setEntries(p.entries);
-      setReport(await verifyPlayground(p, p.entries));
+      try {
+        const p = await buildPlayground();
+        if (!live) return;
+        setPg(p); setEntries(p.entries);
+        const r = await verifyPlayground(p, p.entries);
+        if (live) setReport(r);
+      } catch { if (live) setFailed(true); }
     })();
+    return () => { live = false; if (timer.current) clearTimeout(timer.current); };
   }, []);
 
   const verify = useCallback(async (es: ChainEntry[]) => {
     if (!pg) return;
-    setReport(await verifyPlayground(pg, es));
+    try { setReport(await verifyPlayground(pg, es)); } catch { setFailed(true); }
   }, [pg]);
 
   const type = (seq: number, text: string) => {
@@ -41,11 +49,17 @@ export function ProofPlayground() {
   const attack = async (m: Exclude<Mode, "intact" | "edit">) => {
     if (!pg) return;
     setBusy(true);
-    const id = m === "level1" ? "edit-text" : m === "level3" ? "edit-fix-hash" : "rewrite-suffix";
-    const res = await attackPlayground(pg, id, 3, EVIL);
-    setEntries(res.entries); setMode(m);
-    await verify(res.entries);
-    setBusy(false);
+    try {
+      const id = m === "level1" ? "edit-text" : m === "level3" ? "edit-fix-hash" : "rewrite-suffix";
+      const res = await attackPlayground(pg, id, 3, EVIL);
+      setEntries(res.entries); setMode(m);
+      await verify(res.entries);
+    } catch {
+      setFailed(true);
+    } finally {
+      // Whatever happened, the buttons come back: a stuck `busy` disables all four for good.
+      setBusy(false);
+    }
   };
 
   const restore = async () => { if (!pg) return; setEntries(pg.entries); setMode("intact"); await verify(pg.entries); };
@@ -64,14 +78,20 @@ export function ProofPlayground() {
           <p className="prose-sans mt-1 text-sm text-muted">Five memories, hash-linked and sealed by an Ed25519 signature generated on this page. Edit any of them.</p>
         </div>
         <div className={clsx("flex items-center gap-2 rounded-full border px-3 py-1.5 font-mono text-xs transition-colors",
-          !report ? "border-line-2 text-muted" : tampered ? "border-tamper/50 bg-tamper/10 text-tamper" : warned ? "border-warn/50 bg-warn/5 text-warn" : "border-valid/40 bg-valid/5 text-valid")} aria-live="polite">
-          <span className={clsx("size-1.5 rounded-full", !report ? "bg-muted" : tampered ? "bg-tamper animate-pulse" : warned ? "bg-warn" : "bg-valid")} />
-          {!report ? "Hashing…" : tampered ? `Tampered at #${first}` : warned ? reportHeadline(report).text : `Verified through #${report.validThrough} · signature valid`}
+          failed ? "border-warn/50 bg-warn/5 text-warn" : !report ? "border-line-2 text-muted" : tampered ? "border-tamper/50 bg-tamper/10 text-tamper" : warned ? "border-warn/50 bg-warn/5 text-warn" : "border-valid/40 bg-valid/5 text-valid")} aria-live="polite">
+          <span className={clsx("size-1.5 rounded-full", failed ? "bg-warn" : !report ? "bg-muted" : tampered ? "bg-tamper animate-pulse" : warned ? "bg-warn" : "bg-valid")} />
+          {failed ? "Could not build the demo chain" : !report ? "Hashing…" : tampered ? `Tampered at #${first}` : warned ? reportHeadline(report).text : `Verified through #${report.validThrough} · signature valid`}
         </div>
       </div>
 
+      {failed && (
+        <p role="alert" className="prose-sans mt-5 rounded-2xl border border-warn/40 bg-warn/5 px-4 py-3 text-sm text-warn">
+          Could not build the demo chain in this browser. The same proof runs server-side in the <a href="/docs" className="underline underline-offset-2">docs</a> and in the public verifier.
+        </p>
+      )}
+
       <ol className="mt-7 grid gap-3 md:grid-cols-5">
-        {(entries.length ? entries : Array.from({ length: 5 }, () => null)).map((e, i) => {
+        {(entries.length ? entries : failed ? [] : Array.from({ length: 5 }, () => null)).map((e, i) => {
           const bad = first != null && i >= first;
           const origin = first === i;
           return (
@@ -94,10 +114,10 @@ export function ProofPlayground() {
       </ol>
 
       <div className="mt-6 flex flex-wrap items-center gap-2">
-        <button className="l-btn l-btn-ghost !h-10 text-xs" disabled={busy || !pg} onClick={() => attack("level1")}>Level 1 · edit a fact</button>
-        <button className="l-btn l-btn-ghost !h-10 text-xs" disabled={busy || !pg} onClick={() => attack("level3")}>Level 3 · recompute its hashes</button>
-        <button className="l-btn l-btn-ghost !h-10 text-xs" disabled={busy || !pg} onClick={() => attack("level4")}>Level 4 · rewrite all later history</button>
-        <button className="l-btn !h-10 text-xs text-muted hover:text-text" disabled={!pg || mode === "intact"} onClick={restore}>Restore</button>
+        <button className="l-btn l-btn-ghost !h-10 text-xs" disabled={busy || !pg} onClick={() => void attack("level1")}>Level 1 · edit a fact</button>
+        <button className="l-btn l-btn-ghost !h-10 text-xs" disabled={busy || !pg} onClick={() => void attack("level3")}>Level 3 · recompute its hashes</button>
+        <button className="l-btn l-btn-ghost !h-10 text-xs" disabled={busy || !pg} onClick={() => void attack("level4")}>Level 4 · rewrite all later history</button>
+        <button className="l-btn !h-10 text-xs text-muted hover:text-text" disabled={!pg || mode === "intact"} onClick={() => void restore()}>Restore</button>
       </div>
 
       <div className={clsx("mt-5 min-h-[56px] rounded-2xl border px-4 py-3 text-sm transition-colors", tampered ? "border-tamper/30 bg-tamper/[0.04]" : "l-hairline")}>

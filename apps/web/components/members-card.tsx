@@ -26,6 +26,7 @@ export function MembersCard({ space, owner, sandbox }: { space: string; owner: b
   const revoke = useMutation({
     mutationFn: (id: string) => api(`/api/app/spaces/${space}/invites/${encodeURIComponent(id)}`, { method: "DELETE" }),
     onSuccess: () => { refresh(); toast("Invite revoked", "ok"); },
+    onError: (e) => toast(`Could not revoke the invite: ${e instanceof Error ? e.message : String(e)}`, "error"),
   });
   const remove = useMutation({
     mutationFn: (userId: string) => api(`/api/app/spaces/${space}/members/${encodeURIComponent(userId)}`, { method: "DELETE" }),
@@ -83,6 +84,7 @@ export function MembersCard({ space, owner, sandbox }: { space: string; owner: b
                     </li>
                   ))}
                 </ul>
+                <div className="mt-1.5"><ErrorNote error={revoke.error} /></div>
               </div>
             )}
           </div>
