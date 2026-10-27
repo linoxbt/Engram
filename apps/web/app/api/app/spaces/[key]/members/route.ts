@@ -2,13 +2,14 @@ import { z } from "zod";
 import { createInvite, listInvites, listMembers } from "@engram/server";
 import { readJson, requireOwner, spaceRoute } from "@/lib/server/api";
 import { appOrigin } from "@/lib/server/consent";
+import { publicMembers } from "@/lib/server/shapes";
 import { HOUR, rateLimit } from "@/lib/server/rate-limit";
 
 export const runtime = "nodejs";
 
-/** Members are visible to everyone in the space; pending invites only to the owner. */
+/** Members are visible to everyone in the space, but their addresses and account IDs only to the owner. */
 export const GET = spaceRoute(async (ctx, access) => ({
-  members: await listMembers(ctx.b, ctx.space.key),
+  members: publicMembers(await listMembers(ctx.b, ctx.space.key), access.owner),
   invites: access.owner ? await listInvites(ctx.b, ctx.space.key) : [],
 }));
 

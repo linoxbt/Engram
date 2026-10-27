@@ -2,12 +2,14 @@ import { z } from "zod";
 import { deleteSpace, getConfig, EngramError } from "@engram/server";
 import { readJson, requireOwner, spaceRoute } from "@/lib/server/api";
 import { MINUTE, rateLimit } from "@/lib/server/rate-limit";
+import { publicInvites } from "@/lib/server/shapes";
 
 export const runtime = "nodejs";
 export const GET = spaceRoute(async (ctx, access) => {
-  // Pending invites (with their token hashes) are the owner's business only.
+  // Pending invites are the owner's business only, and even then in the same public shape /members uses: a
+  // token hash would let whoever holds it confirm a guessed invite link offline.
   const { people: _p, invites, ...rest } = ctx.space.settings;
-  const settings = access.owner ? { ...rest, invites } : rest;
+  const settings = access.owner ? { ...rest, invites: publicInvites(invites) } : rest;
   const cfg = getConfig();
   const role: "owner" | "member" | "viewer" = access.owner ? "owner" : access.roles.includes("viewer") ? "viewer" : "member";
   return {
