@@ -75,8 +75,12 @@ export async function remember(ctx: Ctx, raw: unknown, opts: RememberOptions = {
   const idem = input.idempotencyKey ? `${actor}:${input.idempotencyKey}` : null;
   const marker = idem ?? opts.idem ?? null;
   const replay = async () => {
-    const [hit] = await b.vectors.query<EntryMeta>("memories", { filters: [spaceF(ctx), { op: "eq", path: "metadata.idem", values: [idem!] }], limit: 1, withVectors: false });
-    return hit ? { id: hit.$id, seq: seqOf(hit.$id), hash: hit.metadata.hash, status: "created" as const, relations: refsAsRelations(hit.metadata), relateStatus: hit.metadata.d.relateStatus } : null;
+    // A duplicate appends nothing, so there is no entry to find: its outcome is recorded under the key instead.
+    const [[hit], dup] = await Promise.all([
+      b.vectors.query<EntryMeta>("memories", { filters: [spaceF(ctx), { op: "eq", path: "metadata.idem", values: [idem!] }], limit: 1, withVectors: false }),
+      duplicateOutcome(ctx, idem!),
+    ]);
+    return hit ? { id: hit.$id, seq: seqOf(hit.$id), hash: hit.metadata.hash, status: "created" as const, relations: refsAsRelations(hit.metadata), relateStatus: hit.metadata.d.relateStatus } : dup;
   };
 
   // Independent round trips run side by side: the idempotency lock (then the replay check under it), the rate
@@ -95,6 +99,7 @@ export async function remember(ctx: Ctx, raw: unknown, opts: RememberOptions = {
   try {
     for (const r of [rateR, vecR, pendR]) if (r.status === "rejected") throw r.reason;
     const result = await write(ctx, input, opts, marker, (vecR as PromiseFulfilledResult<number[]>).value);
+    if (idem && result.status === "duplicate") await recordDuplicate(ctx, idem, result);
     // Releasing after the response is safe: until then a retry finds the lock, then the entry.
     if (lock) ctx.defer(() => lock.release());
     return result;
@@ -105,6 +110,26 @@ export async function remember(ctx: Ctx, raw: unknown, opts: RememberOptions = {
 }
 
 const sameBytes = (a: Uint8Array | null, b: Uint8Array) => !!a && a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * A write the classifier called a duplicate returns before appending, so a retry with the same idempotency key
+ * would find no entry and pay for the whole write again: a fresh embedding, a model call, another access bump.
+ * The outcome is kept under the key, like the entry's own `metadata.idem`.
+ */
+const outcomeFile = async (ctx: Ctx, idem: string) => `idr_${ctx.space.key}_${(await sha256Hex(idem)).slice(0, 24)}`;
+
+async function recordDuplicate(ctx: Ctx, idem: string, result: RememberResult) {
+  const fileId = await outcomeFile(ctx, idem);
+  const body = new TextEncoder().encode(JSON.stringify(result));
+  await ctx.b.files.put(ctx.cfg.appwrite.checkpointsBucket, fileId, `${fileId}.json`, body, ctx.b.teamRead(ctx.space.teamId))
+    .catch((e) => { if (!isConflict(e)) throw e; }); // another retry recorded the same outcome first
+}
+
+async function duplicateOutcome(ctx: Ctx, idem: string): Promise<RememberResult | null> {
+  const raw = await ctx.b.files.get(ctx.cfg.appwrite.checkpointsBucket, await outcomeFile(ctx, idem)).catch(() => null);
+  if (!raw) return null;
+  try { return JSON.parse(new TextDecoder().decode(raw)) as RememberResult; } catch { return null; }
+}
 
 async function takeIdemLock(ctx: Ctx, idem: string, replay: () => Promise<RememberResult | null>): Promise<{ release: () => Promise<void> } | RememberResult> {
   const { files } = ctx.b;

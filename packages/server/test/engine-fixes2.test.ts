@@ -329,3 +329,31 @@ describe("the concept map is not a full pairwise scan on every request", () => {
     expect((await conceptGraph(ctx)).nodes.length).toBeGreaterThan(first.nodes.length);
   });
 });
+
+describe("idempotency covers the duplicate outcome", () => {
+  const TEXT = "Invoices go out on the first of the month.";
+
+  it("a retry with the same key gets the same answer without re-embedding or bumping the count again", async () => {
+    const { b, ctx, drain } = await setup();
+    const original = await remember(ctx, { text: TEXT, subject: "policy:billing" });
+    await drain();
+    const first = await remember(ctx, { text: TEXT, subject: "policy:billing", idempotencyKey: "k9" });
+    expect(first.status).toBe("duplicate");
+    expect(first.id).toBe(original.id);
+    await drain();
+    const access = (await getEntry(b, original.id))!.metadata.d.access;
+
+    // The embedding still runs: like any replayed write it starts beside the lock, before the replay answers.
+    // What must not happen again is the expensive part — the neighbour search, the classifier, the write.
+    let searches = 0, writes = 0;
+    const query = b.vectors.query.bind(b.vectors);
+    b.vectors.query = (async (coll, q) => { if (q.vector) searches++; return query(coll, q); }) as typeof b.vectors.query;
+    const update = b.vectors.update.bind(b.vectors);
+    b.vectors.update = (async (...a: Parameters<typeof update>) => { writes++; return update(...a); }) as typeof b.vectors.update;
+    const retry = await remember(ctx, { text: TEXT, subject: "policy:billing", idempotencyKey: "k9" });
+    await drain();
+    expect(retry).toEqual(first);
+    expect({ searches, writes }).toEqual({ searches: 0, writes: 0 });
+    expect((await getEntry(b, original.id))!.metadata.d.access).toBe(access);
+  });
+});

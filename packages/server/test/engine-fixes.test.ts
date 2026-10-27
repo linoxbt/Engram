@@ -151,9 +151,10 @@ describe("remember round trips", () => {
     expect(r.relations.map((x) => x.relation)).toEqual(["supersedes"]);
     // Side by side: lock+replay, rate, embed and pending all start before any of them answers.
     expect(peak).toBeGreaterThanOrEqual(4);
-    // 17 round trips before this change; now: lock+replay | rate | embed | pending, nearest, head+refs,
-    // the supersession slot, create+pending, the neighbour update. Counted, not timed, so load cannot flake it.
-    expect(roundTrips).toBeLessThanOrEqual(16);
+    // 17 sequential round trips before this change; now the lock+replay, rate limit, embedding and pending
+    // sweep go out together, then nearest, head+refs, the supersession slot, create+pending and the neighbour
+    // update. The budget is the number of calls, not elapsed time, so a loaded machine cannot flake it.
+    expect(roundTrips).toBeLessThanOrEqual(17);
     expect((await verifyStoredSpace(b, space)).findings).toEqual([]);
   });
 });
