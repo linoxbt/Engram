@@ -20,11 +20,31 @@ export const headerHash = (h: Header) => sha256Hex("engram:entry:v1:" + canonica
 export const quantize = (v: number[]) => v.map((x) => Math.round(x * 1e5) / 1e5);
 
 /**
+ * Largest component the hash accepts. `setInt32` takes its argument mod 2^32, so without a bound any component
+ * could be shifted by a multiple of 2^32 / 1e5 = 42949.67296 and hash to the same bytes — a free vector swap under
+ * a header hash that still holds. Engram vectors are unit-normalised (`normalize`, and the tombstone is a unit
+ * basis vector), so 1 plus a quantisation epsilon is their real range, and it sits far inside the wrap period:
+ * no two accepted vectors can differ by a whole period. Valid vectors hash exactly as they did before.
+ */
+const MAX_COMPONENT = 1 + 1e-6;
+
+/** Throws on anything `embHash` must not fold: NaN, Infinity, and magnitudes that could wrap. */
+export function checkVector(v: number[]): void {
+  for (let i = 0; i < v.length; i++) {
+    const x = v[i];
+    if (!Number.isFinite(x) || Math.abs(x) > MAX_COMPONENT) {
+      throw new Error(`vector component ${i} is out of range (${x}); embeddings must be finite and unit-normalised`);
+    }
+  }
+}
+
+/**
  * With a salt (the entry's content salt), the hash cannot be used to test guesses: anyone holding the public
  * header could otherwise embed a candidate text and compare. The salt is erased with the text on forget.
  * Unsalted (v1) hashes remain valid for tombstones and for entries written before salting.
  */
 export async function embHash(v: number[], salt?: string | null): Promise<string> {
+  checkVector(v);
   const prefix = enc.encode(salt ? `engram:emb:v2:${salt}:` : "engram:emb:v1:");
   const buf = new Uint8Array(prefix.length + v.length * 4);
   buf.set(prefix, 0);

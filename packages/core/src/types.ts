@@ -80,7 +80,6 @@ export interface EntryMeta {
   seq: string;
   h: Header;
   hash: string;
-  sig: string | null;
   c: Content;
   d: Derived;
   op: Op;
@@ -162,7 +161,9 @@ export type Rule =
   | "signature"
   | "truncation"
   | "rollback"
-  | "anchor";
+  | "anchor"
+  /** A check the mode promised was not run, because the server did not supply what it needed. */
+  | "coverage";
 
 export interface Finding {
   seq: number;
@@ -176,8 +177,19 @@ export type VerifyMode = "standard" | "deep" | "public";
 export interface Report {
   space: string;
   entries: number;
+  /**
+   * What was actually checked, so a caller can never mistake "nothing to check" for "checked and clean".
+   * `entries` counts entries that passed the shape gate; the rest count the rules that really ran on them.
+   */
+  checked: { entries: number; content: number; vector: number; derived: number };
+  /** True only when every checkpoint counted in `checkpointsValid` had its signature verified against a key. */
+  signaturesChecked: boolean;
   validThrough: number;
+  /** Last seq covered by a checkpoint this run verified end to end; -1 when nothing here is signature-backed. */
+  provenThrough: number;
   checkpointsValid: number;
+  /** Checkpoints that were otherwise sound but whose signature could not be checked, for want of a public key. */
+  checkpointsUnchecked: number;
   checkpointsTotal: number;
   latestCheckpoint: { seq: number; size: number; root: string; createdAt: string } | null;
   findings: Finding[];

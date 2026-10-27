@@ -171,7 +171,8 @@ describe("demo story and Tamper Lab", () => {
     await resetSandbox(ctx, "test");
     const space = (await getSpace(ctx.b, ctx.space.key))!;
     await attack({ ...ctx, space }, "hide-supersession");
-    expect((await verifyStoredSpace(ctx.b, space)).status).toBe("warning");
+    // Derived state is recomputable from the signed chain, so an old mismatch is tampering, not a warning.
+    expect((await verifyStoredSpace(ctx.b, space)).status).toBe("tampered");
     const fixed = await repairSpace({ ...ctx, space });
     expect(fixed.fixed).toBeGreaterThan(0);
     expect((await verifyStoredSpace(ctx.b, space)).status).toBe("valid");

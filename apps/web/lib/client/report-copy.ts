@@ -22,6 +22,7 @@ export const LAYER: Record<Rule, string> = {
   copy: "Searchable copies",
   rollback: "Rollback memory",
   anchor: "Public GitHub anchor",
+  coverage: "Check coverage",
 };
 
 export const criticalOf = (r: Pick<Report, "findings">) => r.findings.filter((f) => f.severity === "critical");
@@ -35,6 +36,7 @@ export function warningReason(warnings: Pick<Finding, "rule" | "message">[]): st
   if (rules.has("derived") || rules.has("copy")) parts.push("derived fields disagree with the chain");
   if (warnings.some((w) => w.rule === "content" && /being forgotten/.test(w.message))) parts.push("an erasure is still finishing");
   if (warnings.some((w) => w.rule === "vector")) parts.push("a forgotten vector is still stored");
+  if (rules.has("coverage")) parts.push("the server did not supply what some checks needed");
   if (!parts.length) parts.push(`${warnings.length} ${warnings.length === 1 ? "warning" : "warnings"}`);
   return parts.join("; ");
 }
