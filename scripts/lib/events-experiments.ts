@@ -24,7 +24,9 @@ const errText = (e: unknown) => (e instanceof AppwriteException ? `${e.code} ${e
 const until = async (ms: number, done: () => boolean) => { const end = Date.now() + ms; while (Date.now() < end && !done()) await sleep(250); };
 
 export interface EventsConfig { endpoint: string; project: string; key: string; db: string; space: string; labelerId: string; origin: string | null }
-export interface EventsResult { rows: Row[]; realtimeChannel: string | null; functionEvents: string[]; notes: string[] }
+/** One labeler execution raised by an event. `event` is null when Appwrite logged no x-appwrite-event header. */
+export interface FiredExecution { id: string; event: string | null; status: string }
+export interface EventsResult { rows: Row[]; realtimeChannel: string | null; functionEvents: string[]; functionExecutions: FiredExecution[]; notes: string[] }
 
 /** The slice of the `appwrite` web SDK used here (it is a dependency of apps/web, not of the scripts). */
 interface WebSdk {
@@ -65,6 +67,23 @@ export function realtimeCandidates(db: string, coll: string, docId: string) {
     "documents",
     "rows",
   ];
+}
+
+/**
+ * The verdict for item 12. An execution with no x-appwrite-event header proves that *something* fired but not
+ * which namespace did, so it is informational ("info"), not a yes: the earlier version reported "OK: yes" and then
+ * interpolated the placeholder string where the namespace belonged.
+ */
+export function functionEventVerdict(fired: FiredExecution[]): { ok: boolean | null; names: string[]; action: string } {
+  const names = [...new Set(fired.map((f) => f.event).filter((e): e is string => !!e))];
+  if (names.length) return { ok: true, names, action: `Set the labeler's events in appwrite.json to the namespace that fired (${names[0].replace(/\.c_[a-z0-9]{8}_[a-z0-9]{6}\./, ".*.")})` };
+  if (fired.length) {
+    return {
+      ok: null, names,
+      action: "Executions fired but Appwrite logged no x-appwrite-event header, so which namespace delivered them is unproven: keep both databases.* and vectorsdb.* in appwrite.json, and read the namespace off a labeler execution in the console",
+    };
+  }
+  return { ok: false, names, action: "Function events do not fire for VectorsDB here; the app labels inline at 3, 10, 30 and 100 members" };
 }
 
 export function functionEventCandidates(db: string, coll: string) {
@@ -128,7 +147,7 @@ async function realtime(cfg: EventsConfig, rows: Row[], notes: string[]): Promis
   return specific ? specific.replace(`.${docId}`, "") : null;
 }
 
-async function functionEvents(cfg: EventsConfig, rows: Row[], notes: string[]): Promise<string[]> {
+async function functionEvents(cfg: EventsConfig, rows: Row[], notes: string[]): Promise<FiredExecution[]> {
   const admin = new Client().setEndpoint(cfg.endpoint).setProject(cfg.project).setKey(cfg.key);
   const fns = new Functions(admin), vdb = new VectorsDB(admin);
   let original: Models.Function;
@@ -140,7 +159,7 @@ async function functionEvents(cfg: EventsConfig, rows: Row[], notes: string[]): 
   const update = (events: string[]) => fns.update({ functionId: original.$id, name: original.name, runtime: original.runtime as never, execute: original.execute, events, timeout: original.timeout, enabled: original.enabled, logging: original.logging, entrypoint: original.entrypoint, commands: original.commands, scopes: original.scopes as never, interval: (original as { interval?: number }).interval ?? 0 } as never);
   const accepted: string[] = [], rejected: string[] = [];
   const conceptId = `c_${cfg.space}_${Math.random().toString(36).slice(2, 8).padEnd(6, "0")}`;
-  const fired = new Map<string, string>();
+  const fired: FiredExecution[] = [];
   const t0 = new Date().toISOString();
   try {
     for (const ev of functionEventCandidates(cfg.db, "concepts")) {
@@ -153,15 +172,15 @@ async function functionEvents(cfg: EventsConfig, rows: Row[], notes: string[]): 
       await sleep(3000);
       await vdb.updateDocument({ databaseId: cfg.db, collectionId: "concepts", documentId: conceptId, data: { metadata: { space: cfg.space, label: "", summary: "", members: "00000002", membersN: 2, labeledAtMembers: "00000000", probe: "events-update" } } as never });
       const seen = new Set<string>();
-      for (let i = 0; i < 12 && fired.size < 2; i++) {
+      for (let i = 0; i < 12 && fired.length < 2; i++) {
         const list = await fns.listExecutions({ functionId: original.$id, queries: [Query.orderDesc("$createdAt"), Query.limit(25)] }).catch(() => null);
         for (const x of list?.executions ?? []) {
           if (seen.has(x.$id) || x.$createdAt < t0) continue;
           seen.add(x.$id);
           const ev = x.requestHeaders?.find((h) => h.name.toLowerCase() === "x-appwrite-event")?.value;
-          if (String(x.trigger) === "event") fired.set(ev ?? `event execution ${x.$id} (no x-appwrite-event header logged)`, x.status);
+          if (String(x.trigger) === "event") fired.push({ id: x.$id, event: ev ?? null, status: x.status });
         }
-        if (fired.size < 2) await sleep(5000);
+        if (fired.length < 2) await sleep(5000);
       }
     }
   } catch (e) {
@@ -170,19 +189,19 @@ async function functionEvents(cfg: EventsConfig, rows: Row[], notes: string[]): 
     await update(original.events).catch((e) => notes.push(`COULD NOT RESTORE labeler events (${original.events.join(", ")}): ${errText(e)}`));
     await vdb.deleteDocument({ databaseId: cfg.db, collectionId: "concepts", documentId: conceptId }).catch(() => undefined);
   }
-  const names = [...fired.keys()];
+  const verdict = functionEventVerdict(fired);
   rows.push({
     n: 12, item: "Function trigger on a VectorsDB document event",
-    ok: names.length > 0,
-    result: `accepted names: ${accepted.join(", ") || "none"}; rejected: ${rejected.join("; ") || "none"}; fired: ${names.map((n) => `${n} [${fired.get(n)}]`).join(", ") || "nothing within 60 s"}; labeler events restored to ${original.events.join(", ") || "none"}`,
-    action: names.length ? `Set the labeler's events in appwrite.json to the namespace that fired (${names[0].replace(/\.c_[a-z0-9]{8}_[a-z0-9]{6}\./, ".*.")})` : "Function events do not fire for VectorsDB here; the app labels inline at 3, 10, 30 and 100 members",
+    ok: verdict.ok,
+    result: `accepted names: ${accepted.join(", ") || "none"}; rejected: ${rejected.join("; ") || "none"}; fired: ${fired.map((f) => `${f.event ?? `execution ${f.id}, no x-appwrite-event header logged`} [${f.status}]`).join(", ") || "nothing within 60 s"}; labeler events restored to ${original.events.join(", ") || "none"}`,
+    action: verdict.action,
   });
-  return names;
+  return fired;
 }
 
 export async function runEventsExperiments(cfg: EventsConfig): Promise<EventsResult> {
   const rows: Row[] = [], notes: string[] = [];
   const realtimeChannel = await realtime(cfg, rows, notes);
   const fired = await functionEvents(cfg, rows, notes);
-  return { rows, realtimeChannel, functionEvents: fired, notes };
+  return { rows, realtimeChannel, functionEvents: functionEventVerdict(fired).names, functionExecutions: fired, notes };
 }

@@ -6,8 +6,9 @@
  *    The labeler's own label write fires another update event, which finds nothing due.
  *  - HTTP call with {"space": "<key>", "concept": "<id>"}: labels now, unconditionally.
  *
- * The event in appwrite.json names the database "engram": with another APPWRITE_DB_ID, edit that path too. Which
- * event namespace fires for VectorsDB documents is checked by the `events` provisioning step (docs/verified.md).
+ * appwrite.json registers both the databases.* and the vectorsdb.* event name, because the `events` provisioning
+ * step saw executions fire without an x-appwrite-event header to say which namespace delivered them
+ * (docs/verified.md item 12). Both name the database "engram": with another APPWRITE_DB_ID, edit both paths.
  */
 import { backgroundDefer, getConfig, getSpace, isEngramError, labelConcept, ALL_SCOPES } from "@engram/server";
 import { body, boot, logJson, type FnContext } from "../../shared";

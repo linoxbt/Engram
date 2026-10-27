@@ -11,7 +11,7 @@
  Browser (people)                     │  recall       RRF, rerank, MMR │        │   concepts  768 hnsw_cosine      │
  ┌────────────────────────┐           │  relate       contradictions   │        │   agents    384 hnsw_cosine      │
  │ Dashboard              │◀──────────│  forget/link  receipts         │        │   recalls   768 hnsw_cosine      │
- │ Verifier (WebCrypto)   │◀─ Realtime (JWT) or 3 s polling ───────────────────│ Storage   checkpoints, locks     │
+ │ Verifier (WebCrypto)   │◀─ Realtime (JWT) or 3 s polling ───────────────────│ Storage   checkpoints, state     │
  │ Tamper Lab, Time Mach. │           │ @engram/core (also in browser) │        │ Functions checkpoint, sentinel,  │
  └────────────────────────┘           └───────────────────────────────┘        │           labeler, reflect       │
                                                                                │ Messaging tamper alerts          │
@@ -23,7 +23,7 @@
 
 | Package | Role |
 |---------|------|
-| `packages/core` | Isomorphic integrity code: canonical JSON, the four hashes, Merkle trees, checkpoints, the shared derived-state reducer, the verifier, rerank and MMR, Tamper Lab attacks. Runs in Node 20+ and browsers with WebCrypto. The single implementation; a second copy would drift. |
+| `packages/core` | Isomorphic integrity code: canonical JSON, the four hashes, Merkle trees, checkpoints, the shared derived-state reducer, the verifier, rerank and MMR, Tamper Lab attacks. Runs in Node 22.12+ (the repository's engine) and browsers with WebCrypto. The single implementation; a second copy would drift. |
 | `packages/server` | The engine and storage adapters. `Backend` interfaces with an Appwrite implementation (VectorsDB, Embeddings, Teams, Storage, Account, Functions, Messaging) and a local file-backed implementation used by tests and offline development. |
 | `packages/sdk` | `engram-sdk`, a typed REST client that checks proofs locally. |
 | `apps/web` | Next.js App Router: MCP route, REST v1, dashboard API, every screen, public verifier, docs. |
