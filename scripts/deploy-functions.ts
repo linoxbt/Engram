@@ -9,11 +9,11 @@
  * use Appwrite's dynamic API key with the scopes in appwrite.json, not your server key.
  */
 import "./env";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { AppwriteException, Client, Functions, ID, Query, Runtime, type ProjectKeyScopes } from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
-import { planVariables, type ExistingVar, type VarAction } from "./deploy-plan";
+import { planVariables, splitActions, type ExistingVar, type VarAction } from "./deploy-plan";
 
 const endpoint = process.env.APPWRITE_ENDPOINT, project = process.env.APPWRITE_PROJECT_ID, key = process.env.APPWRITE_API_KEY;
 if (!endpoint || !project || !key) { console.error("Set APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID and APPWRITE_API_KEY."); process.exit(1); }
@@ -46,7 +46,15 @@ if (errors.length) {
   process.exit(1);
 }
 
-execFileSync("npx", ["tsx", "--tsconfig", "tsconfig.json", "scripts/build-functions.ts"], { stdio: "inherit" });
+// Run tsx out of node_modules, as provision.ts does. `npx tsx` would fetch whatever version the registry serves
+// today if node_modules/.bin/tsx were not resolvable from the cwd, in the middle of a production deploy.
+const build = spawnSync(process.execPath, ["--import", "tsx", "scripts/build-functions.ts"], {
+  stdio: "inherit", env: { ...process.env, TSX_TSCONFIG_PATH: "tsconfig.json" },
+});
+if (build.error || build.status !== 0) {
+  console.error(`Not deploying: building the Functions failed${build.error ? ` (${build.error.message})` : ` (exit ${build.status})`}.`);
+  process.exit(build.status || 1);
+}
 
 for (const f of defs) {
   const spec = {
@@ -72,9 +80,9 @@ for (const f of defs) {
     spec.interval = 60;
     await upsert();
   }
-  for (const a of plans.get(f.$id) ?? []) {
+  const { beforeDeploy, afterDeploy } = splitActions(plans.get(f.$id) ?? []);
+  for (const a of beforeDeploy) {
     if (a.kind === "keep") { console.log(`  ${f.$id}: ${a.key} kept (${a.reason})`); continue; }
-    if (a.kind === "delete") { await fns.deleteVariable({ functionId: f.$id, variableId: a.variableId }); console.log(`  ${f.$id}: removed stale ${a.key}`); continue; }
     // A Function created just now has no variables yet, whatever the plan saw.
     if (a.kind === "update" && a.variableId) await fns.updateVariable({ functionId: f.$id, variableId: a.variableId, key: a.key, value: a.value, secret: a.secret });
     else await fns.createVariable({ functionId: f.$id, variableId: ID.unique(), key: a.key, value: a.value, secret: a.secret });
@@ -83,4 +91,9 @@ for (const f of defs) {
   const archive = execFileSync("tar", ["-czf", "-", "-C", f.path, "package.json", "dist"], { maxBuffer: 256 * 1024 * 1024 });
   const dep = await fns.createDeployment({ functionId: f.$id, code: InputFile.fromBuffer(archive, `${f.$id}.tar.gz`), activate: true, entrypoint: f.entrypoint, commands: "" });
   console.log(`✓ deployed ${f.$id} (${dep.$id}, ${Math.round(archive.length / 1024)} KB)`);
+  // Only once the new code is live: a failed deployment must not leave the old code without its variables.
+  for (const a of afterDeploy) {
+    await fns.deleteVariable({ functionId: f.$id, variableId: a.variableId });
+    console.log(`  ${f.$id}: removed stale ${a.key}`);
+  }
 }
