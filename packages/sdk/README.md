@@ -14,6 +14,8 @@ const report = await mem.verify();
 const ok = await mem.verifyProof(await mem.proof(memories[0].id)); // checked locally with WebCrypto
 ```
 
-Retries 429 and 503 responses with backoff. `remember` sends an idempotency key (generated when you do not pass one), so its retries are safe; writes without one are only retried when the server says it did nothing. `verifyProof` is only `ok` when the signature checks out under a key you supplied.
+Retries 429 and 503 responses with backoff. `remember` sends an idempotency key (generated when you do not pass one), so its retries are safe; writes without one are only retried when the server says it did nothing.
+
+`verifyProof` is only `ok` when the Merkle path reaches the root of a checkpoint **for the entry's own space** (taken from the entry id, not from the checkpoint) whose signature checks out under a key you supplied. It never throws: anything malformed comes back as `{ ok: false, problem }`.
 
 `pnpm --filter engram-sdk build` writes the publishable package to `dist/` (ESM, Node 20+ or any modern browser): the verifier code from `@engram/core` is bundled in, and `@noble/ed25519` is the only runtime dependency. Inside this repository, tests and scripts import the source through path aliases, so no build is needed for them.

@@ -36,12 +36,49 @@ export interface Memory {
   conflict: boolean; contradictedBy: string[]; supersedes: string[]; supersededBy: string | null; related: string[];
   score: number; distance: number | null; hash: string; importance: number; source: string | null;
   checkpoint: { seq: number; file: string } | null; note: string | null;
+  /** Summaries only: the memories they restate and who wrote those. */
+  derivedFrom?: string[]; sourceAgentNames?: string[];
 }
-export interface RecallResult { query: string; asOf: string | null; mode: "now" | "as-of" | "as-of-verified"; memories: Memory[]; conflicts: number; replayed?: number; tookMs: number }
+/** The space's latest signed checkpoint, as the server reports it alongside an answer. */
+export interface CheckpointPointer { fileId: string; seq: number; size: number; root: string; createdAt: string }
+/** The last verification of the space (mirrors the server's stored status; not a local check). */
+export interface IntegrityStatus {
+  status: Report["status"]; validThrough: number; entries: number; findings: number; critical: number;
+  checkedAt: string; firstFinding: string | null;
+  /** Operator bookkeeping: when the space's owner was last alerted, and what for. */
+  alertedAt?: string | null; alertedFor?: string | null;
+}
+export interface RecallResult {
+  query: string; asOf: string | null; mode: "now" | "as-of" | "as-of-verified"; memories: Memory[]; conflicts: number;
+  checkpoint: CheckpointPointer | null;
+  integrity: IntegrityStatus | null;
+  /** Where `integrity` comes from: a verification run by this request, or the monitor's last background sweep. */
+  integritySource: "replayed" | "monitor" | null;
+  /** Authoritative as-of mode: how many chain entries were replayed. */
+  replayed?: number;
+  tookMs: number;
+}
 export interface ForgetResult { forgetEntryId: string; seq: number; target: string; targetSeq: number; status: "forgotten"; erased: boolean }
-export interface TimelineEntry { seq: number; id: string; op: string; kind: string; text: string | null; status: string; createdAt: string; agent: string; agentName: string; target: string | null }
+export interface TimelineEntry {
+  seq: number; id: string; op: string; kind: string; text: string | null; status: string; createdAt: string;
+  agent: string; agentName: string; target: string | null; source: string | null;
+  relations: { supersedes: string[]; contradicts: string[]; related: string[]; supersededBy: string | null; contradictedBy: string[] };
+  derivedFrom?: string[]; sourceAgentNames?: string[];
+}
+/** One page of a subject's timeline. `next` is the cursor for the page after it, null at the end. */
+export interface TimelineResult { subject: string; entries: TimelineEntry[]; next: string | null }
 export interface Proof { id: string; seq: number; leaf: string; index: number; path: string[]; checkpoint: Checkpoint & { file: string }; publicKey: string | null; howToVerify: string }
-export interface VerifyResult { status: "valid" | "warning" | "tampered"; integrity: Report["status"]; entries: number; validThrough: number; checkpointsValid: number; findings: Report["findings"]; proof?: Proof }
+export interface VerifyResult {
+  status: Report["status"]; integrity: Report["status"]; entries: number; validThrough: number; checkpointsValid: number;
+  latestCheckpoint: Report["latestCheckpoint"]; findings: Report["findings"]; checkedAt: string; proof?: Proof;
+}
+export interface ResolveResult { linkEntryId: string; seq: number; action: "supersede" | "refine" | "dismiss"; winner: string; loser: string }
+export interface MeResult {
+  agent: { id: string; name: string; scopes: string[] };
+  space: { key: string; name: string };
+  integrity: IntegrityStatus | null;
+  latestCheckpoint: CheckpointPointer | null;
+}
 
 export class EngramError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); this.name = "EngramError"; }
@@ -121,14 +158,17 @@ export class Engram {
   recall(input: RecallInput) { return this.req<RecallResult>("POST", "/recall", input, true); }
   forget(id: string, reason?: string) { return this.req<ForgetResult>("POST", `/memories/${encodeURIComponent(id)}/forget`, { reason }); }
   get(id: string) { return this.req<Record<string, unknown>>("GET", `/memories/${encodeURIComponent(id)}`); }
-  timeline(subject: string, limit = 100) { return this.req<{ subject: string; entries: TimelineEntry[] }>("GET", `/subjects/${encodeURIComponent(subject)}/timeline?limit=${limit}`); }
+  timeline(subject: string, limit = 100, cursor?: string) {
+    const q = new URLSearchParams({ limit: String(limit), ...(cursor ? { cursor } : {}) });
+    return this.req<TimelineResult>("GET", `/subjects/${encodeURIComponent(subject)}/timeline?${q}`);
+  }
   verify(opts: { mode?: "standard" | "deep"; id?: string } = {}) {
     const q = new URLSearchParams({ mode: opts.mode ?? "standard", ...(opts.id ? { id: opts.id } : {}) });
     return this.req<VerifyResult>("GET", `/verify?${q}`);
   }
   proof(id: string) { return this.req<Proof>("GET", `/memories/${encodeURIComponent(id)}/proof`); }
-  resolve(input: { winnerId: string; loserId: string; action?: "supersede" | "refine" | "dismiss"; reason?: string }) { return this.req<{ linkEntryId: string; seq: number }>("POST", "/conflicts/resolve", input); }
-  me() { return this.req<{ agent: { id: string; name: string; scopes: string[] }; space: { key: string; name: string } }>("GET", "/me"); }
+  resolve(input: { winnerId: string; loserId: string; action?: "supersede" | "refine" | "dismiss"; reason?: string }) { return this.req<ResolveResult>("POST", "/conflicts/resolve", input); }
+  me() { return this.req<MeResult>("GET", "/me"); }
 
   /**
    * Check an inclusion proof locally: the Merkle path must reach the signed root, the checkpoint must be the one

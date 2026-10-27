@@ -40,6 +40,29 @@ describe("engram-sdk", () => {
     expect(body.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it("types every field the API actually sends", async () => {
+    const wire = {
+      recall: {
+        query: "q", asOf: null, mode: "now", memories: [], conflicts: 0, tookMs: 4,
+        checkpoint: { fileId: "cp_k7m2q9xa_000000000003", seq: 3, size: 4, root: "a".repeat(64), createdAt: "2026-10-27T00:00:00.000Z" },
+        integrity: { status: "valid", validThrough: 3, entries: 4, findings: 0, critical: 0, checkedAt: "2026-10-27T00:00:00.000Z", firstFinding: null },
+        integritySource: "monitor",
+      },
+      timeline: { subject: "customer:ada", next: "m_k7m2q9xa_000000000002", entries: [{ seq: 2, id: "m_k7m2q9xa_000000000002", op: "remember", kind: "fact", text: "t", status: "active", createdAt: "2026-10-27T00:00:00.000Z", agent: "a", agentName: "A", target: null, source: null, relations: { supersedes: [], contradicts: [], related: [], supersededBy: null, contradictedBy: [] } }] },
+      me: { agent: { id: "a", name: "A", scopes: ["recall"] }, space: { key: "k7m2q9xa", name: "S" }, integrity: null, latestCheckpoint: null },
+    };
+    const f = (async (url: string) => res(200, url.includes("/recall") ? wire.recall : url.includes("/timeline") ? wire.timeline : wire.me)) as typeof fetch;
+    const mem = new Engram({ url: "https://e.test", key: "k", fetch: f });
+    const r = await mem.recall({ query: "q" });
+    expect(r.integritySource).toBe("monitor");
+    expect(r.integrity?.status).toBe("valid");
+    expect(r.checkpoint?.size).toBe(4);
+    const t = await mem.timeline("customer:ada", 1);
+    expect(t.next).toBe("m_k7m2q9xa_000000000002");
+    expect(t.entries[0].relations.contradictedBy).toEqual([]);
+    expect((await mem.me()).latestCheckpoint).toBeNull();
+  });
+
   it("checks inclusion proofs and signatures locally", async () => {
     const { privateKey, publicKey } = await generateKeyPair();
     const leaves = await Promise.all(Array.from({ length: 7 }, (_, i) => sha256Hex(`entry ${i}`)));
