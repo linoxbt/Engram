@@ -91,7 +91,11 @@ export function MemoriesView() {
       {tooShort && <p id="query-hint" role="status" className="-mt-2 text-2xs text-warn">Type at least 2 characters to search.</p>}
 
       <div className="flex flex-wrap items-center gap-3 text-xs">
-        <label className="flex items-center gap-2"><Toggle checked={includeSuperseded} onChange={setIncludeSuperseded} label="Include superseded" /> include superseded</label>
+        {/* A <label> cannot label a role="switch" button, so the words are a click target of their own. */}
+        <span className="flex items-center gap-2">
+          <Toggle checked={includeSuperseded} onChange={setIncludeSuperseded} label="Include superseded" />
+          <button type="button" onClick={() => setIncludeSuperseded(!includeSuperseded)} className="text-muted hover:text-text" aria-hidden tabIndex={-1}>include superseded</button>
+        </span>
         <div className="flex flex-wrap gap-1" role="group" aria-label="Kinds">
           {KINDS.map((k) => (
             <button key={k} onClick={() => setKinds((ks) => ks.includes(k) ? ks.filter((x) => x !== k) : [...ks, k])} aria-pressed={kinds.includes(k)}

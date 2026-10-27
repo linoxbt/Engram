@@ -38,7 +38,12 @@ function readTrusted(space: string): TrustedCheckpoint | undefined {
     return t && Number.isSafeInteger(t.size) && typeof t.root === "string" ? t : undefined;
   } catch { return undefined; }
 }
-function writeTrusted(space: string, r: Report) {
+/** Exported so the guard below can be tested; only runVerification writes the anchor. */
+export function writeTrusted(space: string, r: Report) {
+  // An unverified checkpoint is not an anchor. Without built-in keys nothing is checked, so pinning the server's
+  // latest checkpoint would hand an attacker this browser's "trusted" root for every later visit.
+  // (A report from an older build has no such field; treat that as unchecked.)
+  if ((r as { signaturesChecked?: boolean }).signaturesChecked !== true) return;
   if (r.status === "tampered" || !r.latestCheckpoint || readConsent() !== "accepted") return;
   const prev = readTrusted(space);
   if (prev && prev.size >= r.latestCheckpoint.size) return;

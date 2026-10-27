@@ -196,7 +196,8 @@ function RelationsTab({ d, onNavigate }: { d: Detail; onNavigate: (id: string) =
         <rect x="170" y="45" width="60" height="30" rx="2" fill="none" stroke="#0a0a0a" strokeWidth="2" />
         <text x="200" y="64" textAnchor="middle" fill="#0a0a0a" fontSize="11" fontFamily="JetBrains Mono">#{d.seq}</text>
         {d.related.slice(0, 6).map((r, i) => {
-          const x = 20 + (i % 3) * 140 + (i >= 3 ? 70 : 0) - (i >= 3 ? 70 : 0);
+          // The bottom row sits half a column to the right so its boxes do not hide the ones above.
+          const x = 5 + (i % 3) * 120 + (i >= 3 ? 70 : 0);
           const y = i < 3 ? 5 : 90;
           const rel = relOf(r.id);
           const color = rel.tone === "conflict" ? "#d7263d" : rel.tone === "gold" ? "#946d00" : rel.tone === "superseded" ? "#686868" : rel.tone === "violet" ? "#45454d" : "#0a0a0a";

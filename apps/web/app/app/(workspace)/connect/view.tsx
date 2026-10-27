@@ -6,6 +6,8 @@ import { Card, CopyButton, PageHeader, Tabs } from "@/components/ui";
 import { useSpaces } from "@/lib/client/workspace";
 
 const KEY = "<YOUR_AGENT_KEY>";
+/** Inlined at build time, so the server and the first client frame agree; the effect below corrects other hosts. */
+const BUILD_ORIGIN = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") || "https://your-engram.example";
 const TOOLS = [
   ["remember", "Store a memory. Engram embeds it, finds its neighbours and records supersessions or conflicts."],
   ["recall", "Search by meaning, optionally as of a past moment. Every recall is logged for audit."],
@@ -19,9 +21,10 @@ type Tab = "claude" | "cursor" | "rest" | "sdk";
 
 export function View() {
   const spaces = useSpaces();
-  const [origin, setOrigin] = useState("https://your-engram.example");
+  const [origin, setOrigin] = useState(BUILD_ORIGIN);
   const [tab, setTab] = useState<Tab>("claude");
   const [space, setSpace] = useState("");
+  // A deployment can be reached on more than one host; the one in the address bar is the one that works.
   useEffect(() => setOrigin(window.location.origin), []);
   const list = spaces.data?.spaces ?? [];
   const target = space || list[0]?.key || "";

@@ -5,7 +5,8 @@ import { api } from "@/lib/client/api";
 import { when } from "@/lib/format";
 import { Button, Card, CopyButton, ErrorNote, Field, Input, Modal, Pill, Skeleton, useToast } from "./ui";
 
-interface Member { userId: string; name: string; email: string; owner: boolean }
+/** Only the owner is told who a member is: everyone else gets the display name alone. */
+interface Member { userId?: string; name: string; email?: string; owner: boolean }
 interface Invite { id: string; email: string | null; createdAt: string; expiresAt: string }
 
 /** People in a space. The owner invites with single-use links (shown once) and can remove members. */
@@ -26,6 +27,7 @@ export function MembersCard({ space, owner, sandbox }: { space: string; owner: b
   const revoke = useMutation({
     mutationFn: (id: string) => api(`/api/app/spaces/${space}/invites/${encodeURIComponent(id)}`, { method: "DELETE" }),
     onSuccess: () => { refresh(); toast("Invite revoked", "ok"); },
+    onError: (e) => toast(`Could not revoke the invite: ${e instanceof Error ? e.message : String(e)}`, "error"),
   });
   const remove = useMutation({
     mutationFn: (userId: string) => api(`/api/app/spaces/${space}/members/${encodeURIComponent(userId)}`, { method: "DELETE" }),
@@ -43,14 +45,14 @@ export function MembersCard({ space, owner, sandbox }: { space: string; owner: b
         <ErrorNote error={q.error} />
         {members.length > 0 && (
           <ul className="divide-y divide-line rounded-[2px] border border-line">
-            {members.map((m) => (
-              <li key={m.userId} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
+            {members.map((m, i) => (
+              <li key={m.userId ?? `${i}:${m.name}`} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate">{m.name || m.email}</div>
-                  {m.name && <div className="truncate text-2xs text-muted">{m.email}</div>}
+                  <div className="truncate">{m.name || m.email || "Member"}</div>
+                  {m.name && m.email && <div className="truncate text-2xs text-muted">{m.email}</div>}
                 </div>
                 {m.owner ? <Pill tone="valid">owner</Pill> : <Pill tone="muted">member</Pill>}
-                {owner && !m.owner && <Button size="sm" variant="ghost" className="!text-tamper" onClick={() => setRemoving(m)}>Remove</Button>}
+                {owner && !m.owner && m.userId && <Button size="sm" variant="ghost" className="!text-tamper" onClick={() => setRemoving(m)}>Remove</Button>}
               </li>
             ))}
           </ul>
@@ -83,6 +85,7 @@ export function MembersCard({ space, owner, sandbox }: { space: string; owner: b
                     </li>
                   ))}
                 </ul>
+                <div className="mt-1.5"><ErrorNote error={revoke.error} /></div>
               </div>
             )}
           </div>
@@ -96,7 +99,7 @@ export function MembersCard({ space, owner, sandbox }: { space: string; owner: b
           <ErrorNote error={remove.error} />
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setRemoving(null)}>Cancel</Button>
-            <Button variant="primary" className="!border-tamper !bg-tamper" loading={remove.isPending} onClick={() => removing && remove.mutate(removing.userId)}>Remove</Button>
+            <Button variant="primary" className="!border-tamper !bg-tamper" loading={remove.isPending} onClick={() => removing?.userId && remove.mutate(removing.userId)}>Remove</Button>
           </div>
         </div>
       </Modal>

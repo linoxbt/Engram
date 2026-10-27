@@ -12,6 +12,9 @@ import { Button, Card, Empty, ErrorNote, Input, Pill, Skeleton, cx } from "@/com
 interface Ticks { subjects: { subject: string; count: number }[]; span: { first: string; last: string } | null; ticks: { seq: number; op: string; at: string; superseding: boolean; subject: string | null }[] }
 interface RecallRes { memories: RecallMemory[]; asOf: string | null; mode: string; replayed?: number; checkpoint: { fileId: string; size: number; createdAt: string } | null; tookMs: number }
 
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+
 function useDebounced<T>(v: T, ms: number) {
   const [d, setD] = useState(v);
   useEffect(() => { const t = setTimeout(() => setD(v), ms); return () => clearTimeout(t); }, [v, ms]);
@@ -23,12 +26,14 @@ export function TimeMachineView() {
   const open = useOpenMemory();
   const t = useQuery({ queryKey: ["space", space, "subjects"], queryFn: () => api<Ticks>(`/api/app/spaces/${space}/subjects`) });
   const hasAda = t.data?.subjects.some((s) => s.subject === "customer:ada");
+  // "Now" is pinned to when the page opened: a Date.now() read every render re-runs the effect and the memo below
+  // on every keystroke and drifts the handle's right-hand end.
+  const [end] = useState(() => Date.now());
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   useEffect(() => { if (hasAda && !submitted) { setQuery("What plan is Ada on?"); setSubmitted("What plan is Ada on?"); } }, [hasAda, submitted]);
 
-  const start = t.data?.span ? Date.parse(t.data.span.first) - 3_600_000 : Date.now() - 86_400_000;
-  const end = Date.now();
+  const start = t.data?.span ? Date.parse(t.data.span.first) - 3_600_000 : end - 86_400_000;
   const [pos, setPos] = useState<number | null>(null);
   useEffect(() => {
     if (pos == null && t.data?.span) {
@@ -154,11 +159,19 @@ function Timeline({ start, end, pos, onChange, ticks }: { start: number; end: nu
   };
   const onKey = (e: KeyboardEvent) => {
     const stepH = e.shiftKey ? 24 : 1;
-    if (e.key === "ArrowLeft") { e.preventDefault(); onChange(Math.max(start, pos - stepH * 3_600_000)); }
-    if (e.key === "ArrowRight") { e.preventDefault(); onChange(Math.min(end, pos + stepH * 3_600_000)); }
+    const back = (ms: number) => { e.preventDefault(); onChange(Math.max(start, pos - ms)); };
+    const forward = (ms: number) => { e.preventDefault(); onChange(Math.min(end, pos + ms)); };
+    if (e.key === "ArrowLeft") back(stepH * HOUR);
+    if (e.key === "ArrowRight") forward(stepH * HOUR);
+    // The APG slider pattern asks for PageUp/PageDown, and a day is the natural large step here.
+    if (e.key === "PageDown") back(DAY);
+    if (e.key === "PageUp") forward(DAY);
     if (e.key === "Home") { e.preventDefault(); onChange(start); }
     if (e.key === "End") { e.preventDefault(); onChange(end); }
   };
+  // A screen reader that ignores aria-valuetext falls back to the number, so the range is days since the chain
+  // starts rather than 13-digit epoch milliseconds.
+  const inDays = (v: number) => Math.round(((v - start) / DAY) * 10) / 10;
   return (
     <div ref={ref} className="relative h-20 cursor-pointer select-none touch-none" onPointerDown={(e) => { drag.current = true; (e.target as HTMLElement).setPointerCapture?.(e.pointerId); fromEvent(e); }}
       onPointerMove={(e) => drag.current && fromEvent(e)} onPointerUp={() => (drag.current = false)}>
@@ -169,7 +182,7 @@ function Timeline({ start, end, pos, onChange, ticks }: { start: number; end: nu
         return <span key={t.seq} className={cx("absolute w-px", color)} style={{ left: `${frac(Date.parse(t.at)) * 100}%`, top: tall ? 22 : 32, height: tall ? 36 : 16 }} title={`#${t.seq} ${t.op} ${when(t.at)}`} />;
       })}
       <div className="absolute inset-y-0 left-0 bg-gold/5" style={{ width: `${frac(pos) * 100}%` }} />
-      <div role="slider" tabIndex={0} aria-label="As of" aria-valuemin={start} aria-valuemax={end} aria-valuenow={Math.round(pos)} aria-valuetext={when(new Date(pos).toISOString())} onKeyDown={onKey}
+      <div role="slider" tabIndex={0} aria-label="As of (days since the chain starts)" aria-valuemin={0} aria-valuemax={inDays(end)} aria-valuenow={inDays(pos)} aria-valuetext={when(new Date(pos).toISOString())} onKeyDown={onKey}
         className="group absolute top-2 -ml-[9px] flex flex-col items-center focus-visible:outline-none" style={{ left: `${frac(pos) * 100}%` }}>
         <span className="flex size-[18px] items-center justify-center rounded-full border-2 border-gold bg-bg text-gold shadow transition-transform group-focus-visible:scale-125 group-focus-visible:ring-2 group-focus-visible:ring-accent group-focus-visible:ring-offset-2"><IconClock size={10} /></span>
         <span className="h-12 w-px bg-gold group-focus-visible:w-0.5 group-focus-visible:bg-accent" />

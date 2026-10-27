@@ -9,5 +9,5 @@ export default async function SpaceLayout({ children, params }: { children: Reac
   const user = await requireUserPage(`/app/${space}`);
   const m = await membership(getBackend(), space, user.id).catch(() => null);
   if (!m) notFound();
-  return <SpaceShell spaceKey={space} user={{ name: user.name, email: user.email, emailVerified: user.emailVerified }}>{children}</SpaceShell>;
+  return <SpaceShell spaceKey={space} user={{ name: user.name, email: user.email, emailVerified: user.emailVerified, guest: user.guest }}>{children}</SpaceShell>;
 }

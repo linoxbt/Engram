@@ -123,6 +123,7 @@ export function ChainStrip({
         className={clsx("overflow-y-auto rounded-[2px] border border-line bg-bg", compact ? "max-h-56" : "max-h-[60vh]")}>
         {list.map((b) => (
           <button key={b.seq} id={`blk-${b.seq}`} data-seq={b.seq} role="option" aria-selected={active === b.seq} onClick={() => onOpen?.(b.seq)}
+            aria-label={`Entry ${b.seq}, ${b.op}${states?.get(b.seq) === "fail" ? ", failed verification" : states?.get(b.seq) === "ok" ? ", verified" : ""}`}
             className={clsx("flex w-full items-center gap-2 border-b border-line px-3 py-2 text-left text-xs", active === b.seq && "bg-panel-2", fresh.has(b.seq) && "anim-slide-in")}>
             <Block b={b} state={states?.get(b.seq)} flag={flags.has(b.seq)} small />
             <span className="w-12 shrink-0 tabular text-muted">#{b.seq}</span>
@@ -172,7 +173,8 @@ export function ChainStrip({
 }
 
 function Block({ b, state, flag, small }: { b: StripBlock; state?: BlockState; flag: boolean; small?: boolean }) {
-  const size = small ? "h-4 w-3" : "h-[22px] w-[22px]";
+  // The narrow variant carries the tick and cross too: colour alone is not a signal.
+  const size = small ? "h-4 w-4" : "h-[22px] w-[22px]";
   const base =
     b.op === "forget" ? "border border-dashed border-muted/70 bg-transparent" :
     b.op === "link" ? "border border-line-2 bg-transparent" :
@@ -183,8 +185,8 @@ function Block({ b, state, flag, small }: { b: StripBlock; state?: BlockState; f
   return (
     <span className={clsx("relative inline-flex shrink-0 items-center justify-center rounded-[2px] transition-colors", size, base,
       state === "ok" && "border-valid! bg-valid/20!", state === "fail" && "border-tamper! bg-tamper/30! anim-flash")}>
-      {state === "ok" && !small && <IconTick size={11} className="text-valid" />}
-      {state === "fail" && !small && <IconCross size={11} className="text-tamper" />}
+      {state === "ok" && <IconTick size={small ? 9 : 11} className="text-valid" />}
+      {state === "fail" && <IconCross size={small ? 9 : 11} className="text-tamper" />}
       {flag && (
         <span className={clsx("absolute left-1/2 -translate-x-1/2 text-gold", small ? "-top-3" : "-top-[18px] anim-stamp")} title="Signed checkpoint">
           <IconSeal size={small ? 10 : 13} />

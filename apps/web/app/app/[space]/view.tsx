@@ -47,7 +47,8 @@ export function OverviewView() {
   });
   const feedQ = useQuery({ enabled: q.isSuccess, queryKey: ["space", space, "feed"], queryFn: () => api<{ items: FeedItem[] }>(`/api/app/spaces/${space}/feed?limit=30`), refetchInterval: pollInterval(live), staleTime: pollInterval(live) });
   // The getting-started checklist is only shown for young spaces; only then are agents and recalls needed here.
-  const young = !!q.data && q.data.stats.entries < 40;
+  // A viewer may read neither list, so it never asks: two refused queries would be all it got.
+  const young = !!q.data && q.data.stats.entries < 40 && canWrite;
   const agents = useQuery({ enabled: young, queryKey: ["space", space, "agents"], queryFn: () => api<{ agents: { lastSeenAt: string | null; status: string }[] }>(`/api/app/spaces/${space}/agents`) });
   const recalls = useQuery({ enabled: young, queryKey: ["space", space, "recalls"], queryFn: () => api<{ recalls: unknown[] }>(`/api/app/spaces/${space}/recalls`) });
   const cps = useQuery({ enabled: q.isSuccess, queryKey: ["space", space, "checkpoints"], queryFn: () => api<{ checkpoints: Checkpoint[] }>(`/api/app/spaces/${space}/checkpoints`), staleTime: 30_000 });
@@ -87,7 +88,7 @@ export function OverviewView() {
     { done: (recalls.data?.recalls.length ?? 0) > 0, label: "Recall it from an agent", href: `/docs/mcp` },
     { done: !!o.integrity, label: "Run verification", href: `/app/${space}/chain` },
   ];
-  const showChecklist = checklist && checklist.some((c) => !c.done) && o.stats.entries < 40;
+  const showChecklist = checklist && canWrite && checklist.some((c) => !c.done) && o.stats.entries < 40;
 
   return (
     <div className="space-y-5">
@@ -158,7 +159,10 @@ export function OverviewView() {
 
           <div className="grid gap-4 lg:grid-cols-3">
             <Card title="Live feed" className="lg:col-span-2" action={<span className="text-2xs text-muted">{live === "realtime" ? "realtime" : "updates every 3s"}</span>}>
-              {feedItems.length ? <Feed items={feedItems} onOpen={open} fresh={fresh} /> : (
+              {feedItems.length ? <Feed items={feedItems} onOpen={open} fresh={fresh} /> : feedQ.error ? (
+                // An empty feed and a broken feed look the same otherwise.
+                <div className="p-4"><ErrorNote error={feedQ.error} /></div>
+              ) : (
                 <Empty title="Waiting for the first memory">Connect an agent over MCP and ask it to remember something. It will appear here the moment it is written.</Empty>
               )}
             </Card>
