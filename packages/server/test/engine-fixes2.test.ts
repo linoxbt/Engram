@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { cosine, iso, recallId } from "@engram/core";
 import {
   append, applyRetention, authAgent, capSupersessions, checkpointAdvances, type CheckpointPointer, conceptGraph, hashEmbed, similarEdges, createAgent, embedDocument, ERASE_ATTEMPTS, forget, listRecalls, getEntry, getSpace, heuristicRelate, listConflicts, notesOf, recall, relate, remember,
-  LruCache, retryRelate, runCheckpoint, SUPERSEDE_PER_HOUR, sweepPendingRelate, updateSettings, verifyStoredSpace, verifyThrottled,
+  latestCheckpoint, LruCache, retryRelate, runCheckpoint, SUPERSEDE_PER_HOUR, sweepPendingRelate, updateSettings, verifyStoredSpace, verifyThrottled,
   type Neighbour, type NewMemory, type Scope,
 } from "../src/index";
 import { setup } from "./helpers";
@@ -382,5 +382,36 @@ describe("the trust anchor only moves forward", () => {
     await updateSettings(b, ctx.space.key, { latestCheckpoint: { ...before, root: "deadbeef" } });
     warn.mockRestore();
     expect((await getSpace(b, ctx.space.key))!.settings.latestCheckpoint).toEqual(before);
+  });
+});
+
+describe("the checkpoint signer checks its anchor before deciding there is nothing to do", () => {
+  it("refuses a forged checkpoint file that claims to cover more entries than exist", async () => {
+    const { b, ctx, keys, cfg } = await setup();
+    for (let i = 0; i < 3; i++) await remember(ctx, { text: `Northwind roadmap item ${i}.` });
+    expect((await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey })).created).toBe(true);
+    const real = (await latestCheckpoint(b, ctx.space.key))!;
+
+    // Someone with storage access drops in a well-formed file claiming 99 entries. It cannot be signed.
+    const forged = { ...real, size: "00000099", seq: "000000000098", sig: real.sig };
+    const fileId = `cp_${ctx.space.key}_000000000098`;
+    await b.files.put(cfg.appwrite.checkpointsBucket, fileId, `${fileId}.json`, new TextEncoder().encode(JSON.stringify(forged)), []);
+    await remember(ctx, { text: "Northwind roadmap item 3." });
+
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const run = await runCheckpoint(b, (await getSpace(b, ctx.space.key))!, { privateKey: keys.privateKey });
+    err.mockRestore();
+    // Before, the size alone ended the run with "no new entries" and the forgery was never looked at.
+    expect(run.refused).toBe(true);
+    expect(run.reason).toMatch(/invalid signature/);
+  });
+
+  it("still reports nothing to do when the newest checkpoint is genuine and current", async () => {
+    const { b, ctx, keys } = await setup();
+    await remember(ctx, { text: "Northwind ships on Fridays." });
+    await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey });
+    const again = await runCheckpoint(b, (await getSpace(b, ctx.space.key))!, { privateKey: keys.privateKey });
+    expect(again).toMatchObject({ created: false, reason: "no new entries" });
+    expect(again.refused).toBeFalsy();
   });
 });
