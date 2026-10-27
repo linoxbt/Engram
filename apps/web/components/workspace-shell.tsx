@@ -10,6 +10,7 @@ import { storageDown, useConflictCounts, useHealth } from "@/lib/client/workspac
 import {
   IconBolt, IconBook, IconChevron, IconCross, IconGrid, IconInbox, IconKey, IconLogo, IconMenu, IconPlug, IconPulse, IconSeal, IconShield, IconSidebar, IconUser, Wordmark,
 } from "./icons";
+import { GuestCtx } from "./space-context";
 import { useLayer } from "./ui";
 import { VerifyBanner } from "./verify-banner";
 
@@ -115,124 +116,126 @@ export function WorkspaceShell({ user, space, header, wide, children }: {
   const rightRail = rightMini && !spaceMenu;
 
   return (
-    <div className="flex min-h-screen">
-      {/* Left: workspace features. */}
-      <aside
-        ref={leftRef}
-        inert={!desktop && !menu}
-        className={clsx(
-          "fixed bottom-0 left-0 top-14 z-30 flex w-60 max-w-[78vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:top-0 lg:max-w-none lg:translate-x-0",
-          menu ? "translate-x-0" : "-translate-x-full",
-          mini ? "lg:w-[60px]" : "lg:w-60",
-        )}
-        aria-label="Workspace navigation"
-      >
-        <div className={clsx("hidden h-14 items-center justify-between border-b border-line px-4 lg:flex", rail && "lg:justify-center lg:px-0")}>
-          <Link href="/" aria-label="Engram home" className={clsx(rail && "lg:hidden")}><Wordmark size={22} /></Link>
-          {rail && <Link href="/" aria-label="Engram home" className="hidden lg:block"><IconLogo size={26} /></Link>}
-          <button onClick={toggleMini} className={clsx("hidden size-7 place-items-center rounded-[2px] text-muted hover:bg-panel-2 hover:text-text lg:grid", rail && "lg:hidden")} aria-label="Collapse sidebar" title="Collapse sidebar">
-            <IconChevron />
-          </button>
-        </div>
-        <nav className="flex-1 overflow-y-auto px-2 py-3">
-          {sections.map((sec) => (
-            <div key={sec.title} className="mb-4">
-              <div className={clsx("label mb-1.5 px-2.5", rail && "lg:sr-only")}>{sec.title}</div>
-              <NavLinks items={sec.items} pathname={pathname} rail={rail} />
-            </div>
-          ))}
-        </nav>
-        <div className="border-t border-line px-3 py-3 text-2xs text-muted">
-          <Link href="/app/status" className={clsx("flex items-center gap-2 rounded-[2px] px-1 py-1 hover:text-text", rail && "lg:justify-center")} title={statusText}>
-            <span className={clsx("size-2 shrink-0 rounded-full", statusTone)} />
-            <span className={clsx("truncate", rail && "lg:hidden")}>{statusText}</span>
-          </Link>
-          <div className={clsx("mt-2 flex items-center gap-2 px-1", rail && "lg:flex-col")}>
-            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent text-[10px] font-semibold uppercase text-bg" title={user.email}>{user.name.slice(0, 1) || "?"}</span>
-            <span className={clsx("min-w-0 flex-1 truncate text-text", rail && "lg:hidden")}>{user.name}</span>
-            <button onClick={signOut} className={clsx("hover:text-text", rail && "lg:hidden")}>Sign out</button>
-          </div>
-          {signOutError && <p role="alert" className={clsx("mt-1 px-1 text-tamper", rail && "lg:hidden")}>Sign-out failed: {signOutError}</p>}
-          {rail && (
-            <button onClick={toggleMini} className="mt-2 hidden w-full place-items-center rounded-[2px] py-1 text-muted hover:bg-panel-2 hover:text-text lg:grid" aria-label="Expand sidebar" title="Expand sidebar">
-              <IconChevron className="rotate-180" />
-            </button>
-          )}
-        </div>
-      </aside>
-
-      {/* Right: the features of the space being viewed. */}
-      {space && (
+    <GuestCtx.Provider value={!!user.guest}>
+      <div className="flex min-h-screen">
+        {/* Left: workspace features. */}
         <aside
-          ref={rightRef}
-          inert={!desktop && !spaceMenu}
-          style={belowSpaceRow}
+          ref={leftRef}
+          inert={!desktop && !menu}
           className={clsx(
-            // Phones: a drawer from the left, beneath the space header row. Desktop: the right-hand sidebar.
-            "fixed bottom-0 left-0 top-[6.5rem] z-30 flex w-60 max-w-[78vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:left-auto lg:right-0 lg:top-0 lg:max-w-none lg:translate-x-0 lg:border-l lg:border-r-0",
-            spaceMenu ? "translate-x-0" : "-translate-x-full",
-            rightMini ? "lg:w-[60px]" : "lg:w-56",
+            "fixed bottom-0 left-0 top-14 z-30 flex w-60 max-w-[78vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:top-0 lg:max-w-none lg:translate-x-0",
+            menu ? "translate-x-0" : "-translate-x-full",
+            mini ? "lg:w-[60px]" : "lg:w-60",
           )}
-          aria-label="Space navigation"
+          aria-label="Workspace navigation"
         >
-          <div className={clsx("hidden h-14 items-center justify-between border-b border-line px-4 lg:flex", rightRail && "lg:justify-center lg:px-0")}>
-            <span className={clsx("label", rightRail && "lg:hidden")}>This space</span>
-            <button onClick={toggleRightMini} className="hidden size-7 place-items-center rounded-[2px] text-muted hover:bg-panel-2 hover:text-text lg:grid"
-              aria-label={rightRail ? "Expand space sidebar" : "Collapse space sidebar"} title={rightRail ? "Expand space sidebar" : "Collapse space sidebar"}>
-              <IconChevron className={rightRail ? undefined : "rotate-180"} />
+          <div className={clsx("hidden h-14 items-center justify-between border-b border-line px-4 lg:flex", rail && "lg:justify-center lg:px-0")}>
+            <Link href="/" aria-label="Engram home" className={clsx(rail && "lg:hidden")}><Wordmark size={22} /></Link>
+            {rail && <Link href="/" aria-label="Engram home" className="hidden lg:block"><IconLogo size={26} /></Link>}
+            <button onClick={toggleMini} className={clsx("hidden size-7 place-items-center rounded-[2px] text-muted hover:bg-panel-2 hover:text-text lg:grid", rail && "lg:hidden")} aria-label="Collapse sidebar" title="Collapse sidebar">
+              <IconChevron />
             </button>
-          </div>
-          <div className={clsx("border-b border-line px-3 py-3", rightRail && "lg:hidden")}>
-            <div className="mb-1.5 flex items-center justify-between lg:hidden">
-              <span className="label">This space</span>
-              <button onClick={() => setSpaceMenu(false)} className="grid size-7 place-items-center rounded-[2px] text-muted hover:bg-panel-2 hover:text-text" aria-label="Close space menu"><IconCross size={14} /></button>
-            </div>
-            <select value={space.key} onChange={(e) => router.push(`/app/${e.target.value}`)} aria-label="Switch space" className="h-8 w-full rounded-[2px] border border-line-2 bg-bg px-2 text-xs">
-              {space.spaces.map((x) => <option key={x.key} value={x.key}>{x.name}{x.sandbox ? " (sandbox)" : ""}</option>)}
-            </select>
           </div>
           <nav className="flex-1 overflow-y-auto px-2 py-3">
-            <NavLinks items={space.nav} pathname={pathname} rail={rightRail} />
+            {sections.map((sec) => (
+              <div key={sec.title} className="mb-4">
+                <div className={clsx("label mb-1.5 px-2.5", rail && "lg:sr-only")}>{sec.title}</div>
+                <NavLinks items={sec.items} pathname={pathname} rail={rail} />
+              </div>
+            ))}
           </nav>
           <div className="border-t border-line px-3 py-3 text-2xs text-muted">
-            <div className={clsx("flex items-center gap-2 px-1 py-1", rightRail && "lg:justify-center")} title={space.live === "realtime" ? "Appwrite Realtime connected; pages still poll slowly in case the socket drops" : "Realtime is not connected: pages poll for changes (the feed every 3 seconds, conflicts every 10)"}>
-              <span className={clsx("size-2 shrink-0 rounded-full", space.live === "realtime" ? "bg-valid" : "bg-warn")} />
-              <span className={clsx("truncate", rightRail && "lg:hidden")}>{space.live === "realtime" ? "Realtime" : "Live (polling)"}</span>
+            <Link href="/app/status" className={clsx("flex items-center gap-2 rounded-[2px] px-1 py-1 hover:text-text", rail && "lg:justify-center")} title={statusText}>
+              <span className={clsx("size-2 shrink-0 rounded-full", statusTone)} />
+              <span className={clsx("truncate", rail && "lg:hidden")}>{statusText}</span>
+            </Link>
+            <div className={clsx("mt-2 flex items-center gap-2 px-1", rail && "lg:flex-col")}>
+              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-accent text-[10px] font-semibold uppercase text-bg" title={user.email}>{user.name.slice(0, 1) || "?"}</span>
+              <span className={clsx("min-w-0 flex-1 truncate text-text", rail && "lg:hidden")}>{user.name}</span>
+              <button onClick={signOut} className={clsx("hover:text-text", rail && "lg:hidden")}>Sign out</button>
             </div>
+            {signOutError && <p role="alert" className={clsx("mt-1 px-1 text-tamper", rail && "lg:hidden")}>Sign-out failed: {signOutError}</p>}
+            {rail && (
+              <button onClick={toggleMini} className="mt-2 hidden w-full place-items-center rounded-[2px] py-1 text-muted hover:bg-panel-2 hover:text-text lg:grid" aria-label="Expand sidebar" title="Expand sidebar">
+                <IconChevron className="rotate-180" />
+              </button>
+            )}
           </div>
         </aside>
-      )}
 
-      {(menu || spaceMenu) && <div className={clsx("fixed inset-x-0 bottom-0 z-20 bg-black/30 lg:hidden", spaceMenu ? "top-[6.5rem]" : "top-14")} style={spaceMenu ? belowSpaceRow : undefined} onClick={() => { setMenu(false); setSpaceMenu(false); }} />}
-      <div className={clsx(
-        "flex min-w-0 flex-1 flex-col transition-[padding] duration-200",
-        mini ? "lg:pl-[60px]" : "lg:pl-60",
-        space && (rightMini ? "lg:pr-[60px]" : "lg:pr-56"),
-      )}>
-        <header className="sticky top-0 z-40 flex h-14 items-center justify-between gap-3 border-b border-line bg-bg px-4 lg:hidden">
-          <Link href="/" aria-label="Engram home"><Wordmark size={22} /></Link>
-          <button className="grid size-9 place-items-center rounded-[2px] border border-line text-text" onClick={() => { setSpaceMenu(false); setMenu((m) => !m); }}
-            aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>
-            {menu ? <IconCross size={16} /> : <IconMenu size={16} />}
-          </button>
-        </header>
-        {user.emailVerified === false && !user.guest && <VerifyBanner email={user.email} />}
-        {header && (
-          <div ref={headerRef} className="sticky top-14 z-10 border-b border-line bg-bg/90 backdrop-blur lg:top-0">{header}</div>
+        {/* Right: the features of the space being viewed. */}
+        {space && (
+          <aside
+            ref={rightRef}
+            inert={!desktop && !spaceMenu}
+            style={belowSpaceRow}
+            className={clsx(
+              // Phones: a drawer from the left, beneath the space header row. Desktop: the right-hand sidebar.
+              "fixed bottom-0 left-0 top-[6.5rem] z-30 flex w-60 max-w-[78vw] flex-col border-r border-line bg-panel transition-[transform,width] duration-200 lg:left-auto lg:right-0 lg:top-0 lg:max-w-none lg:translate-x-0 lg:border-l lg:border-r-0",
+              spaceMenu ? "translate-x-0" : "-translate-x-full",
+              rightMini ? "lg:w-[60px]" : "lg:w-56",
+            )}
+            aria-label="Space navigation"
+          >
+            <div className={clsx("hidden h-14 items-center justify-between border-b border-line px-4 lg:flex", rightRail && "lg:justify-center lg:px-0")}>
+              <span className={clsx("label", rightRail && "lg:hidden")}>This space</span>
+              <button onClick={toggleRightMini} className="hidden size-7 place-items-center rounded-[2px] text-muted hover:bg-panel-2 hover:text-text lg:grid"
+                aria-label={rightRail ? "Expand space sidebar" : "Collapse space sidebar"} title={rightRail ? "Expand space sidebar" : "Collapse space sidebar"}>
+                <IconChevron className={rightRail ? undefined : "rotate-180"} />
+              </button>
+            </div>
+            <div className={clsx("border-b border-line px-3 py-3", rightRail && "lg:hidden")}>
+              <div className="mb-1.5 flex items-center justify-between lg:hidden">
+                <span className="label">This space</span>
+                <button onClick={() => setSpaceMenu(false)} className="grid size-7 place-items-center rounded-[2px] text-muted hover:bg-panel-2 hover:text-text" aria-label="Close space menu"><IconCross size={14} /></button>
+              </div>
+              <select value={space.key} onChange={(e) => router.push(`/app/${e.target.value}`)} aria-label="Switch space" className="h-8 w-full rounded-[2px] border border-line-2 bg-bg px-2 text-xs">
+                {space.spaces.map((x) => <option key={x.key} value={x.key}>{x.name}{x.sandbox ? " (sandbox)" : ""}</option>)}
+              </select>
+            </div>
+            <nav className="flex-1 overflow-y-auto px-2 py-3">
+              <NavLinks items={space.nav} pathname={pathname} rail={rightRail} />
+            </nav>
+            <div className="border-t border-line px-3 py-3 text-2xs text-muted">
+              <div className={clsx("flex items-center gap-2 px-1 py-1", rightRail && "lg:justify-center")} title={space.live === "realtime" ? "Appwrite Realtime connected; pages still poll slowly in case the socket drops" : "Realtime is not connected: pages poll for changes (the feed every 3 seconds, conflicts every 10)"}>
+                <span className={clsx("size-2 shrink-0 rounded-full", space.live === "realtime" ? "bg-valid" : "bg-warn")} />
+                <span className={clsx("truncate", rightRail && "lg:hidden")}>{space.live === "realtime" ? "Realtime" : "Live (polling)"}</span>
+              </div>
+            </div>
+          </aside>
         )}
-        <main className={clsx("mx-auto w-full flex-1 p-4", wide ? "max-w-[1400px] md:p-6" : "max-w-6xl md:p-8")}>
-          {/* Phones: the space's pages open from this button, just below the space row. */}
-          {space && (
-            <button className={clsx("mb-4 inline-flex h-9 items-center gap-2 rounded-[2px] border px-3 text-xs lg:hidden", spaceMenu ? "border-accent bg-accent text-bg" : "border-line text-text")}
-              onClick={() => { setMenu(false); setSpaceMenu((m) => !m); }} aria-expanded={spaceMenu}>
-              {spaceMenu ? <IconCross size={16} /> : <IconSidebar size={16} />}
-              {spaceMenu ? "Close space menu" : "Space menu"}
+
+        {(menu || spaceMenu) && <div className={clsx("fixed inset-x-0 bottom-0 z-20 bg-black/30 lg:hidden", spaceMenu ? "top-[6.5rem]" : "top-14")} style={spaceMenu ? belowSpaceRow : undefined} onClick={() => { setMenu(false); setSpaceMenu(false); }} />}
+        <div className={clsx(
+          "flex min-w-0 flex-1 flex-col transition-[padding] duration-200",
+          mini ? "lg:pl-[60px]" : "lg:pl-60",
+          space && (rightMini ? "lg:pr-[60px]" : "lg:pr-56"),
+        )}>
+          <header className="sticky top-0 z-40 flex h-14 items-center justify-between gap-3 border-b border-line bg-bg px-4 lg:hidden">
+            <Link href="/" aria-label="Engram home"><Wordmark size={22} /></Link>
+            <button className="grid size-9 place-items-center rounded-[2px] border border-line text-text" onClick={() => { setSpaceMenu(false); setMenu((m) => !m); }}
+              aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>
+              {menu ? <IconCross size={16} /> : <IconMenu size={16} />}
             </button>
+          </header>
+          {user.emailVerified === false && !user.guest && <VerifyBanner email={user.email} />}
+          {header && (
+            <div ref={headerRef} className="sticky top-14 z-10 border-b border-line bg-bg/90 backdrop-blur lg:top-0">{header}</div>
           )}
-          {children}
-        </main>
+          <main className={clsx("mx-auto w-full flex-1 p-4", wide ? "max-w-[1400px] md:p-6" : "max-w-6xl md:p-8")}>
+            {/* Phones: the space's pages open from this button, just below the space row. */}
+            {space && (
+              <button className={clsx("mb-4 inline-flex h-9 items-center gap-2 rounded-[2px] border px-3 text-xs lg:hidden", spaceMenu ? "border-accent bg-accent text-bg" : "border-line text-text")}
+                onClick={() => { setMenu(false); setSpaceMenu((m) => !m); }} aria-expanded={spaceMenu}>
+                {spaceMenu ? <IconCross size={16} /> : <IconSidebar size={16} />}
+                {spaceMenu ? "Close space menu" : "Space menu"}
+              </button>
+            )}
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+    </GuestCtx.Provider>
   );
 }
 

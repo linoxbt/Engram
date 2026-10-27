@@ -5,7 +5,8 @@ import { api, ApiError } from "@/lib/client/api";
 import { addPasskey, defaultPasskeyName, passkeysSupported, signInWithPasskey, type Passkey } from "@/lib/client/passkeys";
 import { useHydrated } from "@/lib/client/hydrated";
 import { IconKey } from "./icons";
-import { Button, Card, ErrorNote, Field, Input, Modal, Skeleton, useToast } from "./ui";
+import { useIsGuest } from "./space-context";
+import { Button, Card, ErrorNote, Field, Input, Modal, SignUpNote, Skeleton, useToast } from "./ui";
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "never");
 
@@ -17,6 +18,8 @@ export function PasskeysCard({ user }: { user: { id: string; email: string } }) 
   const qc = useQueryClient();
   const toast = useToast();
   const hydrated = useHydrated();
+  // Adding a passkey to the shared demo guest is refused by the server, so the control is not offered.
+  const guest = useIsGuest();
   const list = useQuery({ queryKey: ["passkeys"], queryFn: () => api<{ passkeys: Passkey[] }>("/api/auth/passkeys") });
   const [name, setName] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
@@ -82,7 +85,9 @@ export function PasskeysCard({ user }: { user: { id: string; email: string } }) 
           </ul>
         )}
         <ErrorNote error={rename.error} />
-        {!supported && hydrated ? (
+        {guest ? (
+          <SignUpNote>A demo guest cannot add a passkey.</SignUpNote>
+        ) : !supported && hydrated ? (
           <p className="text-2xs text-muted">This browser does not support passkeys.</p>
         ) : name === null ? (
           <Button variant="outline" onClick={() => setName(defaultPasskeyName())} disabled={!supported}><IconKey size={13} /> Add a passkey</Button>

@@ -6,7 +6,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/client/api";
 import { openCookieSettings } from "@/lib/client/consent";
 import { PasskeysCard } from "@/components/passkeys-card";
-import { Button, Card, CopyButton, ErrorNote, Field, Input, Modal, PageHeader, Pill, Skeleton, Stat, useToast } from "@/components/ui";
+import { useIsGuest } from "@/components/space-context";
+import { Button, Card, CopyButton, ErrorNote, Field, Input, Modal, PageHeader, Pill, SignUpNote, Skeleton, Stat, useToast } from "@/components/ui";
 import { useHealth, useSpaces } from "@/lib/client/workspace";
 
 interface Me { id: string; email: string; name: string; emailVerified?: boolean }
@@ -22,6 +23,8 @@ export function View() {
   const owned = list.filter((s) => s.owner);
   const u = me.data?.user;
   const appwrite = health.data?.backend === "appwrite";
+  // The demo guest owns nothing and may change nothing about this account, so none of its controls are offered.
+  const guest = useIsGuest();
 
   const [name, setName] = useState<string | null>(null);
   const rename = useMutation({
@@ -58,6 +61,7 @@ export function View() {
   return (
     <>
       <PageHeader title="Account">Your identity in Engram. People sign in here; agents use their own keys.</PageHeader>
+      {guest && <div className="mb-5"><SignUpNote>You are signed in as a temporary demo guest. This account cannot be renamed, secured or deleted, and it disappears after 24 hours.</SignUpNote></div>}
       {me.isLoading && <Skeleton className="h-40" />}
       {me.error ? <ErrorNote error={me.error} /> : null}
       {me.data && !u && <ErrorNote error="You are signed out. Sign in again to see your account." />}
@@ -79,7 +83,7 @@ export function View() {
                     <Button type="button" variant="ghost" onClick={() => setName(null)}>Cancel</Button>
                   </form>
                 )}
-                {name === null && <Button variant="outline" size="sm" onClick={() => setName(u.name)}>Edit name</Button>}
+                {name === null && !guest && <Button variant="outline" size="sm" onClick={() => setName(u.name)}>Edit name</Button>}
               </div>
               {rename.error && <div className="px-4 pb-3"><ErrorNote error={rename.error} /></div>}
               <dl className="divide-y divide-line border-t border-line text-xs">
@@ -88,7 +92,7 @@ export function View() {
                   <dd className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
                     <span className="min-w-0 break-all">{u.email}</span>
                     {u.emailVerified ? <Pill tone="valid">verified</Pill> : <Pill tone="warning">not verified</Pill>}
-                    {!u.emailVerified && <Button size="sm" variant="outline" loading={resend.isPending} onClick={() => resend.mutate()}>Resend link</Button>}
+                    {!u.emailVerified && !guest && <Button size="sm" variant="outline" loading={resend.isPending} onClick={() => resend.mutate()}>Resend link</Button>}
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-3 px-4 py-2.5"><dt className="text-muted">User ID</dt><dd className="flex min-w-0 items-center gap-2"><code className="truncate">{u.id}</code><CopyButton value={u.id} /></dd></div>
@@ -103,7 +107,7 @@ export function View() {
             </Card>
 
             <Card title="Password">
-              <form className="grid gap-3 p-4 sm:grid-cols-3" onSubmit={(e) => {
+              {guest ? <div className="p-4"><SignUpNote>A demo guest has no password to change.</SignUpNote></div> : <form className="grid gap-3 p-4 sm:grid-cols-3" onSubmit={(e) => {
                 e.preventDefault();
                 if (pw.next !== pw.confirm) { setPwError(new Error("The new passwords do not match.")); return; }
                 changePw.mutate();
@@ -116,7 +120,7 @@ export function View() {
                   <Link href="/forgot-password" className="text-2xs text-muted underline-offset-2 hover:text-text hover:underline">Forgot your current password?</Link>
                 </div>
                 {pwError ? <div className="sm:col-span-3"><ErrorNote error={pwError} /></div> : null}
-              </form>
+              </form>}
             </Card>
 
             <PasskeysCard user={u} />
@@ -131,15 +135,17 @@ export function View() {
               <div className="border-t border-line px-4 py-3 text-xs"><Link href="/app" className="underline underline-offset-2">Manage spaces</Link></div>
             </Card>
 
-            <Card title="Danger zone" state="tampered">
-              <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-xs">
-                  <div className="text-tamper">Delete your account</div>
-                  <p className="mt-1 max-w-md text-muted">Permanently removes your account and every space you own, including their memories and checkpoints. This cannot be undone.</p>
+            {!guest && (
+              <Card title="Danger zone" state="tampered">
+                <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-xs">
+                    <div className="text-tamper">Delete your account</div>
+                    <p className="mt-1 max-w-md text-muted">Permanently removes your account and every space you own, including their memories and checkpoints. This cannot be undone.</p>
+                  </div>
+                  <Button variant="outline" className="!border-tamper/60 !text-tamper" onClick={() => setDel({ open: true, password: "", confirm: "" })}>Delete account</Button>
                 </div>
-                <Button variant="outline" className="!border-tamper/60 !text-tamper" onClick={() => setDel({ open: true, password: "", confirm: "" })}>Delete account</Button>
-              </div>
-            </Card>
+              </Card>
+            )}
           </div>
 
           <div className="min-w-0 space-y-5">

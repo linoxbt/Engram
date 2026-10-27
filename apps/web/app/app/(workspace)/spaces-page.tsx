@@ -9,7 +9,8 @@ import { useHealth, useSpaces } from "@/lib/client/workspace";
 import { ago } from "@/lib/format";
 import { IconLab, IconPlus, IconShield } from "@/components/icons";
 import { IntegrityBadge } from "@/components/integrity-badge";
-import { Button, Card, Empty, ErrorNote, Field, Input, Modal, Pill, Skeleton, Textarea, Toggle, CopyButton } from "@/components/ui";
+import { useIsGuest } from "@/components/space-context";
+import { Button, Card, Empty, ErrorNote, Field, Input, Modal, Pill, SignUpNote, Skeleton, Textarea, Toggle, CopyButton } from "@/components/ui";
 
 interface Created { key: string; agentKeys: Record<string, string>; seeding: SeedState | null }
 
@@ -18,6 +19,8 @@ export function SpacesPage() {
   const qc = useQueryClient();
   const q = useSpaces();
   const health = useHealth();
+  // A read-only guest's create would come back 403, so the demo offers an account instead of a dialog.
+  const guest = useIsGuest();
   const [mode, setMode] = useState<null | "space" | "sandbox">(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -79,10 +82,14 @@ export function SpacesPage() {
             <h1 className="text-lg">Spaces</h1>
             <p className="mt-1 text-xs text-muted">A space is a shared memory: one hash chain, many agents.</p>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => openModal("sandbox")}><IconLab /> New sandbox</Button>
-            <Button variant="primary" onClick={() => openModal("space")}><IconPlus /> New space</Button>
-          </div>
+          {guest ? (
+            <SignUpNote>You are exploring the live demo as a read-only guest, so new spaces are switched off.</SignUpNote>
+          ) : (
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => openModal("sandbox")}><IconLab /> New sandbox</Button>
+              <Button variant="primary" onClick={() => openModal("space")}><IconPlus /> New space</Button>
+            </div>
+          )}
         </div>
         {health.data && health.data.database && !health.data.database.ok && (
           <div role="alert" className="mb-4 rounded-[2px] border border-warn/50 bg-warn/5 px-4 py-3 text-xs text-warn">
@@ -97,8 +104,10 @@ export function SpacesPage() {
         <ErrorNote error={q.error} />
         {q.data && !q.data.spaces.length && (
           <Card>
-            <Empty title="No spaces yet" action={<div className="flex gap-2"><Button variant="primary" onClick={() => openModal("space")}>Create a space</Button><Button onClick={() => openModal("sandbox")}>Try the Tamper Lab</Button></div>}>
-              Create a space, make an agent key, connect an MCP client and write your first memory. Or start a sandbox with the demo story already in it.
+            <Empty title="No spaces yet" action={guest ? <SignUpNote /> : <div className="flex gap-2"><Button variant="primary" onClick={() => openModal("space")}>Create a space</Button><Button onClick={() => openModal("sandbox")}>Try the Tamper Lab</Button></div>}>
+              {guest
+                ? "The live demo is read-only. An account of your own can create spaces, make agent keys and write memories."
+                : "Create a space, make an agent key, connect an MCP client and write your first memory. Or start a sandbox with the demo story already in it."}
             </Empty>
           </Card>
         )}

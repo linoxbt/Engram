@@ -2,6 +2,8 @@
 import clsx from "clsx";
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type RefObject, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
+import { isReadOnly } from "@/lib/client/api";
 import { IconCopy, IconCross, IconTick } from "./icons";
 import { shortHash } from "@/lib/format";
 
@@ -105,7 +107,21 @@ export function Empty({ title, children, action }: { title: string; children?: R
 
 export function ErrorNote({ error }: { error: unknown }) {
   if (!error) return null;
+  // A read-only guest's 403 is not a fault to report in red: the useful answer is an account.
+  if (isReadOnly(error)) return <SignUpNote>{error instanceof Error ? error.message : undefined}</SignUpNote>;
   return <p role="alert" className="rounded-[2px] border border-tamper/40 bg-tamper/5 px-3 py-2 text-xs text-tamper">{error instanceof Error ? error.message : String(error)}</p>;
+}
+
+export const READ_ONLY_COPY = "This is a read-only demo, so nothing here can be changed.";
+
+/** What a read-only guest sees where a write control would be, and what any `read_only` error turns into. */
+export function SignUpNote({ children }: { children?: ReactNode }) {
+  return (
+    <p role="note" data-read-only className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[2px] border border-line-2 bg-panel px-3 py-2 text-xs text-muted">
+      <span className="min-w-0">{children ?? READ_ONLY_COPY}</span>
+      <Link href="/signup" className="whitespace-nowrap text-accent underline-offset-2 hover:underline">Create a free account</Link>
+    </p>
+  );
 }
 
 export function CopyButton({ value, label = "Copy", className }: { value: string; label?: string; className?: string }) {

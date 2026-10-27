@@ -14,9 +14,9 @@ import { Button, Pill } from "./ui";
 import { LiveCtx, OpenCtx, RoleCtx } from "./space-context";
 import { WorkspaceShell, type NavItem, type SpaceSection } from "./workspace-shell";
 
-export { useCanWrite, useLiveMode, useOpenMemory, useRole } from "./space-context";
+export { useCanWrite, useIsGuest, useLiveMode, useOpenMemory, useRole } from "./space-context";
 
-export function SpaceShell({ spaceKey, user, children }: { spaceKey: string; user: { name: string; email: string; emailVerified?: boolean }; children: ReactNode }) {
+export function SpaceShell({ spaceKey, user, children }: { spaceKey: string; user: { name: string; email: string; emailVerified?: boolean; guest?: boolean }; children: ReactNode }) {
   const info = useSpaceInfo(spaceKey);
   const live = useLive(spaceKey);
   const [opened, setOpened] = useState<{ space: string; id: string } | null>(null);
