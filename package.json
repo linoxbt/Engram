@@ -13,6 +13,8 @@
     "build": "pnpm --filter @engram/web build",
     "start": "pnpm --filter @engram/web start",
     "test": "vitest run",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json && pnpm -r --parallel typecheck",
     "setup:appwrite": "tsx scripts/setup.ts",
@@ -29,12 +31,16 @@
     "backup": "tsx scripts/backup.ts"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@modelcontextprotocol/client": "^2.4.0",
     "@types/node": "^22.19.0",
     "esbuild": "^0.28.2",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "node-appwrite": "^31.0.0",
     "tsx": "^4.23.15",
     "typescript": "~5.9.3",
+    "typescript-eslint": "^8.72.1",
     "vitest": "^5.0.5"
   },
   "type": "module"

@@ -29,6 +29,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Typecheck (packages, their tests, scripts, Functions, e2e specs)
         run: pnpm typecheck
+      # Bug rules only (floating promises, React hook dependencies, unused bindings); see eslint.config.mjs.
+      - name: Lint
+        run: pnpm lint
       - name: Unit and integration tests (incl. the mocked Appwrite adapter suite)
         run: pnpm test
       - name: Build Functions
