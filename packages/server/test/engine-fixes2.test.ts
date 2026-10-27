@@ -5,7 +5,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { cosine, iso, recallId } from "@engram/core";
 import {
-  append, applyRetention, authAgent, capSupersessions, conceptGraph, hashEmbed, similarEdges, createAgent, embedDocument, ERASE_ATTEMPTS, forget, listRecalls, getEntry, getSpace, heuristicRelate, listConflicts, notesOf, recall, relate, remember,
+  append, applyRetention, authAgent, capSupersessions, checkpointAdvances, type CheckpointPointer, conceptGraph, hashEmbed, similarEdges, createAgent, embedDocument, ERASE_ATTEMPTS, forget, listRecalls, getEntry, getSpace, heuristicRelate, listConflicts, notesOf, recall, relate, remember,
   LruCache, retryRelate, runCheckpoint, SUPERSEDE_PER_HOUR, sweepPendingRelate, updateSettings, verifyStoredSpace, verifyThrottled,
   type Neighbour, type NewMemory, type Scope,
 } from "../src/index";
@@ -355,5 +355,32 @@ describe("idempotency covers the duplicate outcome", () => {
     expect(retry).toEqual(first);
     expect({ searches, writes }).toEqual({ searches: 0, writes: 0 });
     expect((await getEntry(b, original.id))!.metadata.d.access).toBe(access);
+  });
+});
+
+describe("the trust anchor only moves forward", () => {
+  const ptr = (over: Partial<CheckpointPointer> = {}): CheckpointPointer =>
+    ({ fileId: "cp_s_000000000004", seq: 4, size: 5, root: "aa", createdAt: "2026-10-20T10:00:00.000Z", ...over });
+
+  it("refuses a replacement of the same size with a different root or file", () => {
+    expect(checkpointAdvances(ptr(), ptr({ size: 6, seq: 5, fileId: "cp_s_000000000005", root: "bb" }))).toBe(true);
+    // Re-recording the same pointer is not a move and stays allowed.
+    expect(checkpointAdvances(ptr(), ptr())).toBe(true);
+    // Same size, different root: exactly what a replaced checkpoint looks like, and what runCheckpoint relies on
+    // the anchor to catch.
+    expect(checkpointAdvances(ptr(), ptr({ root: "bb" }))).toBe(false);
+    expect(checkpointAdvances(ptr(), ptr({ fileId: "cp_s_000000000009" }))).toBe(false);
+    expect(checkpointAdvances(ptr(), ptr({ size: 4 }))).toBe(false);
+  });
+
+  it("does not let a same-size replacement overwrite the recorded anchor", async () => {
+    const { b, ctx, keys } = await setup();
+    await remember(ctx, { text: "Ada is on the Pro plan." });
+    await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey });
+    const before = (await getSpace(b, ctx.space.key))!.settings.latestCheckpoint!;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await updateSettings(b, ctx.space.key, { latestCheckpoint: { ...before, root: "deadbeef" } });
+    warn.mockRestore();
+    expect((await getSpace(b, ctx.space.key))!.settings.latestCheckpoint).toEqual(before);
   });
 });

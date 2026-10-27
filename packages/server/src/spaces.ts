@@ -57,9 +57,13 @@ function withoutState<T extends object>(prefs: T): T {
 }
 const hasStateValues = (prefs: Partial<SpaceSettings>) => !!prefs.integrity || !!prefs.seeding || !!prefs.invites?.length;
 
-/** The checkpoint pointer is the server-side trust anchor: it only moves forward. */
+/**
+ * The checkpoint pointer is the server-side trust anchor: it only moves forward. At the same size it may only be
+ * re-recorded identically — a different root or file covering the same entries is a replaced checkpoint, which is
+ * precisely what the signer trusts this pointer to catch.
+ */
 export const checkpointAdvances = (prev: CheckpointPointer | null | undefined, next: CheckpointPointer | null) =>
-  !prev || (!!next && next.size >= prev.size);
+  !prev || (!!next && (next.size > prev.size || (next.size === prev.size && next.root === prev.root && next.fileId === prev.fileId)));
 
 const prefsQueues = new WeakMap<Backend, Map<string, Promise<unknown>>>();
 const sameValues = (a: Partial<SpaceSettings>, b: Partial<SpaceSettings>) =>
