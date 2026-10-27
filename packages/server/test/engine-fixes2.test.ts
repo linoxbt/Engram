@@ -3,9 +3,11 @@
  * re-classification sweep, the rule-based classifier, supersession budgets, bounded erasure and bounded caches.
  */
 import { describe, expect, it } from "vitest";
+import { iso } from "@engram/core";
 import {
-  authAgent, createAgent, embedDocument, getEntry, getSpace, heuristicRelate, notesOf, recall, relate, remember,
-  retryRelate, runCheckpoint, verifyStoredSpace, verifyThrottled, type Neighbour, type NewMemory, type Scope,
+  append, authAgent, createAgent, embedDocument, getEntry, getSpace, heuristicRelate, notesOf, recall, relate, remember,
+  retryRelate, runCheckpoint, sweepPendingRelate, verifyStoredSpace, verifyThrottled,
+  type Neighbour, type NewMemory, type Scope,
 } from "../src/index";
 import { setup } from "./helpers";
 
@@ -120,5 +122,25 @@ describe("a duplicate found by the background re-check is repaired, not dropped"
     // The original is untouched and still the live answer.
     expect((await getEntry(b, first.id))!.metadata.d.status).toBe("active");
     expect((await verifyStoredSpace(b, ctx.space)).findings).toEqual([]);
+  });
+});
+
+describe("the pending-classification sweep always makes progress", () => {
+  it("gives up on entries pending far too long so they stop holding the oldest-first window", async () => {
+    const { b, ctx } = await setup();
+    const at = (hours: number) => iso(Date.now() - hours * 3_600_000);
+    const pending = async (text: string, createdAt: string) =>
+      (await append(ctx, { op: "remember", kind: "fact", subject: "customer:ada", text, vector: await embedDocument(ctx, text), createdAt, relateStatus: "pending" })).id;
+    const stuck = [];
+    // Five entries stuck since long before the give-up point: exactly the sweep's page size.
+    for (let i = 0; i < 5; i++) stuck.push(await pending(`Ada opened support ticket number ${i}.`, at(72 - i)));
+    const recent = await pending("Ada moved to the Basic plan.", at(1));
+
+    const space = (await getSpace(b, ctx.space.key))!;
+    expect(await sweepPendingRelate(b, space)).toBe(0);
+    for (const id of stuck) expect((await getEntry(b, id))!.metadata.d.relateStatus).toBe("skipped");
+    // With the window free, the next sweep reaches the entry behind them.
+    expect(await sweepPendingRelate(b, space)).toBe(1);
+    expect((await getEntry(b, recent))!.metadata.d.relateStatus).toBe("done");
   });
 });

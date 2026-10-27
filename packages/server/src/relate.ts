@@ -187,8 +187,10 @@ export async function relate(ctx: Ctx, m: NewMemory, neighbours: Neighbour[], op
     } catch (e) {
       const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
       if (timedOut) {
-        console.warn("[engram] classifier timed out; write proceeds as pending and is re-checked in the background");
-        return { relations: fast, status: "pending", via: "model" };
+        // A model that is reachable but always slow would otherwise never reach the fallback below, and the write
+        // would stay pending through every sweep, blocking the oldest-first window for everything behind it.
+        console.warn(`[engram] classifier timed out${opts.fallback ? ", using the rule-based classifier" : "; write proceeds as pending and is re-checked in the background"}`);
+        return opts.fallback ? { relations: [...fast, ...ruleBased(m, rest)], status: "done", via: "heuristic" } : { relations: fast, status: "pending", via: "model" };
       }
       if (attempt === 1) {
         console.warn(`[engram] classifier failed${opts.fallback ? ", using the rule-based classifier" : "; write proceeds as pending"}:`, e instanceof Error ? e.message : e);

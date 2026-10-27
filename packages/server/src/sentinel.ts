@@ -24,6 +24,12 @@ export type SentinelResult = {
 
 /** A remember whose background classification has not reported back after this long is considered abandoned. */
 const PENDING_RELATE_AFTER_MS = 10 * 60_000;
+/**
+ * The sweep takes the OLDEST pending entries, so entries that keep failing (a model that errors every time, text
+ * the classifier chokes on) would hold its window and starve every later write. After this long, the write is
+ * left unclassified for good rather than retried forever.
+ */
+const PENDING_RELATE_GIVE_UP_MS = 6 * 3_600_000;
 const RECLASSIFY_PER_SPACE = 5;
 
 const systemCtx = (b: Backend, space: SpaceInfo, actor = "system:sentinel", actorName = "sentinel"): Ctx =>
@@ -75,13 +81,14 @@ export async function sweepPendingRelate(b: Backend, space: SpaceInfo, deadline 
     order: { field: "$id", dir: "asc" }, limit: RECLASSIFY_PER_SPACE, withVectors: true,
   });
   if (!stale.length) return 0;
+  const giveUp = iso(Date.now() - PENDING_RELATE_GIVE_UP_MS);
   const names = await agentNames(b, stale.map((d) => d.metadata.agent), space);
   let n = 0;
   for (const d of stale) {
     if (Date.now() >= deadline) break;
     const m = d.metadata;
     try {
-      if (m.c.text == null || m.d.status !== "active" || !d.embeddings?.length) {
+      if (m.c.text == null || m.d.status !== "active" || !d.embeddings?.length || m.createdAt < giveUp) {
         await patchDerived(b, d.$id, { relateStatus: "skipped" });
         continue;
       }
