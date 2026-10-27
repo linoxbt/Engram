@@ -4,7 +4,8 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  heuristicRelate, relate, remember, type Neighbour, type NewMemory,
+  authAgent, createAgent, getSpace, heuristicRelate, recall, relate, remember, runCheckpoint, verifyThrottled,
+  type Neighbour, type NewMemory, type Scope,
 } from "../src/index";
 import { setup } from "./helpers";
 
@@ -56,5 +57,44 @@ describe("the duplicate fast path compares raw wording, not stopword-stripped wo
     expect(again.status).toBe("duplicate");
     expect(again.id).toBe(to.id);
     await drain();
+  });
+});
+
+describe("verified as-of recall is behind the verify scope and the verify budget", () => {
+  /** A space with a signed checkpoint, plus an agent key with the given scopes. */
+  const verifiableSpace = async (scopes: Scope[]) => {
+    const { b, ctx, space, keys, drain } = await setup();
+    await remember(ctx, { text: "Ada is on the Pro plan.", subject: "customer:ada" }, { createdAt: "2026-10-19T09:01:00.000Z" });
+    await remember(ctx, { text: "Ada prefers email.", subject: "customer:ada" }, { createdAt: "2026-10-19T10:00:00.000Z" });
+    await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey });
+    await drain();
+    const fresh = (await getSpace(b, space.key))!;
+    const { key } = await createAgent(b, fresh, { name: "reader", description: "a reading agent", scopes }, "test");
+    const agent = { ...(await authAgent(b, key, () => undefined)), space: fresh };
+    return { b, person: { ...ctx, space: fresh }, agent };
+  };
+  const asOf = { query: "What plan is Ada on?", asOf: "2026-10-20T12:00:00.000Z", verify: true };
+
+  it("an agent key without the verify scope cannot replay history through recall", async () => {
+    const { agent } = await verifiableSpace(["remember", "recall"]);
+    await expect(recall(agent, asOf, { log: false })).rejects.toMatchObject({ code: "forbidden" });
+    // The unverified as-of answer is still allowed.
+    expect((await recall(agent, { ...asOf, verify: false }, { log: false })).mode).toBe("as-of");
+  });
+
+  it("a second verified recall inside the verify window is refused, as /verify would be", async () => {
+    const { agent } = await verifiableSpace(["remember", "recall", "verify"]);
+    const first = await recall(agent, asOf, { log: false });
+    expect(first.mode).toBe("as-of-verified");
+    expect(first.integritySource).toBe("replayed");
+    await expect(recall(agent, asOf, { log: false })).rejects.toMatchObject({ code: "rate_limited" });
+    // The same budget: /verify is spent too.
+    await expect(verifyThrottled(agent, {})).rejects.toMatchObject({ code: "rate_limited" });
+  });
+
+  it("a verified recall spends the budget only for agents, so the dashboard's time page keeps working", async () => {
+    const { person } = await verifiableSpace(["recall", "verify"]);
+    expect((await recall(person, asOf, { log: false })).mode).toBe("as-of-verified");
+    expect((await recall(person, asOf, { log: false })).mode).toBe("as-of-verified");
   });
 });

@@ -8,6 +8,7 @@ import { loadChain, patchDerived, type MemDoc } from "./chain";
 import type { Ctx } from "./context";
 import { embedQuery } from "./embed";
 import { RecallInput } from "./schemas";
+import { takeVerifyBudget } from "./throttle";
 import { integrityOf, verifyHistoryAt } from "./verify";
 import type { CheckpointPointer, IntegrityStatus } from "./settings";
 
@@ -65,6 +66,8 @@ export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {
   requireScope(ctx, "recall");
   const t0 = Date.now();
   const input = RecallInput.parse(raw);
+  // A verified answer is a verification: same scope, same budget as /verify, whichever route asks for it.
+  if (input.verify) requireScope(ctx, "verify");
   const { b, space } = ctx;
   const asOf = input.asOf ? iso(input.asOf) : null;
   const vector = await embedQuery(ctx, input.query);
@@ -98,6 +101,7 @@ export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {
   if (asOf) {
     if (input.verify) {
       // Replay only what verifies: hashes, links and the covering signed checkpoint, or refuse (409).
+      takeVerifyBudget(ctx);
       const chain = await loadChain(b, space.key);
       const { prefix, report, checkpoint } = await verifyHistoryAt(b, space, chain, asOf);
       replayed = prefix;
