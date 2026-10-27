@@ -257,6 +257,12 @@ describe("A13 a link entry must carry a link kind", () => {
   });
 });
 
+describe("A14 entries do not pretend to carry their own signature", () => {
+  it("EntryMeta has no sig field", async () => {
+    const c = await plainChain(1);
+    expect("sig" in c.entries[0].metadata).toBe(false);
+  });
+});
 describe("the coverage counters are honest for a full, untouched chain", () => {
   it("counts every entry it actually checked", async () => {
     const c = new TestChain();

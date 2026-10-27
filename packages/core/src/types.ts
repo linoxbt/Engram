@@ -80,7 +80,6 @@ export interface EntryMeta {
   seq: string;
   h: Header;
   hash: string;
-  sig: string | null;
   c: Content;
   d: Derived;
   op: Op;
