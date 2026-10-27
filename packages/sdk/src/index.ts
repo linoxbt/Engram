@@ -2,7 +2,7 @@
  * engram-sdk: a small typed client for Engram's REST API.
  * Depends only on fetch and @engram/core (for checking proofs locally).
  */
-import { checkpointProblem, verifyCheckpointSig, verifyProofHex, type Checkpoint, type Report } from "@engram/core";
+import { checkpointProblem, isEntryId, seqOf, spaceOfId, verifyCheckpointSig, verifyProofHex, type Checkpoint, type Report } from "@engram/core";
 
 export type MemoryKind = "fact" | "preference" | "event" | "observation";
 
@@ -131,20 +131,49 @@ export class Engram {
   me() { return this.req<{ agent: { id: string; name: string; scopes: string[] }; space: { key: string; name: string } }>("GET", "/me"); }
 
   /**
-   * Check an inclusion proof locally: the Merkle path must reach the signed root, and the checkpoint signature
-   * must be valid under a key you trust (the `publicKey` option, or `trustedPublicKey` here). The key the server
-   * sends with the proof is ignored: a server you are checking cannot vouch for itself. Without a trusted key the
-   * result is never ok. Pass `expectedHash` (the hash remember returned) to pin the leaf too.
+   * Check an inclusion proof locally: the Merkle path must reach the signed root, the checkpoint must be the one
+   * for the entry's own space, and its signature must be valid under a key you trust (the `publicKey` option, or
+   * `trustedPublicKey` here). The key the server sends with the proof is ignored: a server you are checking cannot
+   * vouch for itself. Without a trusted key the result is never ok. Pass `expectedHash` (the hash remember
+   * returned) to pin the leaf too. Nothing a server can send makes this throw.
    */
   async verifyProof(p: Proof, trustedPublicKey?: string, expectedHash?: string): Promise<{ ok: boolean; rootOk: boolean; signatureOk: boolean | null; problem?: string }> {
-    const problem = checkpointProblem(p.checkpoint) ?? (expectedHash && p.leaf !== expectedHash ? "the proof is for a different entry" : null)
-      ?? (!Number.isSafeInteger(p.index) || p.index < 0 || p.index >= Number(p.checkpoint.size) ? "the leaf index is outside the checkpoint" : null);
-    if (problem) return { ok: false, rootOk: false, signatureOk: null, problem };
-    const rootOk = await verifyProofHex(p.leaf, p.index, Number(p.checkpoint.size), p.path, p.checkpoint.root);
-    const key = trustedPublicKey ?? this.publicKey;
-    const signatureOk = key ? await verifyCheckpointSig(p.checkpoint, key) : null;
-    return { ok: rootOk && signatureOk === true, rootOk, signatureOk, ...(key ? {} : { problem: "no trusted public key: pass publicKey to the client" }) };
+    try {
+      const problem = proofProblem(p, expectedHash);
+      if (problem) return { ok: false, rootOk: false, signatureOk: null, problem };
+      const rootOk = await verifyProofHex(p.leaf, p.index, Number(p.checkpoint.size), p.path, p.checkpoint.root);
+      const key = trustedPublicKey ?? this.publicKey;
+      const signatureOk = key ? await verifyCheckpointSig(p.checkpoint, key) : null;
+      return { ok: rootOk && signatureOk === true, rootOk, signatureOk, ...(key ? {} : { problem: "no trusted public key: pass publicKey to the client" }) };
+    } catch (e) {
+      // A backstop, so a proof that gets past the checks above still cannot throw inside a caller's verify step.
+      return { ok: false, rootOk: false, signatureOk: null, problem: `the proof could not be checked: ${e instanceof Error ? e.message : String(e)}` };
+    }
   }
+}
+
+const HEX64 = /^[0-9a-f]{64}$/;
+/** A Merkle path over an 8-digit checkpoint size is at most 27 hashes; anything longer is not a path. */
+const MAX_PATH = 32;
+
+/**
+ * Everything the proof must satisfy before any hashing. The space comes from the entry id, never from the
+ * checkpoint: the signing key is one key for every space, so a genuinely signed checkpoint from a space the
+ * attacker controls would otherwise "prove" membership here.
+ */
+function proofProblem(p: Proof, expectedHash?: string): string | null {
+  if (!p || typeof p !== "object") return "not a proof";
+  if (typeof p.id !== "string" || !isEntryId(p.id)) return "the entry id is malformed";
+  const cp = checkpointProblem(p.checkpoint, spaceOfId(p.id));
+  if (cp) return cp;
+  if (typeof p.leaf !== "string" || !HEX64.test(p.leaf)) return "the leaf is not a hash";
+  if (expectedHash && p.leaf !== expectedHash) return "the proof is for a different entry";
+  if (!Number.isSafeInteger(p.index) || p.index < 0 || p.index >= Number(p.checkpoint.size)) return "the leaf index is outside the checkpoint";
+  if (seqOf(p.id) !== p.index) return "the leaf index is not the entry's position in the chain";
+  if (p.seq !== p.index) return "seq does not match the leaf index";
+  if (!Array.isArray(p.path) || p.path.length > MAX_PATH) return "the Merkle path is malformed";
+  if (p.path.some((h) => typeof h !== "string" || !HEX64.test(h))) return "the Merkle path contains something that is not a hash";
+  return null;
 }
 
 const backoff = (attempt: number) => new Promise((r) => setTimeout(r, 200 * 2 ** attempt + Math.random() * 100));
