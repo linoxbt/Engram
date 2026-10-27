@@ -11,7 +11,7 @@ import type { Ctx, SpaceInfo } from "./context";
 import { latestCheckpoint, loadChainRange, loadCheckpointFiles } from "./checkpoints";
 import { EngramError } from "./errors";
 import type { CheckpointPointer, IntegrityStatus } from "./settings";
-import { getSpace, updateSettings, updateSpaceState } from "./spaces";
+import { updateSettings, updateSpaceState } from "./spaces";
 
 /**
  * The newest checkpoint the signer recorded in team prefs: the server-side trust anchor. Someone with database and

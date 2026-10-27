@@ -320,7 +320,7 @@ describe("the concept map is not a full pairwise scan on every request", () => {
   });
 
   it("reuses the computed edges until a concept changes", async () => {
-    const { b, ctx, drain } = await setup();
+    const { ctx, drain } = await setup();
     for (const t of ["Ada is on the Pro plan.", "Ada prefers email.", "The server runs in Frankfurt."]) await remember(ctx, { text: t });
     await drain();
     const first = await conceptGraph(ctx);

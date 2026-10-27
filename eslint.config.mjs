@@ -49,6 +49,9 @@ export default tseslint.config(
       "@typescript-eslint/no-duplicate-type-constituents": "off",
       // `throw e` where e is `unknown` (rethrowing a caught error) is correct here, not a bug.
       "@typescript-eslint/only-throw-error": "off",
+      // A `let` with no initialiser that a closure reads before the one later assignment cannot become a const;
+      // the default here would ask for code that does not compile.
+      "prefer-const": ["error", { ignoreReadBeforeAssign: true }],
       // Appwrite types several free-form status strings as enums; comparing them to a literal is intended.
       "@typescript-eslint/no-unsafe-enum-comparison": "off",
       "no-empty": ["error", { allowEmptyCatch: true }],

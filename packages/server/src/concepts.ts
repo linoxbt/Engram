@@ -1,7 +1,7 @@
 /** Concepts: online clustering of memories, model-written labels, graph data for the concept map. */
 import { generateText, Output } from "ai";
 import { z } from "zod";
-import { conceptId, cosine, count8, iso, normalize, quantize, type EntryMeta } from "@engram/core";
+import { conceptId, count8, iso, normalize, quantize, type EntryMeta } from "@engram/core";
 import { LruCache } from "./cache";
 import type { VDoc } from "./backend/types";
 import { patchDerived, queryAll } from "./chain";
