@@ -59,3 +59,42 @@ describe("verifyProof against a hostile server", () => {
     }
   });
 });
+
+describe("hostile responses and bad arguments", () => {
+  it("refuses arguments it knows the server will reject, without a request", async () => {
+    let calls = 0;
+    const mem = client((async () => { calls++; return res(200, {}); }) as typeof fetch);
+    const bad = [
+      () => mem.remember({} as never),
+      () => mem.remember({ text: "   " }),
+      () => mem.recall({} as never),
+      () => mem.forget("../../etc/passwd"),
+      () => mem.get(""),
+      () => mem.proof(null as never),
+      () => mem.timeline("customer:ada", "5&mode=deep" as never),
+      () => mem.timeline("customer:ada", 0),
+      () => mem.timeline(42 as never),
+      () => mem.resolve({ winnerId: "", loserId: "x" }),
+    ];
+    for (const call of bad) await expect(call()).rejects.toBeInstanceOf(EngramError);
+    expect(calls).toBe(0);
+    expect(() => new Engram({ url: "https://e.test", key: "k\nX-Evil: 1" })).toThrow();
+    expect(() => new Engram({ url: "https://e.test", key: "k", timeoutMs: Number("x") })).toThrow();
+  });
+
+  it("gives up on an endless body and on a fetch that ignores the abort signal", async () => {
+    const endless = (async () => new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1 << 20)); } }), { status: 200 })) as typeof fetch;
+    await expect(client(endless).me()).rejects.toMatchObject({ code: "too_large" });
+    const never = (async () => new Promise<Response>(() => {})) as typeof fetch;
+    const slow = new Engram({ url: "https://e.test", key: "k", fetch: never, retries: 0, timeoutMs: 50 });
+    await expect(slow.me()).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  it("keeps the error shape when the server sends rubbish in it", async () => {
+    const mem = client((async () => res(400, { error: { code: { $: 1 }, message: ["nope"] } })) as typeof fetch);
+    const err = await mem.me().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EngramError);
+    expect(typeof (err as EngramError).code).toBe("string");
+    expect(typeof (err as EngramError).message).toBe("string");
+  });
+});

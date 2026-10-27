@@ -108,12 +108,17 @@ export class Engram {
   private publicKey?: string;
 
   constructor(opts: EngramOptions) {
-    if (!opts.url || !opts.key) throw new Error("Engram needs a url and an agent key.");
+    if (typeof opts?.url !== "string" || !opts.url || typeof opts.key !== "string" || !opts.key) throw new Error("Engram needs a url and an agent key.");
+    // A key with a newline or a space in it would be rejected by the Headers constructor at call time instead.
+    if (/[^\x21-\x7e]/.test(opts.key)) throw new Error("The agent key must be one line of printable ASCII.");
     this.url = opts.url.replace(/\/+$/, "");
     this.key = opts.key;
     this.f = opts.fetch ?? globalThis.fetch.bind(globalThis);
     this.retries = opts.retries ?? 3;
     this.timeoutMs = opts.timeoutMs ?? 30_000;
+    // A NaN timeout would make AbortSignal.timeout throw on every call, and a negative retry count loops oddly.
+    if (!Number.isInteger(this.retries) || this.retries < 0 || this.retries > 10) throw new Error("retries must be a whole number between 0 and 10.");
+    if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) throw new Error("timeoutMs must be a positive number of milliseconds.");
     this.publicKey = opts.publicKey;
   }
 
@@ -124,50 +129,73 @@ export class Engram {
   private async req<T>(method: string, path: string, body?: unknown, safe = method === "GET"): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       let res: Response;
+      let text: string;
+      const started = Date.now();
       try {
-        res = await this.f(`${this.url}/api/v1${path}`, {
+        res = await deadline(this.f(`${this.url}/api/v1${path}`, {
           method,
           headers: { Authorization: `Bearer ${this.key}`, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
           body: body !== undefined ? JSON.stringify(body) : undefined,
           signal: AbortSignal.timeout(this.timeoutMs),
-        });
+        }), this.timeoutMs);
+        // The body is part of the answer: a server that stalls or floods it must fail like any other bad response.
+        text = await deadline(readBody(res), this.timeoutMs - (Date.now() - started));
       } catch (e) {
+        if (e instanceof EngramError) throw e;
         if (safe && attempt < this.retries) { await backoff(attempt); continue; }
         const timeout = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
         throw new EngramError(0, timeout ? "timeout" : "network", timeout ? `No response within ${this.timeoutMs} ms.` : `Could not reach Engram: ${e instanceof Error ? e.message : String(e)}`);
       }
-      const text = await res.text();
-      let data: { error?: { code?: string; message?: string } } | null = null;
+      let data: { error?: { code?: unknown; message?: unknown } } | null = null;
       try { data = text ? JSON.parse(text) : null; } catch { data = null; }
       if (res.ok) {
         if (text && data === null) throw new EngramError(res.status, "bad_response", "Engram returned a response that is not JSON.");
         return data as T;
       }
-      const code = data?.error?.code ?? "error";
+      // Nothing in an error body is trustworthy: a code or message of another type must not reach callers as one.
+      const err = typeof data === "object" && data && typeof data.error === "object" && data.error ? data.error : {};
+      const code = typeof err.code === "string" && err.code ? err.code : "error";
+      const message = typeof err.message === "string" && err.message ? err.message.slice(0, 1000) : `HTTP ${res.status}`;
       const retryable = res.status === 429 || (res.status === 503 && (safe || code === "chain_busy"));
       if (retryable && attempt < this.retries) { await backoff(attempt); continue; }
-      throw new EngramError(res.status, code, data?.error?.message ?? `HTTP ${res.status}`);
+      throw new EngramError(res.status, code, message);
     }
   }
 
   /** Save a durable memory. Retries are safe: an idempotency key is generated when you do not pass one. */
   async remember(input: RememberInput) {
+    if (typeof input?.text !== "string" || !input.text.trim()) throw bad("A memory needs text.");
     if (input.text.length > 2000) throw new EngramError(413, "too_large", "Memories are limited to 2,000 characters. Split long text into several memories.");
+    if (input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== "string" || !input.idempotencyKey || input.idempotencyKey.length > 64)) {
+      throw bad("An idempotency key must be a string of 1 to 64 characters.");
+    }
     return this.req<RememberResult>("POST", "/memories", { ...input, idempotencyKey: input.idempotencyKey ?? crypto.randomUUID() }, true);
   }
-  recall(input: RecallInput) { return this.req<RecallResult>("POST", "/recall", input, true); }
-  forget(id: string, reason?: string) { return this.req<ForgetResult>("POST", `/memories/${encodeURIComponent(id)}/forget`, { reason }); }
-  get(id: string) { return this.req<Record<string, unknown>>("GET", `/memories/${encodeURIComponent(id)}`); }
-  timeline(subject: string, limit = 100, cursor?: string) {
+  /** Every argument check rejects rather than throws: callers of a promise-returning API catch, they do not try. */
+  async recall(input: RecallInput) {
+    if (typeof input?.query !== "string" || !input.query.trim()) throw bad("A recall needs a query.");
+    return this.req<RecallResult>("POST", "/recall", input, true);
+  }
+  async forget(id: string, reason?: string) { return this.req<ForgetResult>("POST", `/memories/${memoryId(id)}/forget`, { reason }); }
+  async get(id: string) { return this.req<Record<string, unknown>>("GET", `/memories/${encodeURIComponent(idArg(id, "memory id"))}`); }
+  async timeline(subject: string, limit = 100, cursor?: string) {
+    if (typeof subject !== "string" || !subject.trim()) throw bad("A timeline needs a subject.");
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw bad("The timeline limit must be a whole number between 1 and 500.");
+    if (cursor !== undefined) memoryId(cursor, "cursor");
     const q = new URLSearchParams({ limit: String(limit), ...(cursor ? { cursor } : {}) });
     return this.req<TimelineResult>("GET", `/subjects/${encodeURIComponent(subject)}/timeline?${q}`);
   }
-  verify(opts: { mode?: "standard" | "deep"; id?: string } = {}) {
-    const q = new URLSearchParams({ mode: opts.mode ?? "standard", ...(opts.id ? { id: opts.id } : {}) });
+  async verify(opts: { mode?: "standard" | "deep"; id?: string } = {}) {
+    if (opts.id !== undefined) memoryId(opts.id);
+    const q = new URLSearchParams({ mode: opts.mode === "deep" ? "deep" : "standard", ...(opts.id ? { id: opts.id } : {}) });
     return this.req<VerifyResult>("GET", `/verify?${q}`);
   }
-  proof(id: string) { return this.req<Proof>("GET", `/memories/${encodeURIComponent(id)}/proof`); }
-  resolve(input: { winnerId: string; loserId: string; action?: "supersede" | "refine" | "dismiss"; reason?: string }) { return this.req<ResolveResult>("POST", "/conflicts/resolve", input); }
+  async proof(id: string) { return this.req<Proof>("GET", `/memories/${memoryId(id)}/proof`); }
+  async resolve(input: { winnerId: string; loserId: string; action?: "supersede" | "refine" | "dismiss"; reason?: string }) {
+    idArg(input?.winnerId, "winner id");
+    idArg(input?.loserId, "loser id");
+    return this.req<ResolveResult>("POST", "/conflicts/resolve", input);
+  }
   me() { return this.req<MeResult>("GET", "/me"); }
 
   /**
@@ -214,6 +242,47 @@ function proofProblem(p: Proof, expectedHash?: string): string | null {
   if (!Array.isArray(p.path) || p.path.length > MAX_PATH) return "the Merkle path is malformed";
   if (p.path.some((h) => typeof h !== "string" || !HEX64.test(h))) return "the Merkle path contains something that is not a hash";
   return null;
+}
+
+const bad = (message: string) => new EngramError(400, "bad_request", message);
+/** An id the server will only ever find if it is one of its own entry ids. */
+function memoryId(id: string, what = "memory id"): string {
+  if (typeof id !== "string" || !isEntryId(id)) throw bad(`That ${what} is not an Engram memory id (m_<space>_<12 digits>).`);
+  return id;
+}
+/** Looser: ids the server looks up without a format of its own. Keeps junk out of the URL. */
+function idArg(id: string, what: string): string {
+  if (typeof id !== "string" || !id.trim() || id.length > 200) throw bad(`A ${what} of 1 to 200 characters is required.`);
+  return id;
+}
+
+/** Bigger than any Engram response: a server must not be able to stream the client out of memory. */
+const MAX_BODY_BYTES = 8 << 20;
+async function readBody(res: Response): Promise<string> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw tooLarge(res.status);
+  if (!res.body) return res.text();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let out = "", total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY_BYTES) { await reader.cancel().catch(() => {}); throw tooLarge(res.status); }
+    out += decoder.decode(value, { stream: true });
+  }
+  return out + decoder.decode();
+}
+const tooLarge = (status: number) => new EngramError(status, "too_large", `Engram's response is larger than ${MAX_BODY_BYTES} bytes.`);
+
+/** AbortSignal.timeout only binds a fetch that honours it; a custom one that does not must still never hang. */
+function deadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  let t: ReturnType<typeof setTimeout>;
+  const timer = new Promise<never>((_, reject) => {
+    t = setTimeout(() => reject(Object.assign(new Error(`No response within ${ms} ms.`), { name: "TimeoutError" })), ms);
+  });
+  return Promise.race([p.finally(() => clearTimeout(t)), timer]);
 }
 
 const backoff = (attempt: number) => new Promise((r) => setTimeout(r, 200 * 2 ** attempt + Math.random() * 100));
