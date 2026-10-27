@@ -18,7 +18,7 @@ export function MembersCard({ space, owner, sandbox }: { space: string; owner: b
   const [email, setEmail] = useState("");
   const [link, setLink] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Member | null>(null);
-  const refresh = () => qc.invalidateQueries({ queryKey: key });
+  const refresh = () => void qc.invalidateQueries({ queryKey: key });
 
   const invite = useMutation({
     mutationFn: () => api<{ url: string }>(`/api/app/spaces/${space}/members`, { method: "POST", json: { email: email.trim() || null } }),

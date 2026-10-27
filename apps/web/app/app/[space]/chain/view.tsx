@@ -7,7 +7,6 @@ import { type ChainEntry, type Checkpoint, type Report } from "@engram/core";
 import { api } from "@/lib/client/api";
 import { useSpaceInfo } from "@/lib/client/hooks";
 import { checkSignature, sigState, type SigCheck } from "@/lib/client/proof";
-import { criticalOf } from "@/lib/client/report-copy";
 import { hasPinnedKeys, runVerification, trustedKeyFor } from "@/lib/client/verify";
 import { shortHash, when } from "@/lib/format";
 import { ChainStrip, type BlockState } from "@/components/chain-strip";
@@ -117,7 +116,6 @@ export function ChainView() {
   };
   useEffect(() => () => { cancel.current = true; }, []);
 
-  const crit = report ? criticalOf(report) : [];
   const tone = report ? (report.status === "valid" ? "valid" : report.status === "warning" ? "warning" : "tampered") : undefined;
   const trusted = trustedKeyFor(info.data?.keyId, pub);
 

@@ -33,7 +33,7 @@ export function PasskeysCard({ user }: { user: { id: string; email: string } }) 
       throw e;
     }
   };
-  const refresh = () => qc.invalidateQueries({ queryKey: ["passkeys"] });
+  const refresh = () => void qc.invalidateQueries({ queryKey: ["passkeys"] });
 
   const add = useMutation({
     mutationFn: guarded(() => addPasskey((name ?? "").trim() || defaultPasskeyName())),

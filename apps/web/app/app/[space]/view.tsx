@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Checkpoint } from "@engram/core";
 import { api } from "@/lib/client/api";
@@ -72,7 +72,7 @@ export function OverviewView() {
   // New entries slide in.
   const seen = useRef<Set<string> | null>(null);
   const [fresh, setFresh] = useState<Set<string>>(new Set());
-  const feedItems = feedQ.data?.items ?? q.data?.feed ?? [];
+  const feedItems = useMemo(() => feedQ.data?.items ?? q.data?.feed ?? [], [feedQ.data?.items, q.data?.feed]);
   useEffect(() => {
     if (!feedItems.length) return;
     const ids = feedItems.map((f) => f.id);

@@ -52,7 +52,7 @@ export function useLive(spaceKey: string): LiveMode {
     // Connect after the page's first data requests, so the JWT round trip does not slow the first paint.
     const start = setTimeout(() => void connect(), 2500);
     // The JWT lives 15 minutes (it only opens the socket); reconnect with a fresh one before it lapses.
-    const refresh = setInterval(connect, 12 * 60_000);
+    const refresh = setInterval(() => void connect(), 12 * 60_000);
     return () => { cancelled = true; unsub?.(); clearTimeout(start); clearInterval(refresh); if (debounce) clearTimeout(debounce); };
   }, [spaceKey, qc]);
   return mode;
