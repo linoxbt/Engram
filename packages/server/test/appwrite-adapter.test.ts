@@ -9,13 +9,14 @@ const sdk = vi.hoisted(() => ({
   vdb: {} as Record<string, ReturnType<typeof vi.fn>>,
   storage: {} as Record<string, ReturnType<typeof vi.fn>>,
   embeddings: {} as Record<string, ReturnType<typeof vi.fn>>,
+  teams: {} as Record<string, ReturnType<typeof vi.fn>>,
 }));
 
 vi.mock("node-appwrite", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node-appwrite")>();
   const proxy = (target: Record<string, ReturnType<typeof vi.fn>>) =>
     class { constructor() { return new Proxy({}, { get: (_, k: string) => target[k] ??= vi.fn(async () => { throw new Error(`unmocked SDK call ${k}`); }) }); } };
-  return { ...actual, VectorsDB: proxy(sdk.vdb), Storage: proxy(sdk.storage), Embeddings: proxy(sdk.embeddings) };
+  return { ...actual, VectorsDB: proxy(sdk.vdb), Storage: proxy(sdk.storage), Embeddings: proxy(sdk.embeddings), Teams: proxy(sdk.teams) };
 });
 
 import { createAppwriteBackend } from "../src/backend/appwrite";
@@ -341,5 +342,22 @@ describe("error mapping", () => {
     const out = await backend().embedder.embed(Array.from({ length: 70 }, (_, i) => `t${i}`), "all-minilm");
     expect(out).toHaveLength(70);
     expect(call.mock.calls.map((c) => (c[0] as { texts: string[] }).texts.length)).toEqual([32, 32, 6]);
+  });
+});
+
+describe("team membership", () => {
+  const membership = (over: Record<string, unknown>) => ({ $id: "mem1", userId: "u1", roles: ["member"], userName: "Mem", userEmail: "m@example.com", joined: "", ...over });
+
+  it("treats a membership the member list would hide as no membership at all", async () => {
+    const b = backend();
+    // Appwrite can answer without `confirm`; the member list already drops those, so access must drop them too.
+    sdk.teams.listMemberships = vi.fn(async () => ({ memberships: [membership({ confirm: undefined })] }));
+    expect(await b.teams.membership("team1", "u1")).toBeNull();
+    sdk.teams.listMemberships = vi.fn(async () => ({ memberships: [membership({ confirm: false })] }));
+    expect(await b.teams.membership("team1", "u1")).toBeNull();
+    sdk.teams.listMemberships = vi.fn(async () => ({ memberships: [membership({ confirm: true })] }));
+    expect(await b.teams.membership("team1", "u1")).toEqual({ roles: ["member"] });
+    // What membership() accepts is exactly what listMembers() shows.
+    expect(await b.teams.listMembers("team1")).toEqual([{ userId: "u1", name: "Mem", email: "m@example.com", roles: ["member"], joinedAt: null }]);
   });
 });

@@ -4,6 +4,7 @@ import {
   type ChainEntry, type Checkpoint, type Finding, type Report, type TrustedCheckpoint,
 } from "@engram/core";
 import type { Backend } from "./backend/types";
+import { LruCache } from "./cache";
 import { loadChain } from "./chain";
 import { getConfig, keyringOf, type EngramConfig } from "./config";
 import type { Ctx, SpaceInfo } from "./context";
@@ -63,7 +64,8 @@ export function withFindings(r: Report, extra: Finding[]): Report {
   };
 }
 
-const anchorOk = new Set<string>();
+/** Anchors confirmed at a pinned commit, per process. Bounded: a long-lived instance sees unboundedly many. */
+const anchorOk = new LruCache<true>(2000);
 type Published = { space?: unknown; seq?: unknown; root?: unknown };
 const MAX_ANCHOR_FETCHES = 3;
 
@@ -88,7 +90,7 @@ export async function verifyAnchors(checkpoints: Checkpoint[], fetchImpl: typeof
       continue;
     }
     const key = `${a.repo}|${a.commit}|${a.path}|${target.root}`;
-    if (anchorOk.has(key)) continue;
+    if (anchorOk.get(key)) continue;
     if (fetched++ >= MAX_ANCHOR_FETCHES) break;
     const url = `https://raw.githubusercontent.com/${a.repo}/${a.commit || "HEAD"}/${a.path}`;
     let published: Published | null = null;
@@ -103,7 +105,7 @@ export async function verifyAnchors(checkpoints: Checkpoint[], fetchImpl: typeof
     if (published.root !== target.root || published.space !== target.space || published.seq !== target.seq) {
       out.push({ seq: at, rule: "anchor", severity: "critical", message: `Checkpoint ${id} does not match the root published on GitHub when it was anchored. It was replaced afterwards.` });
     } else {
-      if (a.commit) anchorOk.add(key); // a file at a pinned commit cannot change; one read from HEAD (no commit recorded) can
+      if (a.commit) anchorOk.set(key, true); // a file at a pinned commit cannot change; one read from HEAD (no commit recorded) can
     }
   }
   return out;
@@ -214,8 +216,9 @@ export interface Proof {
  * newer checkpoint extends the cached prefix by loading only the entries after it.
  */
 interface LeafCache { fileId: string; root: string; hashes: string[]; leaves: Uint8Array[] }
-const leafCache = new Map<string, LeafCache>();
-const LEAF_CACHE_SPACES = 16;
+/** Bounded by leaf hashes across every space, not by space count: each leaf costs a hash string and 32 bytes. */
+export const LEAF_CACHE_ENTRIES = 200_000;
+const leafCache = new LruCache<LeafCache>(LEAF_CACHE_ENTRIES, (v) => v.hashes.length);
 
 async function leavesFor(b: Backend, spaceKey: string, cp: Checkpoint): Promise<{ hashes: string[]; leaves: Uint8Array[] }> {
   const file = `cp_${spaceKey}_${cp.seq}`;
@@ -233,9 +236,7 @@ async function leavesFor(b: Backend, spaceKey: string, cp: Checkpoint): Promise<
     ? [...hit!.leaves, ...(await Promise.all(hashes.slice(hit!.hashes.length).map((h) => leafHash(fromHex(h)))))]
     : await Promise.all(hashes.map((h) => leafHash(fromHex(h))));
   if (hashes.length === size && toHex(await rootFromLeafHashes(leaves)) === cp.root) {
-    leafCache.delete(spaceKey);
     leafCache.set(spaceKey, { fileId: file, root: cp.root, hashes, leaves });
-    while (leafCache.size > LEAF_CACHE_SPACES) leafCache.delete(leafCache.keys().next().value!);
   } else if (extended) {
     // The cached prefix plus new entries do not reproduce the root: start over from the stored chain.
     leafCache.delete(spaceKey);

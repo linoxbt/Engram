@@ -135,4 +135,11 @@ export async function removeMember(b: Backend, key: string, userId: string) {
   await b.teams.removeMember(s.teamId, userId);
   // Keys they created would otherwise keep writing to the space after they lost access to it.
   await revokeAgentsCreatedBy(b, key, userId);
+  // Their display name is kept only to label what they did while they were here; offboarding drops it too.
+  const fresh = (await getSpace(b, key)) ?? s;
+  if (userId in fresh.settings.people) {
+    const people = { ...fresh.settings.people };
+    delete people[userId];
+    await updateSettings(b, key, { people });
+  }
 }

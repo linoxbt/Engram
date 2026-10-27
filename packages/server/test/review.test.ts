@@ -6,27 +6,36 @@ import {
 } from "../src/index";
 import { setup } from "./helpers";
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** A one-shot pause the test opens itself: `arrived` resolves when the code reaches it, `open()` lets it go on. */
+function gate() {
+  let reached!: () => void, release!: () => void;
+  const arrived = new Promise<void>((r) => { reached = r; });
+  const held = new Promise<void>((r) => { release = r; });
+  return { arrived, held, reached, open: release };
+}
 
-/** Delay reads of one document so a concurrent writer can slip in between read and write. */
-function slowReads(v: VectorStore, id: string, ms: number) {
+/** Hold the first read of one document until the test opens the gate, so a concurrent writer always slips in. */
+function gateReads(v: VectorStore, id: string) {
+  const g = gate();
   const get = v.get.bind(v);
   let armed = true;
   v.get = (async (coll: never, docId: string) => {
     const d = await get(coll, docId);
-    if (armed && docId === id) { armed = false; await sleep(ms); }
+    if (armed && docId === id) { armed = false; g.reached(); await g.held; }
     return d;
   }) as VectorStore["get"];
+  return g;
 }
 
 describe("review regressions", () => {
   it("#1 a concurrent derived write cannot resurrect forgotten content", async () => {
     const { ctx, b } = await setup();
     const a = await remember(ctx, { text: "Ada shared a delivery address: 14 Palm Close, Lekki.", subject: "customer:ada" });
-    slowReads(b.vectors, a.id, 40);
+    const g = gateReads(b.vectors, a.id);
     const bump = patchDerived(b, a.id, { access: "00000009" }); // reads, stalls, then writes
-    await sleep(5);
+    await g.arrived;
     await forget(ctx, { id: a.id, reason: "erasure requested" });
+    g.open();
     await bump;
     const doc = (await b.vectors.get<EntryMeta>("memories", a.id))!;
     expect(doc.metadata.c).toEqual({ text: null, salt: null });
@@ -41,12 +50,14 @@ describe("review regressions", () => {
     for (let i = 3; i < 6; i++) await remember(ctx, { text: `Northwind roadmap item number ${i} for review` });
     // Run A stalls right before storing its file; meanwhile the chain grows and run B signs.
     const put = b.files.put.bind(b.files);
+    const g = gate();
     let stall = true;
-    b.files.put = async (...args) => { if (stall) { stall = false; await sleep(60); } return put(...args); };
+    b.files.put = async (...args) => { if (stall) { stall = false; g.reached(); await g.held; } return put(...args); };
     const runA = runCheckpoint(b, (await getSpace(b, ctx.space.key))!, { privateKey: keys.privateKey });
-    await sleep(10);
+    await g.arrived;
     for (let i = 6; i < 8; i++) await remember(ctx, { text: `Northwind roadmap item number ${i} for review` });
     await runCheckpoint(b, (await getSpace(b, ctx.space.key))!, { privateKey: keys.privateKey });
+    g.open();
     await runA;
     const cps = await loadCheckpoints(b, ctx.space.key);
     const prevs = cps.map((c) => c.prevCheckpoint);

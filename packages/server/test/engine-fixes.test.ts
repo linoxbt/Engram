@@ -4,7 +4,7 @@ import { sha256Hex, type EntryMeta } from "@engram/core";
 import {
   ConflictError, DATA_END, LINK_TEXT, REFLECT_AGENT, RELATE_SYSTEM, RecallInput, RememberInput, append, applyPending, attack, authAgent, buildPrompt, capSupersessions, createAgent, embedDocument,
   formatRecall, formatTimeline, getEntry, relate, getSpace, loadChain, notesOf, recall, reflect, remember, resetSandbox, resolveConflict, retryRelate, timeline, verifyStoredSpace,
-  SEED_EMBED_BATCH, SEED_SAVE_EVERY, assignConcept, forget, latestCheckpoint, linkFound, listConflicts, runCheckpoint, sealSandbox, seedStory,
+  SEED_EMBED_BATCH, SEED_SAVE_EVERY, verifyAndRecord, assignConcept, forget, latestCheckpoint, linkFound, listConflicts, runCheckpoint, sealSandbox, seedStory,
   type Backend, type Ctx, type SpaceInfo, type TxOp,
 } from "../src/index";
 import { setup } from "./helpers";
@@ -50,20 +50,39 @@ function oneAtATime(b: Backend, fail: (op: TxOp) => boolean) {
   };
 }
 
-/** Every backend call takes `ms`: elapsed time / ms is the number of sequential round trips. */
-function slow(b: Backend, ms: number) {
-  const calls: string[] = [];
+/**
+ * Counts backend calls and the most that were ever in flight at once. The first calls are held at a barrier until
+ * `parallel` of them have arrived, so overlapping work always overlaps however loaded the machine is; code that
+ * waits for each call in turn never fills the barrier and reaches its escape instead. Both results are counts,
+ * never elapsed time.
+ */
+function trace(b: Backend, parallel: number) {
+  const t = { calls: [] as string[], inFlight: 0, peak: 0 };
+  let waiting: (() => void)[] = [];
+  let armed = true;
+  const barrier = async () => {
+    if (!armed) return;
+    if (waiting.length + 1 >= parallel) { armed = false; const w = waiting; waiting = []; for (const go of w) go(); return; }
+    await new Promise<void>((resolve) => {
+      const escape = setTimeout(() => { armed = false; const w = waiting; waiting = []; for (const go of w) go(); }, 2000);
+      waiting.push(() => { clearTimeout(escape); resolve(); });
+    });
+  };
   const wrap = (obj: Record<string, unknown>, name: string, methods: string[]) => {
     for (const m of methods) {
       const orig = (obj[m] as (...a: unknown[]) => Promise<unknown>).bind(obj);
-      obj[m] = async (...args: unknown[]) => { calls.push(`${name}.${m}`); await new Promise((r) => setTimeout(r, ms)); return orig(...args); };
+      obj[m] = async (...args: unknown[]) => {
+        t.calls.push(`${name}.${m}`);
+        t.peak = Math.max(t.peak, ++t.inFlight);
+        try { await barrier(); return await orig(...args); } finally { t.inFlight--; }
+      };
     }
   };
   wrap(b.vectors as never, "vectors", ["create", "get", "update", "delete", "query", "transact"]);
   wrap(b.files as never, "files", ["put", "get", "list", "delete"]);
   wrap(b.teams as never, "teams", ["getPrefs", "updatePrefs"]);
   wrap(b.embedder as never, "embedder", ["embed"]);
-  return calls;
+  return t;
 }
 
 describe("derived state follows chain order", () => {
@@ -123,19 +142,19 @@ describe("remember round trips", () => {
     const agent = await authAgent(b, key, (t) => { tasks.push(t()); });
     await remember(agent, { text: "Ada is on the Pro plan, billed monthly.", subject: "customer:ada" });
     await Promise.all(tasks);
-    const ms = 40;
-    const calls = slow(b, ms);
-    const t = Date.now();
+    const t = trace(b, 4);
     // An agent write with an idempotency key whose classification supersedes a neighbour: the slowest common path.
     const r = await remember(agent, { text: "Ada downgraded from the Pro plan to Basic on 22 October.", subject: "customer:ada", idempotencyKey: "k1" });
-    const depth = (Date.now() - t) / ms;
-    const before = calls.length;
+    const roundTrips = t.calls.length;
+    const peak = t.peak;
     await Promise.all(tasks);
     expect(r.relations.map((x) => x.relation)).toEqual(["supersedes"]);
-    // 17 sequential round trips before this change; now: lock+replay | rate | embed | pending, nearest, head+refs,
-    // create+pending, the neighbour update.
-    expect(depth).toBeLessThan(8);
-    void before;
+    // Side by side: lock+replay, rate, embed and pending all start before any of them answers.
+    expect(peak).toBeGreaterThanOrEqual(4);
+    // 17 sequential round trips before this change; now the lock+replay, rate limit, embedding and pending
+    // sweep go out together, then nearest, head+refs, the supersession slot, create+pending and the neighbour
+    // update. The budget is the number of calls, not elapsed time, so a loaded machine cannot flake it.
+    expect(roundTrips).toBeLessThanOrEqual(17);
     expect((await verifyStoredSpace(b, space)).findings).toEqual([]);
   });
 });
@@ -227,8 +246,10 @@ describe("prompt injection and supersession caps", () => {
     for (let i = 0; i < 14; i++) ids.push((await append(ctx, { op: "remember", kind: "fact", subject: null, text: `old ${i}` })).id);
     const three = await capSupersessions(ctx, ctx.actor, [sup(ids[0]), sup(ids[1]), sup(ids[2])]);
     expect(three.map((r) => r.relation)).toEqual(["supersedes", "supersedes", "contradicts"]);
-    // Ten retirements by this writer within the hour use up its budget.
-    for (let i = 0; i < 5; i++) await append(ctx, { op: "remember", kind: "fact", subject: null, text: `new ${i}`, refs: { supersedes: [ids[2 * i], ids[2 * i + 1]] } });
+    // Ten retirements by this writer within the hour use up its budget: two here, two in each of the next four.
+    for (let i = 1; i < 5; i++) {
+      expect((await capSupersessions(ctx, ctx.actor, [sup(ids[2 * i]), sup(ids[2 * i + 1])])).map((r) => r.relation)).toEqual(["supersedes", "supersedes"]);
+    }
     expect((await capSupersessions(ctx, ctx.actor, [sup(ids[12])])).map((r) => r.relation)).toEqual(["contradicts"]);
     // Another writer's budget is its own.
     expect((await capSupersessions(ctx, "a_someone_else", [sup(ids[12])])).map((r) => r.relation)).toEqual(["supersedes"]);
@@ -487,11 +508,12 @@ describe("changed facts are never dropped as duplicates", () => {
     text, kind: "fact", subject: "test:widget", createdAt: "2026-10-21T10:00:00.000Z", agentName: "agent-a", agent: "agent:a",
   });
 
-  it("an embedding-close neighbour with different wording is not fast-pathed to duplicate", async () => {
+  it("an embedding-close neighbour with different wording reaches the classifier instead", async () => {
     const { ctx } = await setup();
     const res = await relate(ctx, mem("The widget color is red."), [neighbour("The widget color is blue.")]);
-    const rel = res.relations.find((r) => r.id === "m_testspace_000000000001");
-    expect(rel?.relation).not.toBe("duplicate");
+    // Not just "not a duplicate": the relation is decided, by the rule-based classifier for want of a model.
+    expect(res.relations).toEqual([{ id: "m_testspace_000000000001", relation: "contradicts", confidence: 0.6, reason: expect.stringContaining("different values") }]);
+    expect(res.via).toBe("heuristic");
   });
 
   it("the same statement still fast-paths to duplicate, ignoring case and punctuation", async () => {
@@ -504,28 +526,29 @@ describe("changed facts are never dropped as duplicates", () => {
 
   it("remembering a changed value after the original creates a new entry instead of dropping it", async () => {
     const { ctx, drain } = await setup();
-    const blue = await remember(ctx, { text: "The widget color is blue.", subject: "test:widget" });
-    expect(blue.status).toBe("created");
-    const red = await remember(ctx, { text: "The widget color is red.", subject: "test:widget" });
-    expect(red.status).toBe("created");
-    expect(red.id).not.toBe(blue.id);
+    // These two embed identically (they differ only in a word the embedder drops), so the duplicate fast path is
+    // reached: the wording check is the only thing standing between the second fact and being thrown away.
+    const sent = await remember(ctx, { text: "The invoice was sent by Ada.", subject: "test:invoice" });
+    expect(sent.status).toBe("created");
+    const to = await remember(ctx, { text: "The invoice was sent to Ada.", subject: "test:invoice" });
+    expect(to.status).toBe("created");
+    expect(to.id).not.toBe(sent.id);
     // The exact same sentence again is still deduplicated.
-    const again = await remember(ctx, { text: "The widget color is blue.", subject: "test:widget" });
+    const again = await remember(ctx, { text: "The invoice was sent by Ada.", subject: "test:invoice" });
     expect(again.status).toBe("duplicate");
-    expect(again.id).toBe(blue.id);
+    expect(again.id).toBe(sent.id);
     await drain();
   });
 
   it("recall without verify labels the integrity badge as the monitor's, not this instant's", async () => {
-    const { ctx, drain } = await setup();
+    const { b, ctx, drain } = await setup();
     await remember(ctx, { text: "The widget ships from Lagos.", subject: "test:widget" });
     await drain();
-    const res = await recall(ctx, { query: "widget", k: 3 });
-    if (res.integrity) {
-      expect(res.integritySource).toBe("monitor");
-      expect(formatRecall(res)).toMatch(/last background check/);
-    } else {
-      expect(res.integritySource).toBeNull();
-    }
+    // A fresh space has no integrity status at all, so record one first: otherwise there is no badge to label.
+    await verifyAndRecord(b, ctx.space);
+    const res = await recall({ ...ctx, space: (await getSpace(b, ctx.space.key))! }, { query: "widget", k: 3 });
+    expect(res.integrity?.status).toBe("valid");
+    expect(res.integritySource).toBe("monitor");
+    expect(formatRecall(res)).toMatch(/last background check/);
   });
 });

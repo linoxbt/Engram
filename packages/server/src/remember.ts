@@ -75,8 +75,12 @@ export async function remember(ctx: Ctx, raw: unknown, opts: RememberOptions = {
   const idem = input.idempotencyKey ? `${actor}:${input.idempotencyKey}` : null;
   const marker = idem ?? opts.idem ?? null;
   const replay = async () => {
-    const [hit] = await b.vectors.query<EntryMeta>("memories", { filters: [spaceF(ctx), { op: "eq", path: "metadata.idem", values: [idem!] }], limit: 1, withVectors: false });
-    return hit ? { id: hit.$id, seq: seqOf(hit.$id), hash: hit.metadata.hash, status: "created" as const, relations: refsAsRelations(hit.metadata), relateStatus: hit.metadata.d.relateStatus } : null;
+    // A duplicate appends nothing, so there is no entry to find: its outcome is recorded under the key instead.
+    const [[hit], dup] = await Promise.all([
+      b.vectors.query<EntryMeta>("memories", { filters: [spaceF(ctx), { op: "eq", path: "metadata.idem", values: [idem!] }], limit: 1, withVectors: false }),
+      duplicateOutcome(ctx, idem!),
+    ]);
+    return hit ? { id: hit.$id, seq: seqOf(hit.$id), hash: hit.metadata.hash, status: "created" as const, relations: refsAsRelations(hit.metadata), relateStatus: hit.metadata.d.relateStatus } : dup;
   };
 
   // Independent round trips run side by side: the idempotency lock (then the replay check under it), the rate
@@ -95,6 +99,7 @@ export async function remember(ctx: Ctx, raw: unknown, opts: RememberOptions = {
   try {
     for (const r of [rateR, vecR, pendR]) if (r.status === "rejected") throw r.reason;
     const result = await write(ctx, input, opts, marker, (vecR as PromiseFulfilledResult<number[]>).value);
+    if (idem && result.status === "duplicate") await recordDuplicate(ctx, idem, result);
     // Releasing after the response is safe: until then a retry finds the lock, then the entry.
     if (lock) ctx.defer(() => lock.release());
     return result;
@@ -105,6 +110,26 @@ export async function remember(ctx: Ctx, raw: unknown, opts: RememberOptions = {
 }
 
 const sameBytes = (a: Uint8Array | null, b: Uint8Array) => !!a && a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * A write the classifier called a duplicate returns before appending, so a retry with the same idempotency key
+ * would find no entry and pay for the whole write again: a fresh embedding, a model call, another access bump.
+ * The outcome is kept under the key, like the entry's own `metadata.idem`.
+ */
+const outcomeFile = async (ctx: Ctx, idem: string) => `idr_${ctx.space.key}_${(await sha256Hex(idem)).slice(0, 24)}`;
+
+async function recordDuplicate(ctx: Ctx, idem: string, result: RememberResult) {
+  const fileId = await outcomeFile(ctx, idem);
+  const body = new TextEncoder().encode(JSON.stringify(result));
+  await ctx.b.files.put(ctx.cfg.appwrite.checkpointsBucket, fileId, `${fileId}.json`, body, ctx.b.teamRead(ctx.space.teamId))
+    .catch((e) => { if (!isConflict(e)) throw e; }); // another retry recorded the same outcome first
+}
+
+async function duplicateOutcome(ctx: Ctx, idem: string): Promise<RememberResult | null> {
+  const raw = await ctx.b.files.get(ctx.cfg.appwrite.checkpointsBucket, await outcomeFile(ctx, idem)).catch(() => null);
+  if (!raw) return null;
+  try { return JSON.parse(new TextDecoder().decode(raw)) as RememberResult; } catch { return null; }
+}
 
 async function takeIdemLock(ctx: Ctx, idem: string, replay: () => Promise<RememberResult | null>): Promise<{ release: () => Promise<void> } | RememberResult> {
   const { files } = ctx.b;
@@ -149,18 +174,36 @@ async function takeIdemLock(ctx: Ctx, idem: string, replay: () => Promise<Rememb
 export const SUPERSEDE_PER_WRITE = 2;
 export const SUPERSEDE_PER_HOUR = 10;
 
-/** How many memories this writer retired in the last hour (its own remembers and supersede links). */
-async function supersessionsLastHour(ctx: Ctx, actor: string, stopAt: number): Promise<number> {
-  const filters: Filter[] = [spaceF(ctx), { op: "eq", path: "metadata.agent", values: [actor] }, { op: "eq", path: "metadata.op", values: ["remember", "link"] },
-    { op: "gte", path: "metadata.createdAt", value: iso(Date.now() - 3_600_000) }];
-  let n = 0;
-  let cursor: string | undefined;
-  for (;;) {
-    const page = await ctx.b.vectors.query<EntryMeta>("memories", { filters, order: { field: "$id", dir: "desc" }, limit: 200, cursorAfter: cursor, withVectors: false });
-    for (const d of page) n += d.metadata.op === "link" ? (d.metadata.kind === "supersede" ? 1 : 0) : d.metadata.h.refs.supersedes.length;
-    if (n >= stopAt || page.length < 200) return n;
-    cursor = page[page.length - 1].$id;
+/**
+ * Claim up to `want` of this writer's supersession slots for the current hour. A slot is a file created with a
+ * deterministic ID, the same create-first lock as `idm_` and `cpl_`: parallel writes race for distinct IDs and the
+ * storage refuses a duplicate. Counting what the chain already retired and writing afterwards did not hold — ten
+ * concurrent writes each read zero and retired twenty. Slots from earlier hours are swept as they are met, so one
+ * writer's slots never outnumber the cap.
+ */
+async function reserveSupersessions(ctx: Ctx, actor: string, want: number): Promise<number> {
+  const { files } = ctx.b;
+  const bucket = ctx.cfg.appwrite.checkpointsBucket;
+  const mine = `sup_${ctx.space.key}_${(await sha256Hex(actor)).slice(0, 8)}_`;
+  const window = `${mine}${Math.floor(Date.now() / 3_600_000).toString(36)}_`;
+  const taken = new Set<string>();
+  for (const f of await files.list(bucket, mine)) {
+    if (f.fileId.startsWith(window)) taken.add(f.fileId);
+    else await files.delete(bucket, f.fileId).catch(() => undefined); // an earlier hour: that budget is gone
   }
+  const body = new TextEncoder().encode(JSON.stringify({ at: iso(), actor }));
+  let got = 0;
+  for (let n = 0; n < SUPERSEDE_PER_HOUR && got < want; n++) {
+    const id = `${window}${String(n).padStart(2, "0")}`;
+    if (taken.has(id)) continue;
+    try {
+      await files.put(bucket, id, `${id}.json`, body, ctx.b.teamRead(ctx.space.teamId));
+      got++;
+    } catch (e) {
+      if (!isConflict(e)) throw e; // another writer took this slot this instant: try the next
+    }
+  }
+  return got;
 }
 
 /**
@@ -171,15 +214,14 @@ async function supersessionsLastHour(ctx: Ctx, actor: string, stopAt: number): P
 export async function capSupersessions(ctx: Ctx, actor: string, relations: Relation[]): Promise<Relation[]> {
   const wanted = relations.filter((r) => r.relation === "supersedes" && r.confidence >= THRESHOLDS.supersedes).length;
   if (!wanted) return relations;
-  const used = await supersessionsLastHour(ctx, actor, SUPERSEDE_PER_HOUR);
-  let budget = Math.min(SUPERSEDE_PER_WRITE, Math.max(0, SUPERSEDE_PER_HOUR - used));
+  let budget = await reserveSupersessions(ctx, actor, Math.min(SUPERSEDE_PER_WRITE, wanted));
   return relations.map((r) => {
     if (r.relation !== "supersedes" || r.confidence < THRESHOLDS.supersedes || budget-- > 0) return r;
     return { ...r, relation: "contradicts" as const, reason: `${r.reason} Over the supersession limit, so a person decides.`.trim() };
   });
 }
 
-const noteable = (r: Relation) => r.relation === "supersedes" || r.relation === "contradicts" || r.relation === "refines";
+const noteable = (r: Relation) => r.relation !== "unrelated";
 const notesFrom = (rs: Relation[], via: RelationVia): RelationNotes =>
   Object.fromEntries(rs.filter(noteable).map((r) => [r.id, { relation: r.relation, reason: r.reason, via }]));
 
@@ -297,12 +339,18 @@ export async function retryRelate(ctx: Ctx, id: string, vector: number[], input:
     near.map((n) => ({ id: n.$id, text: n.metadata.c.text ?? "", createdAt: n.metadata.createdAt, agent: n.metadata.agent, agentName: names[n.metadata.agent] ?? n.metadata.agent, subject: n.metadata.subject, kind: n.metadata.kind, distance: n.$distance ?? 1 })),
     { timeoutMs: 15_000, fallback: true });
   if (res.status === "pending") return;
-  const found = effective(await capSupersessions(ctx, actor, res.relations)).filter((r) => r.relation === "supersedes" || r.relation === "contradicts");
+  const capped = effective(await capSupersessions(ctx, actor, res.relations));
+  // A duplicate found this late cannot un-append the write, so the copy is retired in favour of the original:
+  // without it the two stay active side by side forever with nothing to repair them. Never capped, because it
+  // retires the writer's own new memory and not a neighbour's, so it cannot wipe anything.
+  const dup = capped.find((r) => r.relation === "duplicate");
+  const found = capped.filter((r) => r.relation === "supersedes" || r.relation === "contradicts");
   const via: RelationVia = res.via === "heuristic" ? "heuristic" : "model";
+  if (dup) await linkFound(ctx, { target: id, other: dup.id, kind: "supersede", reason: dup.reason, via });
   for (const r of found) {
     await linkFound(ctx, { target: r.id, other: id, kind: r.relation === "supersedes" ? "supersede" : "contradict", reason: r.reason, via });
   }
   // Reasons live on the newer memory (derived, erasable), where the conflict inbox looks for them.
-  const notes = notesFrom(found, via);
-  await patchDerived(ctx.b, id, (d) => ({ relateStatus: "done", ...(found.length ? { reasons: { ...notesOf(d), ...notes } } : {}) }));
+  const notes = notesFrom([...(dup ? [dup] : []), ...found], via);
+  await patchDerived(ctx.b, id, (d) => ({ relateStatus: "done", ...(Object.keys(notes).length ? { reasons: { ...notesOf(d), ...notes } } : {}) }));
 }

@@ -1,6 +1,7 @@
 import { seqOf, type ChainEntry, type EntryMeta } from "@engram/core";
 import { agentNames, listAgents } from "./agents";
 import type { Backend } from "./backend/types";
+import { LruCache } from "./cache";
 import { chainHead, getEntry, loadChain } from "./chain";
 import { loadChainRange } from "./checkpoints";
 import type { Ctx } from "./context";
@@ -46,7 +47,9 @@ interface Row {
   subject: string | null; at: string; superseding: boolean;
 }
 interface ChainIndex { rows: Row[]; builtAt: number; headUpdatedAt: string | undefined }
-const chainIndex = new Map<string, ChainIndex>();
+/** Bounded by rows across every space: one row per entry, so a few long chains are what costs, not many spaces. */
+export const CHAIN_INDEX_ROWS = 200_000;
+const chainIndex = new LruCache<ChainIndex>(CHAIN_INDEX_ROWS, (v) => Math.max(1, v.rows.length));
 const INDEX_FULL_REFRESH_MS = 30_000;
 const MAX_INCREMENTAL_REREADS = 200;
 

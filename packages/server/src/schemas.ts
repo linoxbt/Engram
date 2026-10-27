@@ -4,6 +4,8 @@ import { z } from "zod";
 export const MEMORY_KINDS = ["fact", "preference", "event", "observation"] as const;
 export const RECALL_KINDS = ["fact", "preference", "event", "observation", "summary"] as const;
 export const SUBJECT_RE = /^[a-z0-9_-]+:[a-z0-9_.-]+$/;
+/** Every input that names an existing entry is checked the same way, before anything looks it up. */
+export const MEMORY_ID = /^m_[a-z0-9]{8}_\d{12}$/;
 export const SOURCE_RE = /^[A-Za-z0-9_-]+:\S+$/;
 export const SUBJECT_MAX = 80;
 
@@ -60,7 +62,7 @@ export const RecallInput = z.object({
 export type RecallInput = z.infer<typeof RecallInput>;
 
 export const ForgetInput = z.object({
-  id: z.string().regex(/^m_[a-z0-9]{8}_\d{12}$/, "Not a memory ID"),
+  id: z.string().regex(MEMORY_ID, "Not a memory ID"),
   /** Stored on the forget entry. Do not repeat the erased content here. */
   reason: z.string().trim().max(200).default("Erasure requested"),
 });
@@ -75,14 +77,14 @@ export const TimelineInput = z.object({
 export type TimelineInput = z.infer<typeof TimelineInput>;
 
 export const VerifyInput = z.object({
-  id: z.string().optional(),
+  id: z.string().regex(MEMORY_ID, "Not a memory ID").optional(),
   mode: z.enum(["standard", "deep"]).default("standard"),
 });
 export type VerifyInput = z.infer<typeof VerifyInput>;
 
 export const ResolveInput = z.object({
-  winnerId: z.string(),
-  loserId: z.string(),
+  winnerId: z.string().regex(MEMORY_ID, "Not a memory ID"),
+  loserId: z.string().regex(MEMORY_ID, "Not a memory ID"),
   action: z.enum(["supersede", "refine", "dismiss"]).default("supersede"),
   reason: z.string().trim().max(200).default(""),
 });

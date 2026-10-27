@@ -6,6 +6,7 @@ import { scrubConcept } from "./concepts";
 import { COLLECTION_DIMS, type Ctx } from "./context";
 import { EngramError, isEngramError } from "./errors";
 import { notesOf, type RelationNote, type RelationVia } from "./relate";
+import type { RecallLogMeta } from "./recall";
 import { ForgetInput, ResolveInput } from "./schemas";
 
 export interface ForgetResult { forgetEntryId: string; seq: number; target: string; targetSeq: number; status: "forgotten"; erased: boolean }
@@ -27,7 +28,7 @@ async function existingForget(ctx: Ctx, target: string): Promise<MemDoc | null> 
  * Idempotent: a retry finds the forget entry already in the chain, finishes its erasure and returns it, instead of
  * appending a second one.
  */
-export async function forget(ctx: Ctx, raw: unknown, opts: { createdAt?: string; idem?: string } = {}): Promise<ForgetResult> {
+export async function forget(ctx: Ctx, raw: unknown, opts: { createdAt?: string; idem?: string; depth?: number } = {}): Promise<ForgetResult> {
   requireScope(ctx, "forget");
   const input = ForgetInput.parse(raw);
   const [target, prior] = await Promise.all([ctx.b.vectors.get<EntryMeta>("memories", input.id), existingForget(ctx, input.id)]);
@@ -55,16 +56,34 @@ export async function forget(ctx: Ctx, raw: unknown, opts: { createdAt?: string;
     if (!erased) ctx.defer(() => applyPending(ctx, { through: res.id, attempts: 20 }));
   }
   // Text also lives on in places built from it: concept labels, reflect summaries, recall logs, classifier reasons.
-  await eraseCopies(ctx, input.id, m.d.concept ?? null).catch((e) => {
+  await eraseCopies(ctx, input.id, m.d.concept ?? null, opts.depth ?? 0).catch((e) => {
     console.error("[engram] erasing copies failed; retrying in the background", e);
-    ctx.defer(() => eraseCopies(ctx, input.id, m.d.concept ?? null));
+    ctx.defer(() => retryEraseCopies(ctx, input.id, m.d.concept ?? null, opts.depth ?? 0));
   });
   return { forgetEntryId: res.id, seq: res.seq, target: input.id, targetSeq: seqOf(input.id), status: "forgotten", erased };
 }
 
-const ALL = Number.MAX_SAFE_INTEGER;
+/** A space has one reflect summary per concept, so this is far above any real count and still bounded. */
+const MAX_REFLECTIONS = 20_000;
+/** A summary derived from a summary cascades; beyond this the chain is left to the next forget or sweep. */
+const MAX_CASCADE = 4;
+/** Recall logs are read a page at a time, so the collection never sits in memory however large it has grown. */
+const RECALL_PAGE = 500;
+/** Attempts, with a growing pause between them, before an erasure that keeps failing is left to the next pass. */
+export const ERASE_ATTEMPTS = 3;
+const ERASE_BACKOFF_MS = 250;
 
-export async function eraseCopies(ctx: Ctx, target: string, concept: string | null) {
+/** Bounded, backed-off retries. Re-queueing the identical failing work at once only multiplied the load. */
+export async function retryEraseCopies(ctx: Ctx, target: string, concept: string | null, depth = 0) {
+  for (let attempt = 2; attempt <= ERASE_ATTEMPTS; attempt++) {
+    await new Promise((r) => setTimeout(r, ERASE_BACKOFF_MS * (attempt - 1)));
+    try { await eraseCopies(ctx, target, concept, depth); return; }
+    catch (e) { console.error(`[engram] erasing copies for ${target} failed (attempt ${attempt} of ${ERASE_ATTEMPTS})`, e); }
+  }
+  console.error(`[engram] gave up erasing copies for ${target} in this run; the next forget or sentinel sweep retries it`);
+}
+
+export async function eraseCopies(ctx: Ctx, target: string, concept: string | null, depth = 0) {
   const { b, space } = ctx;
   const spaceF = { op: "eq" as const, path: "metadata.space", values: [space.key] };
   // The concept as of now too: one assigned after the caller read the memory may carry a label built from it.
@@ -72,17 +91,32 @@ export async function eraseCopies(ctx: Ctx, target: string, concept: string | nu
   for (const c of new Set([concept, now?.metadata.d.concept ?? null])) if (c) await scrubConcept(ctx, c, target);
   // Summaries derived from the memory restate it, so they are forgotten too (and cascade in turn). Every page:
   // a summary past the first page must not keep the text.
-  const reflections = await queryAll<EntryMeta>(b, "memories", { filters: [spaceF, { op: "eq", path: "metadata.op", values: ["reflect"] }] }, ALL);
-  for (const r of reflections) {
-    if (r.metadata.d.status === "forgotten" || !r.metadata.h.refs.derivedFrom.includes(target)) continue;
-    await forget(ctx, { id: r.$id, reason: `Derived from forgotten memory #${seqOf(target)}.` }).catch((e) => {
-      if (!(isEngramError(e) && e.code === "conflict")) throw e;
-    });
+  if (depth < MAX_CASCADE) {
+    const reflections = await queryAll<EntryMeta>(b, "memories", { filters: [spaceF, { op: "eq", path: "metadata.op", values: ["reflect"] }] }, MAX_REFLECTIONS);
+    for (const r of reflections) {
+      if (r.metadata.d.status === "forgotten" || !r.metadata.h.refs.derivedFrom.includes(target)) continue;
+      await forget(ctx, { id: r.$id, reason: `Derived from forgotten memory #${seqOf(target)}.` }, { depth: depth + 1 }).catch((e) => {
+        if (!(isEngramError(e) && e.code === "conflict")) throw e;
+      });
+    }
+  } else {
+    console.warn(`[engram] erasure cascade for ${target} stopped at depth ${depth}`);
   }
-  // Recall logs keep the query and its results; a query that surfaced the memory may quote it. Every page.
-  const logs = await queryAll<{ returned: string[]; query: string }>(b, "recalls", { filters: [spaceF] }, ALL);
-  await Promise.all(logs.filter((l) => l.metadata.returned.includes(target) && l.metadata.query !== REDACTED).map((l) =>
-    b.vectors.update("recalls", l.$id, { embeddings: tombstoneVector(COLLECTION_DIMS.recalls), metadata: { ...l.metadata, query: REDACTED } })));
+  // Recall logs keep the query and its results; a query that surfaced the memory may quote it. The collection
+  // grows with every recall, so it is read a page at a time and only from the moment the memory existed: an
+  // earlier recall cannot have returned it.
+  const since = now?.metadata.createdAt ?? "";
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await b.vectors.query<RecallLogMeta>("recalls", {
+      filters: [spaceF, ...(since ? [{ op: "gte" as const, path: "metadata.createdAt", value: since }] : [])],
+      order: { field: "$id", dir: "asc" }, cursorAfter: cursor, limit: RECALL_PAGE, withVectors: false,
+    });
+    await Promise.all(page.filter((l) => l.metadata.returned.includes(target) && l.metadata.query !== REDACTED).map((l) =>
+      b.vectors.update("recalls", l.$id, { embeddings: tombstoneVector(COLLECTION_DIMS.recalls), metadata: { ...l.metadata, query: REDACTED } })));
+    if (page.length < RECALL_PAGE) break;
+    cursor = page[page.length - 1].$id;
+  }
   await scrubReasons(ctx, target);
 }
 const REDACTED = "[redacted: this recall returned a memory that was later forgotten]";

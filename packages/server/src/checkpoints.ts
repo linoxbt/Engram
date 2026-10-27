@@ -22,6 +22,7 @@ import type { Ctx, SpaceInfo } from "./context";
 import { isConflict } from "./errors";
 import type { IntegrityStatus } from "./settings";
 import { getSpace, updateSettings } from "./spaces";
+import { LruCache } from "./cache";
 import { integrityOf, recordIntegrity, verifyStoredSpace } from "./verify";
 
 const dec = new TextDecoder();
@@ -35,7 +36,8 @@ type Parsed = { cp: Checkpoint } | { bad: MalformedCheckpoint };
  * and size; a file deleted and recreated under the same ID (which changes both) is downloaded again. Files this
  * process wrote itself are not cached (the write does not return a stamp), so a replacement is never masked.
  */
-const fileCache = new Map<string, { stamp: string; parsed: Parsed }>();
+export const FILE_CACHE_FILES = 2000;
+const fileCache = new LruCache<{ stamp: string; parsed: Parsed }>(FILE_CACHE_FILES);
 const stampOf = (f: FileInfo) => `${f.createdAt}|${f.size}`;
 
 function parseCheckpoint(fileId: string, bytes: Uint8Array, spaceKey: string): Parsed {
@@ -215,7 +217,8 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
 
   const { cp: prev, skipped } = await scanNewest(b, space.key);
   if (skipped.length) return refuse(`Checkpoint file ${skipped[0].fileId} is malformed (${skipped[0].problem}). It was altered outside Engram.`);
-  if (prev && cpSize(prev) >= size) return { created: false, reason: "no new entries" };
+  // The anchor and the predecessor's signature are checked BEFORE "nothing to do": a forged file claiming more
+  // entries than exist would otherwise end every run with "no new entries" and never be looked at again.
   if (trusted) {
     if (!prev || cpSize(prev) < trusted.size) {
       return refuse(`This space's signer last signed ${trusted.size} entries (${trusted.fileId}), but the newest stored checkpoint ${prev ? `covers only ${cpSize(prev)}` : "is gone"}. Checkpoint files were deleted or rolled back.`);
@@ -232,6 +235,7 @@ export async function runCheckpoint(b: Backend, space: SpaceInfo, opts: { privat
       return { created: false, refused: true, reason: `refusing to sign: ${msg}` };
     }
     if (!(await verifyCheckpointSig(prev, key))) return refuse(`Checkpoint ${checkpointFileId(prev)} has an invalid signature.`);
+    if (cpSize(prev) >= size) return { created: false, reason: "no new entries" };
   }
 
   // One successor per checkpoint. The lock saves duplicate work and is reclaimed when a run dies; the successor
@@ -428,6 +432,8 @@ export async function anchorToGitHub(cfg: EngramConfig, cp: Checkpoint): Promise
     method: "PUT",
     headers: { Authorization: `Bearer ${cfg.anchor.token}`, Accept: "application/vnd.github+json", "User-Agent": "engram-anchor" },
     body: JSON.stringify({ message: `Anchor ${cp.space} checkpoint ${Number(cp.seq)}`, content: toBase64(enc.encode(body)) }),
+    // A signer run waits for this; without a deadline a hung GitHub would hold the Function to its timeout.
+    signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(`GitHub anchoring failed: ${res.status} ${await res.text()}`);
   const json = (await res.json()) as { commit?: { sha?: string } };

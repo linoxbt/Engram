@@ -1,0 +1,476 @@
+/**
+ * Engine fixes from the fourth audit: the duplicate fast path, verified as-of recall, the background
+ * re-classification sweep, the rule-based classifier, supersession budgets, bounded erasure and bounded caches.
+ */
+import { describe, expect, it, vi } from "vitest";
+import { cosine, iso, recallId } from "@engram/core";
+import {
+  acceptInvite, anchorToGitHub, append, applyRetention, authAgent, capSupersessions, checkpointAdvances, conceptGraph, createAgent,
+  createInvite, embedDocument, ERASE_ATTEMPTS, forget, getEntry, getSpace, hashEmbed, heuristicRelate,
+  latestCheckpoint, listConflicts, listRecalls, LruCache, notesOf, recall, relate, remember, removeMember,
+  ResolveInput, retryRelate, runCheckpoint, similarEdges, SUPERSEDE_PER_HOUR, sweepPendingRelate, updateSettings,
+  VerifyInput, verifyStoredSpace, verifyThrottled,
+  type CheckpointPointer, type Neighbour, type NewMemory, type Scope,
+} from "../src/index";
+import { setup } from "./helpers";
+
+const NEIGHBOUR = "m_testspace_000000000001";
+const neighbour = (text: string, over: Partial<Neighbour> = {}): Neighbour => ({
+  id: NEIGHBOUR, text, createdAt: "2026-10-20T10:00:00.000Z",
+  agent: "agent:a", agentName: "agent-a", subject: "test:thing", kind: "fact", distance: 0.001, ...over,
+});
+const mem = (text: string, over: Partial<NewMemory> = {}): NewMemory => ({
+  text, kind: "fact", subject: "test:thing", createdAt: "2026-10-21T10:00:00.000Z", agentName: "agent-a", agent: "agent:a", ...over,
+});
+
+describe("the duplicate fast path compares raw wording, not stopword-stripped wording", () => {
+  // Every pair embeds almost identically and differs only in words the heuristic's own normaliser drops.
+  const OPPOSITES: [string, string][] = [
+    ["The server moved to Berlin.", "The server moved from Berlin."],
+    ["Payment is due to Acme.", "Payment is due from Acme."],
+    ["He approved the refund.", "She approved the refund."],
+    ["Data flows from the cache to the DB.", "Data flows to the cache from the DB."],
+  ];
+
+  it.each(OPPOSITES)("%s is not a duplicate of %s", async (older, newer) => {
+    const { ctx } = await setup();
+    const res = await relate(ctx, mem(newer), [neighbour(older)]);
+    const rel = res.relations.find((r) => r.id === NEIGHBOUR);
+    expect(rel?.relation).not.toBe("duplicate");
+  });
+
+  it.each(OPPOSITES)("the rule-based classifier does not call %s a duplicate of %s", (older, newer) => {
+    const [rel] = heuristicRelate(mem(newer), [neighbour(older)]);
+    expect(rel.relation).not.toBe("duplicate");
+  });
+
+  it("the same statement is still a duplicate, ignoring case, spacing and trailing punctuation", async () => {
+    const { ctx } = await setup();
+    const res = await relate(ctx, mem("the server   MOVED to berlin"), [neighbour("The server moved to Berlin.")]);
+    expect(res.relations[0]).toMatchObject({ relation: "duplicate", confidence: 1 });
+    expect(res.via).toBe("fast");
+    expect(heuristicRelate(mem("the server   MOVED to berlin"), [neighbour("The server moved to Berlin.")])[0].relation).toBe("duplicate");
+  });
+
+  it("an opposite fact written after the original is appended, not swallowed", async () => {
+    const { ctx, drain } = await setup();
+    const to = await remember(ctx, { text: "The server moved to Berlin.", subject: "test:thing" });
+    const from = await remember(ctx, { text: "The server moved from Berlin.", subject: "test:thing" });
+    expect(from.status).toBe("created");
+    expect(from.id).not.toBe(to.id);
+    const again = await remember(ctx, { text: "The server moved to Berlin.", subject: "test:thing" });
+    expect(again.status).toBe("duplicate");
+    expect(again.id).toBe(to.id);
+    await drain();
+  });
+});
+
+describe("verified as-of recall is behind the verify scope and the verify budget", () => {
+  /** A space with a signed checkpoint, plus an agent key with the given scopes. */
+  const verifiableSpace = async (scopes: Scope[]) => {
+    const { b, ctx, space, keys, drain } = await setup();
+    await remember(ctx, { text: "Ada is on the Pro plan.", subject: "customer:ada" }, { createdAt: "2026-10-19T09:01:00.000Z" });
+    await remember(ctx, { text: "Ada prefers email.", subject: "customer:ada" }, { createdAt: "2026-10-19T10:00:00.000Z" });
+    await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey });
+    await drain();
+    const fresh = (await getSpace(b, space.key))!;
+    const { key } = await createAgent(b, fresh, { name: "reader", description: "a reading agent", scopes }, "test");
+    const agent = { ...(await authAgent(b, key, () => undefined)), space: fresh };
+    return { b, person: { ...ctx, space: fresh }, agent };
+  };
+  const asOf = { query: "What plan is Ada on?", asOf: "2026-10-20T12:00:00.000Z", verify: true };
+
+  it("an agent key without the verify scope cannot replay history through recall", async () => {
+    const { agent } = await verifiableSpace(["remember", "recall"]);
+    await expect(recall(agent, asOf, { log: false })).rejects.toMatchObject({ code: "forbidden" });
+    // The unverified as-of answer is still allowed.
+    expect((await recall(agent, { ...asOf, verify: false }, { log: false })).mode).toBe("as-of");
+  });
+
+  it("a second verified recall inside the verify window is refused, as /verify would be", async () => {
+    const { agent } = await verifiableSpace(["remember", "recall", "verify"]);
+    const first = await recall(agent, asOf, { log: false });
+    expect(first.mode).toBe("as-of-verified");
+    expect(first.integritySource).toBe("replayed");
+    await expect(recall(agent, asOf, { log: false })).rejects.toMatchObject({ code: "rate_limited" });
+    // The same budget: /verify is spent too.
+    await expect(verifyThrottled(agent, {})).rejects.toMatchObject({ code: "rate_limited" });
+  });
+
+  it("a verified recall spends the budget only for agents, so the dashboard's time page keeps working", async () => {
+    const { person } = await verifiableSpace(["recall", "verify"]);
+    expect((await recall(person, asOf, { log: false })).mode).toBe("as-of-verified");
+    expect((await recall(person, asOf, { log: false })).mode).toBe("as-of-verified");
+  });
+});
+
+describe("a duplicate found by the background re-check is repaired, not dropped", () => {
+  const TEXT = "Invoices go out on the first of the month.";
+
+  it("retires the later copy in favour of the original and records why", async () => {
+    const { b, ctx, drain } = await setup();
+    const first = await remember(ctx, { text: TEXT, subject: "policy:billing" });
+    // The first classification timed out, so the write landed before anything knew it said nothing new.
+    const second = await remember(ctx, { text: TEXT, subject: "policy:billing" }, { skipRelate: true });
+    expect(second.status).toBe("created");
+    await drain();
+
+    await retryRelate(ctx, second.id, await embedDocument(ctx, TEXT), { text: TEXT, kind: "fact", subject: "policy:billing" });
+
+    const later = (await getEntry(b, second.id))!.metadata;
+    expect(later.d.status).toBe("superseded");
+    expect(later.d.supersededBy).toBe(first.id);
+    expect(notesOf(later.d)[first.id]).toMatchObject({ relation: "duplicate" });
+    expect(later.d.relateStatus).toBe("done");
+    // The original is untouched and still the live answer.
+    expect((await getEntry(b, first.id))!.metadata.d.status).toBe("active");
+    expect((await verifyStoredSpace(b, ctx.space)).findings).toEqual([]);
+  });
+});
+
+describe("the pending-classification sweep always makes progress", () => {
+  it("gives up on entries pending far too long so they stop holding the oldest-first window", async () => {
+    const { b, ctx } = await setup();
+    const at = (hours: number) => iso(Date.now() - hours * 3_600_000);
+    const pending = async (text: string, createdAt: string) =>
+      (await append(ctx, { op: "remember", kind: "fact", subject: "customer:ada", text, vector: await embedDocument(ctx, text), createdAt, relateStatus: "pending" })).id;
+    const stuck = [];
+    // Five entries stuck since long before the give-up point: exactly the sweep's page size.
+    for (let i = 0; i < 5; i++) stuck.push(await pending(`Ada opened support ticket number ${i}.`, at(72 - i)));
+    const recent = await pending("Ada moved to the Basic plan.", at(1));
+
+    const space = (await getSpace(b, ctx.space.key))!;
+    expect(await sweepPendingRelate(b, space)).toBe(0);
+    for (const id of stuck) expect((await getEntry(b, id))!.metadata.d.relateStatus).toBe("skipped");
+    // With the window free, the next sweep reaches the entry behind them.
+    expect(await sweepPendingRelate(b, space)).toBe(1);
+    expect((await getEntry(b, recent))!.metadata.d.relateStatus).toBe("done");
+  });
+});
+
+describe("with no classifier model a changed fact reaches the conflict inbox", () => {
+  // Six realistic updates, none of which uses an explicit change verb: the attribute stays, the value does not.
+  const UPDATES: [string, string][] = [
+    ["The widget color is blue.", "The widget color is red."],
+    ["The payout address is 0xAAA1.", "The payout address is 0xBBB2."],
+    ["The deploy status is green.", "The deploy status is red."],
+    ["The primary region is Frankfurt.", "The primary region is London."],
+    ["The retry limit is 3.", "The retry limit is 10."],
+    ["Ada is on the Pro plan.", "Ada is on the Basic plan."],
+  ];
+
+  it.each(UPDATES)("%s then %s is a conflict, not a refinement", (older, newer) => {
+    const [rel] = heuristicRelate(mem(newer), [neighbour(older, { distance: 0.3 })]);
+    expect(rel.relation).toBe("contradicts");
+  });
+
+  it("a statement that only adds detail is still a refinement", () => {
+    const [rel] = heuristicRelate(
+      mem("The widget color is blue, matching the 2024 catalogue."),
+      [neighbour("The widget color is blue.", { distance: 0.3 })]);
+    expect(rel.relation).toBe("refines");
+  });
+
+  it("two unrelated facts about different things stay unrelated", () => {
+    const [rel] = heuristicRelate(
+      mem("The build pipeline runs every Tuesday night."),
+      [neighbour("The widget color is blue.", { distance: 0.6 })]);
+    expect(rel.relation).toBe("unrelated");
+  });
+
+  it("the changed value lands in the conflict inbox end to end", async () => {
+    const { b, ctx, drain } = await setup();
+    await remember(ctx, { text: "The primary region is Frankfurt.", subject: "infra:eu" });
+    await remember(ctx, { text: "The primary region is London.", subject: "infra:eu" });
+    await drain();
+    const { pairs } = await listConflicts({ ...ctx, space: (await getSpace(b, ctx.space.key))! });
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].via).toBe("heuristic");
+  });
+});
+
+describe("the supersession cap holds under concurrency", () => {
+  const sup = (id: string) => ({ id, relation: "supersedes" as const, confidence: 0.9, reason: "Reports a change." });
+
+  it("ten writes racing each other retire ten memories, not twenty", async () => {
+    const { ctx } = await setup();
+    const id = (n: number) => `m_${ctx.space.key}_${String(n).padStart(12, "0")}`;
+    // Each of ten concurrent writes is classified as superseding two neighbours: 20 wanted, 10 allowed.
+    const batches = await Promise.all(Array.from({ length: 10 }, (_, i) =>
+      capSupersessions(ctx, "a_oneagent", [sup(id(i * 2)), sup(id(i * 2 + 1))])));
+    const retired = batches.flat().filter((r) => r.relation === "supersedes");
+    expect(retired).toHaveLength(SUPERSEDE_PER_HOUR);
+    // Everything over the cap becomes a conflict for a person, never a silent drop.
+    expect(batches.flat().filter((r) => r.relation === "contradicts")).toHaveLength(10);
+    // Another writer's budget is its own.
+    expect((await capSupersessions(ctx, "a_someoneelse", [sup(id(99))])).map((r) => r.relation)).toEqual(["supersedes"]);
+  });
+});
+
+describe("erasure does bounded work", () => {
+  it("reads only the recall logs that could have returned the memory, a page at a time", async () => {
+    const { b, ctx, drain } = await setup();
+    // Logs written long before the memory existed cannot have returned it.
+    for (let i = 0; i < 40; i++) {
+      await b.vectors.create("recalls", recallId(ctx.space.key, Date.parse("2026-01-01T00:00:00.000Z") + i), {
+        embeddings: await embedDocument(ctx, `old query ${i}`),
+        metadata: { space: ctx.space.key, agent: "a_x", query: `old query ${i}`, asOf: null, k: "05", topDistance: null, returned: [], createdAt: iso(Date.parse("2026-01-01T00:00:00.000Z") + i) },
+      });
+    }
+    const a = await remember(ctx, { text: "Ada shared a delivery address: 14 Palm Close, Lekki.", subject: "customer:ada" });
+    await recall(ctx, { query: "delivery address", subject: "customer:ada", k: 5 });
+    await drain();
+
+    let read = 0;
+    const query = b.vectors.query.bind(b.vectors);
+    b.vectors.query = (async (coll, q) => { const r = await query(coll, q); if (coll === "recalls") read += r.length; return r; }) as typeof b.vectors.query;
+    await forget(ctx, { id: a.id, reason: "erasure requested" });
+    await drain();
+    // The forty older logs are never fetched; the one that returned the memory is redacted.
+    expect(read).toBeLessThanOrEqual(5);
+    const logs = await listRecalls(ctx, { limit: 100 });
+    expect(logs.filter((l) => l.query.startsWith("[redacted"))).toHaveLength(1);
+    expect(logs.filter((l) => l.query.startsWith("old query"))).toHaveLength(40);
+  });
+
+  it("stops retrying an erasure that keeps failing instead of re-queueing it forever", async () => {
+    const { b, ctx, drain } = await setup();
+    const a = await remember(ctx, { text: "Ada shared a delivery address: 14 Palm Close, Lekki.", subject: "customer:ada" });
+    await drain();
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let attempts = 0;
+    const query = b.vectors.query.bind(b.vectors);
+    b.vectors.query = (async (coll, q) => { if (coll === "recalls") { attempts++; throw new Error("storage is down"); } return query(coll, q); }) as typeof b.vectors.query;
+    await forget(ctx, { id: a.id, reason: "erasure requested" });
+    await drain();
+    err.mockRestore();
+    expect(attempts).toBeGreaterThan(1);
+    expect(attempts).toBeLessThanOrEqual(ERASE_ATTEMPTS);
+  });
+});
+
+describe("recall logs are pruned by the space's retention setting", () => {
+  it("deletes logs older than the retention window so the collection cannot grow forever", async () => {
+    const { b, ctx } = await setup();
+    const log = async (ms: number, q: string) => b.vectors.create("recalls", recallId(ctx.space.key, ms), {
+      embeddings: await embedDocument(ctx, q),
+      metadata: { space: ctx.space.key, agent: "a_x", query: q, asOf: null, k: "05", topDistance: null, returned: [], createdAt: iso(ms) },
+    });
+    await log(Date.now() - 40 * 86_400_000, "ancient");
+    await log(Date.now() - 86_400_000, "recent");
+    await updateSettings(b, ctx.space.key, { retentionDays: 30 });
+    expect(await applyRetention(b, (await getSpace(b, ctx.space.key))!)).toBe(0);
+    expect((await listRecalls(ctx, { limit: 100 })).map((l) => l.query)).toEqual(["recent"]);
+  });
+});
+
+describe("per-process caches are bounded by what they hold", () => {
+  it("evicts the least recently used entries once the weight budget is passed", () => {
+    const c = new LruCache<string[]>(10, (v) => v.length);
+    c.set("a", new Array(4).fill("x"));
+    c.set("b", new Array(4).fill("x"));
+    expect([c.size, c.weight]).toEqual([2, 8]);
+    // Reading "a" makes "b" the least recently used, so "b" is what goes.
+    expect(c.get("a")).toHaveLength(4);
+    c.set("c", new Array(4).fill("x"));
+    expect(c.get("b")).toBeUndefined();
+    expect(c.get("a")).toHaveLength(4);
+    expect([c.size, c.weight]).toEqual([2, 8]);
+  });
+
+  it("counts entries, not keys: one huge space cannot hold the whole budget behind one key", () => {
+    const c = new LruCache<string[]>(10, (v) => v.length);
+    for (let i = 0; i < 20; i++) c.set(`k${i}`, ["x"]);
+    expect(c.weight).toBeLessThanOrEqual(10);
+    // A single value over the whole budget is kept rather than evicted the instant it is stored.
+    c.set("huge", new Array(100).fill("x"));
+    expect(c.get("huge")).toHaveLength(100);
+    expect(c.size).toBe(1);
+  });
+
+  it("re-setting a key replaces its weight instead of adding to it", () => {
+    const c = new LruCache<string[]>(10, (v) => v.length);
+    for (let i = 0; i < 5; i++) c.set("a", new Array(3).fill("x"));
+    expect([c.size, c.weight]).toEqual([1, 3]);
+    c.delete("a");
+    expect([c.size, c.weight]).toEqual([0, 0]);
+  });
+});
+
+describe("the concept map is not a full pairwise scan on every request", () => {
+  const vectors = () => {
+    const words = "billing refund invoice customer plan server deploy region latency cache vector memory agent policy".split(" ");
+    let seed = 11;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+    return Array.from({ length: 120 }, (_, i) => ({
+      id: `c_${i}`, label: "l", summary: "s", members: 1,
+      vector: hashEmbed(Array.from({ length: 6 }, () => words[Math.floor(rnd() * words.length)]).join(" "), 768),
+    }));
+  };
+
+  it("finds exactly the pairs a full cosine scan finds", () => {
+    const nodes = vectors();
+    const naive = [];
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+      const s = cosine(nodes[i].vector, nodes[j].vector);
+      if (s > 0.75) naive.push(`${nodes[i].id}|${nodes[j].id}|${s.toFixed(9)}`);
+    }
+    expect(naive.length).toBeGreaterThan(0);
+    expect(similarEdges(nodes).map((e) => `${e.a}|${e.b}|${e.weight.toFixed(9)}`)).toEqual(naive);
+  });
+
+  it("reuses the computed edges until a concept changes", async () => {
+    const { b, ctx, drain } = await setup();
+    for (const t of ["Ada is on the Pro plan.", "Ada prefers email.", "The server runs in Frankfurt."]) await remember(ctx, { text: t });
+    await drain();
+    const first = await conceptGraph(ctx);
+    const again = await conceptGraph(ctx);
+    expect(again.edges).toEqual(first.edges);
+    // A new concept changes the cache key, so the graph grows rather than being served stale.
+    await remember(ctx, { text: "Quarterly revenue grew by eleven percent in Lagos and Nairobi." });
+    await drain();
+    expect((await conceptGraph(ctx)).nodes.length).toBeGreaterThan(first.nodes.length);
+  });
+});
+
+describe("idempotency covers the duplicate outcome", () => {
+  const TEXT = "Invoices go out on the first of the month.";
+
+  it("a retry with the same key gets the same answer without re-embedding or bumping the count again", async () => {
+    const { b, ctx, drain } = await setup();
+    const original = await remember(ctx, { text: TEXT, subject: "policy:billing" });
+    await drain();
+    const first = await remember(ctx, { text: TEXT, subject: "policy:billing", idempotencyKey: "k9" });
+    expect(first.status).toBe("duplicate");
+    expect(first.id).toBe(original.id);
+    await drain();
+    const access = (await getEntry(b, original.id))!.metadata.d.access;
+
+    // The embedding still runs: like any replayed write it starts beside the lock, before the replay answers.
+    // What must not happen again is the expensive part — the neighbour search, the classifier, the write.
+    let searches = 0, writes = 0;
+    const query = b.vectors.query.bind(b.vectors);
+    b.vectors.query = (async (coll, q) => { if (q.vector) searches++; return query(coll, q); }) as typeof b.vectors.query;
+    const update = b.vectors.update.bind(b.vectors);
+    b.vectors.update = (async (...a: Parameters<typeof update>) => { writes++; return update(...a); }) as typeof b.vectors.update;
+    const retry = await remember(ctx, { text: TEXT, subject: "policy:billing", idempotencyKey: "k9" });
+    await drain();
+    expect(retry).toEqual(first);
+    expect({ searches, writes }).toEqual({ searches: 0, writes: 0 });
+    expect((await getEntry(b, original.id))!.metadata.d.access).toBe(access);
+  });
+});
+
+describe("the trust anchor only moves forward", () => {
+  const ptr = (over: Partial<CheckpointPointer> = {}): CheckpointPointer =>
+    ({ fileId: "cp_s_000000000004", seq: 4, size: 5, root: "aa", createdAt: "2026-10-20T10:00:00.000Z", ...over });
+
+  it("refuses a replacement of the same size with a different root or file", () => {
+    expect(checkpointAdvances(ptr(), ptr({ size: 6, seq: 5, fileId: "cp_s_000000000005", root: "bb" }))).toBe(true);
+    // Re-recording the same pointer is not a move and stays allowed.
+    expect(checkpointAdvances(ptr(), ptr())).toBe(true);
+    // Same size, different root: exactly what a replaced checkpoint looks like, and what runCheckpoint relies on
+    // the anchor to catch.
+    expect(checkpointAdvances(ptr(), ptr({ root: "bb" }))).toBe(false);
+    expect(checkpointAdvances(ptr(), ptr({ fileId: "cp_s_000000000009" }))).toBe(false);
+    expect(checkpointAdvances(ptr(), ptr({ size: 4 }))).toBe(false);
+  });
+
+  it("does not let a same-size replacement overwrite the recorded anchor", async () => {
+    const { b, ctx, keys } = await setup();
+    await remember(ctx, { text: "Ada is on the Pro plan." });
+    await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey });
+    const before = (await getSpace(b, ctx.space.key))!.settings.latestCheckpoint!;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await updateSettings(b, ctx.space.key, { latestCheckpoint: { ...before, root: "deadbeef" } });
+    warn.mockRestore();
+    expect((await getSpace(b, ctx.space.key))!.settings.latestCheckpoint).toEqual(before);
+  });
+});
+
+describe("the checkpoint signer checks its anchor before deciding there is nothing to do", () => {
+  it("refuses a forged checkpoint file that claims to cover more entries than exist", async () => {
+    const { b, ctx, keys, cfg } = await setup();
+    for (let i = 0; i < 3; i++) await remember(ctx, { text: `Northwind roadmap item ${i}.` });
+    expect((await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey })).created).toBe(true);
+    const real = (await latestCheckpoint(b, ctx.space.key))!;
+
+    // Someone with storage access drops in a well-formed file claiming 99 entries. It cannot be signed.
+    const forged = { ...real, size: "00000099", seq: "000000000098", sig: real.sig };
+    const fileId = `cp_${ctx.space.key}_000000000098`;
+    await b.files.put(cfg.appwrite.checkpointsBucket, fileId, `${fileId}.json`, new TextEncoder().encode(JSON.stringify(forged)), []);
+    await remember(ctx, { text: "Northwind roadmap item 3." });
+
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const run = await runCheckpoint(b, (await getSpace(b, ctx.space.key))!, { privateKey: keys.privateKey });
+    err.mockRestore();
+    // Before, the size alone ended the run with "no new entries" and the forgery was never looked at.
+    expect(run.refused).toBe(true);
+    expect(run.reason).toMatch(/invalid signature/);
+  });
+
+  it("still reports nothing to do when the newest checkpoint is genuine and current", async () => {
+    const { b, ctx, keys } = await setup();
+    await remember(ctx, { text: "Northwind ships on Fridays." });
+    await runCheckpoint(b, ctx.space, { privateKey: keys.privateKey });
+    const again = await runCheckpoint(b, (await getSpace(b, ctx.space.key))!, { privateKey: keys.privateKey });
+    expect(again).toMatchObject({ created: false, reason: "no new entries" });
+    expect(again.refused).toBeFalsy();
+  });
+});
+
+describe("recall never returns more than the k it was asked for", () => {
+  it("fits both sides of a conflict inside k instead of adding to it", async () => {
+    const { ctx, drain } = await setup();
+    const pairs = [
+      ["The primary region is Frankfurt.", "The primary region is London."],
+      ["The deploy status is green.", "The deploy status is red."],
+      ["The retry limit is 3.", "The retry limit is 10."],
+    ];
+    for (const [a, c] of pairs) {
+      await remember(ctx, { text: a, subject: "infra:eu" });
+      await remember(ctx, { text: c, subject: "infra:eu" });
+    }
+    await drain();
+    const res = await recall(ctx, { query: "region status retry limit", k: 3 }, { log: false });
+    expect(res.conflicts).toBeGreaterThan(0);
+    expect(res.memories.length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("offboarding and input shapes", () => {
+  it("removing a member also removes their display name from the space", async () => {
+    const { b, ctx, user } = await setup();
+    const mate = await b.auth.signUp("mate@example.com", "password123", "Mate");
+    const { token } = await createInvite(b, ctx.space.key, { email: null, createdBy: user.id });
+    await acceptInvite(b, token, mate);
+    expect((await getSpace(b, ctx.space.key))!.settings.people[mate.id]).toBe("Mate");
+    await removeMember(b, ctx.space.key, mate.id);
+    expect((await getSpace(b, ctx.space.key))!.settings.people[mate.id]).toBeUndefined();
+  });
+
+  it("resolve and verify take memory IDs, checked the same way forget checks them", () => {
+    const id = "m_abcdefgh_000000000001";
+    expect(ResolveInput.safeParse({ winnerId: id, loserId: "../../etc/passwd" }).success).toBe(false);
+    expect(ResolveInput.safeParse({ winnerId: "not-an-id", loserId: id }).success).toBe(false);
+    expect(ResolveInput.safeParse({ winnerId: id, loserId: "m_abcdefgh_000000000002" }).success).toBe(true);
+    expect(VerifyInput.safeParse({ id: "r_abcdefgh_1_zz" }).success).toBe(false);
+    expect(VerifyInput.safeParse({ id }).success).toBe(true);
+    expect(VerifyInput.safeParse({}).success).toBe(true);
+  });
+});
+
+describe("outbound calls cannot hang the request that made them", () => {
+  it("anchoring to GitHub carries a timeout, like every other engine fetch", async () => {
+    const { cfg } = await setup();
+    let init: RequestInit | undefined;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_u, i) => {
+      init = i;
+      return new Response(JSON.stringify({ commit: { sha: "a".repeat(40) } }), { status: 200 });
+    });
+    const cp = { v: "1", space: "testspac", size: "00000003", seq: "000000000002", head: "a".repeat(64), root: "b".repeat(64), sig: "s", createdAt: iso(), keyId: "test", prevCheckpoint: null, prevCheckpointHash: null } as never;
+    await anchorToGitHub({ ...cfg, anchor: { ...cfg.anchor, token: "t", repo: "owner/repo" } }, cp);
+    fetchSpy.mockRestore();
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+});
