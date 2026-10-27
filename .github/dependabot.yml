@@ -1,7 +1,14 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: /
+    # pnpm workspace. Only the root has a lockfile, but next, react, appwrite, ai and zod are declared in
+    # apps/web and packages/*, and GitHub's reference does not say that "/" reaches a workspace member's
+    # manifest. `directories` with globs is the documented way to name them, so they are listed explicitly
+    # rather than assumed; a member that "/" already covers is simply not found twice.
+    directories:
+      - /
+      - /apps/*
+      - /packages/*
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
