@@ -11,6 +11,7 @@ import { RecallInput } from "./schemas";
 import { takeVerifyBudget } from "./throttle";
 import { integrityOf, verifyHistoryAt } from "./verify";
 import type { CheckpointPointer, IntegrityStatus } from "./settings";
+import { publicIntegrity } from "./settings";
 
 export interface RecallMemory {
   id: string;
@@ -203,7 +204,7 @@ export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {
     // Verified as-of answers name the checkpoint that covers the replayed history (null while it is newer than every
     // checkpoint) and the verdict of the verification just run.
     checkpoint: verified ? verified.checkpoint : cp,
-    integrity: verified ? verified.integrity : space.settings.integrity,
+    integrity: verified ? verified.integrity : publicIntegrity(space.settings.integrity),
     integritySource: verified ? "replayed" : space.settings.integrity ? "monitor" : null,
     replayed,
     tookMs: Date.now() - t0,

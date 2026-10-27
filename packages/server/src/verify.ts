@@ -274,6 +274,12 @@ export async function verifyTool(ctx: Ctx, args: { id?: string; mode?: "standard
     entries: r.entries,
     validThrough: r.validThrough,
     checkpointsValid: r.checkpointsValid,
+    // A caller cannot judge "valid" without knowing what was actually checked: how many entries were covered at
+    // each depth, whether any signature was verified at all, and how far a signed checkpoint really vouches for.
+    checkpointsUnchecked: r.checkpointsUnchecked,
+    signaturesChecked: r.signaturesChecked,
+    provenThrough: r.provenThrough,
+    checked: r.checked,
     latestCheckpoint: r.latestCheckpoint,
     findings: r.findings.slice(0, 20),
     checkedAt: iso(),

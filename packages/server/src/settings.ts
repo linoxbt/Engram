@@ -15,6 +15,16 @@ export interface IntegrityStatus {
 }
 
 /**
+ * The badge as an agent or a public reader should see it: whether and when the owner was emailed about an
+ * incident is the operator's business, not the caller's, and it says nothing about the chain.
+ */
+export function publicIntegrity(i: IntegrityStatus | null): IntegrityStatus | null {
+  if (!i) return null;
+  const { alertedAt: _a, alertedFor: _f, ...rest } = i;
+  return rest;
+}
+
+/**
  * Space settings, stored as Appwrite team preferences (settings have no meaning to embed), except the
  * server-owned `integrity`, `seeding` and `invites`, which live in the state store (state.ts). `getSpace`
  * merges both and `updateSettings` routes each field to where it lives.
