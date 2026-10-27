@@ -25,11 +25,13 @@ if (process.argv.includes("--events")) {
   });
   for (const r of res.rows) console.log(`${r.ok === null ? "·" : r.ok ? "✓" : "✗"} ${r.n}. ${r.item}: ${r.result}`);
   for (const n of res.notes) console.log(`! ${n}`);
-  console.log(`\nRealtime channel: ${res.realtimeChannel ?? "none fired"}\nFunction events that fired: ${res.functionEvents.join(", ") || "none"}`);
+  const firedText = res.functionEvents.join(", ")
+    || (res.functionExecutions.length ? `${res.functionExecutions.length} execution(s), namespace unknown (no x-appwrite-event header logged)` : "none");
+  console.log(`\nRealtime channel: ${res.realtimeChannel ?? "none fired"}\nFunction events that fired: ${firedText}`);
   upsertSection("events", `## Realtime and Function events
 
 Run by the \`events\` step on ${new Date().toISOString()} against \`${endpoint}\`, database \`${DB}\`, reserved test space \`${TEST_SPACE}\`.
-Verified channel for the live feed: **${res.realtimeChannel ?? "none (polling)"}**. Function events that fired: **${res.functionEvents.join(", ") || "none"}**.${res.notes.length ? `\n\nNotes: ${res.notes.join("; ")}` : ""}
+Verified channel for the live feed: **${res.realtimeChannel ?? "none (polling)"}**. Function events that fired: **${firedText}**.${res.notes.length ? `\n\nNotes: ${res.notes.join("; ")}` : ""}
 
 ${table(res.rows)}`);
   console.log("Wrote the events section of docs/verified.md");

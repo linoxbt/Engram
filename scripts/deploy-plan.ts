@@ -39,6 +39,19 @@ export type VarAction =
   | { kind: "delete"; key: string; variableId: string }
   | { kind: "keep"; key: string; reason: string };
 
+/**
+ * When each action runs relative to `createDeployment`. Writes go first, because the code being deployed may need
+ * them; deletions go last, so a deployment that fails never leaves the Function running its old code with the
+ * variables that code still reads already pruned.
+ */
+export type DeleteAction = Extract<VarAction, { kind: "delete" }>;
+export function splitActions(actions: VarAction[]): { beforeDeploy: Exclude<VarAction, DeleteAction>[]; afterDeploy: DeleteAction[] } {
+  return {
+    beforeDeploy: actions.filter((a): a is Exclude<VarAction, DeleteAction> => a.kind !== "delete"),
+    afterDeploy: actions.filter((a): a is DeleteAction => a.kind === "delete"),
+  };
+}
+
 /** The values a deploy sets: the environment, with CP_KEY_ID defaulted and CP_PUBLIC_KEYS normalised from every source. */
 export function deployEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
   const keyId = env.CP_KEY_ID?.trim() || DEFAULT_KEY_ID;

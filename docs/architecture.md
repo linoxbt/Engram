@@ -11,7 +11,7 @@
  Browser (people)                     │  recall       RRF, rerank, MMR │        │   concepts  768 hnsw_cosine      │
  ┌────────────────────────┐           │  relate       contradictions   │        │   agents    384 hnsw_cosine      │
  │ Dashboard              │◀──────────│  forget/link  receipts         │        │   recalls   768 hnsw_cosine      │
- │ Verifier (WebCrypto)   │◀─ Realtime (JWT) or 3 s polling ───────────────────│ Storage   checkpoints, locks     │
+ │ Verifier (WebCrypto)   │◀─ Realtime (JWT) or 3 s polling ───────────────────│ Storage   checkpoints, state     │
  │ Tamper Lab, Time Mach. │           │ @engram/core (also in browser) │        │ Functions checkpoint, sentinel,  │
  └────────────────────────┘           └───────────────────────────────┘        │           labeler, reflect       │
                                                                                │ Messaging tamper alerts          │
@@ -23,7 +23,7 @@
 
 | Package | Role |
 |---------|------|
-| `packages/core` | Isomorphic integrity code: canonical JSON, the four hashes, Merkle trees, checkpoints, the shared derived-state reducer, the verifier, rerank and MMR, Tamper Lab attacks. Runs in Node 20+ and browsers with WebCrypto. The single implementation; a second copy would drift. |
+| `packages/core` | Isomorphic integrity code: canonical JSON, the four hashes, Merkle trees, checkpoints, the shared derived-state reducer, the verifier, rerank and MMR, Tamper Lab attacks. Runs in Node 22.12+ (the repository's engine) and browsers with WebCrypto. The single implementation; a second copy would drift. |
 | `packages/server` | The engine and storage adapters. `Backend` interfaces with an Appwrite implementation (VectorsDB, Embeddings, Teams, Storage, Account, Functions, Messaging) and a local file-backed implementation used by tests and offline development. |
 | `packages/sdk` | `engram-sdk`, a typed REST client that checks proofs locally. |
 | `apps/web` | Next.js App Router: MCP route, REST v1, dashboard API, every screen, public verifier, docs. |
@@ -38,6 +38,21 @@
 4. **Checkpoint.** Page through header hashes, build an RFC 6962 Merkle root, sign `canonical(checkpoint)` with Ed25519, store `cp_<space>_<seq>.json`, optionally anchor the previous root on GitHub.
 5. **Verify.** Structure, links, header, content, vector (deep), refs and time, derived replay, checkpoint signatures, chain linkage and roots. Reports "valid through #N" or the first broken entry. Runs in the browser, in the sentinel and behind the `verify` tool.
 6. **Time travel.** Candidates created at or before T, kept if still valid at T (derived fields), or replayed from entry 0 in authoritative mode. Erased memories appear as receipts.
+
+## Migrations
+
+Two different things change over time, and they are handled differently.
+
+**Appwrite resources** (database, collections, indexes, buckets, backup policy) come from `pnpm setup:appwrite`. It is idempotent — Appwrite answers 409 for anything that exists — but it does not reconcile: it reads each resource back, compares it with the spec in `scripts/lib/setup-spec.ts` and prints a `! drift` line per differing field, then leaves the resource alone. Applying a change is the operator's call, because a dimension change invalidates every stored vector and the script runs unattended inside the production build. Drift lines appear in the build log and in the encrypted provisioning report.
+
+**Stored data** migrates lazily, on read, with no migration runner and no downtime. There is exactly one today: space state (`integrity`, `seeding`, `invites`) moved out of team preferences into the Storage-backed state store (`packages/server/src/state.ts`). The pattern it establishes, for the next one:
+
+- **Read falls back.** `getSpace` reads the state store and, until its first write, takes those fields from team preferences instead (`spaces.ts`). An unmigrated space is never an error.
+- **The marker proves emptiness.** `st_<space>_000000000000` is written before version 1 and never pruned, so "no marker" means "never migrated", not "lost".
+- **Write migrates.** The first write of a state field goes to the new store, seeded from the old values; `writePrefs` strips those keys from team preferences at the same time, so the two can never both be authoritative.
+- **Old values stay harmless.** A space whose preferences still carry the old fields reads the same either way, so an old deployment and a new one can run side by side during a deploy.
+
+Add a schema version only when a change cannot be told apart from the old shape by reading it. So far every change could, which is why there is none.
 
 ## Data model
 

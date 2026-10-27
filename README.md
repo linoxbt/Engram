@@ -62,8 +62,8 @@ More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corre
 | **Unique document IDs** | The chain's concurrency lock |
 | **Transactions** | Tried first for derived updates on neighbours; on this project they return `transaction_not_found` right after creation, so the adapter falls back to conditional bulk updates (see [verified](docs/verified.md) items 3, 13, 14) |
 | **Document permissions** | `read(team:<space>)` on every document; agents collection is server-only |
-| **Auth + Teams** | Email/password and passkey sign-in, email verification, password recovery; one team per space with `admin` and `member` roles, single-use invite links; space settings in team preferences |
-| **Storage** | Signed checkpoint files and their create-first lock files (exports are streamed to the browser, never stored) |
+| **Auth + Teams** | Email/password and passkey sign-in, email verification, password recovery; one team per space with `admin` and `member` roles, single-use invite links; space settings in team preferences, with the server-owned fields in the Storage state store |
+| **Storage** | Signed checkpoint files, their create-first lock and frontier files, the per-space state store (`integrity`, `seeding`, `invites`, versioned and compare-and-swap), idempotency locks and sign-in attempt slots — every one of them a create-first file ID used as a lock (exports are streamed to the browser, never stored) |
 | **Functions** | checkpoint (5 min), sentinel (15 min), labeler (concept update events, catch-up relabels at 3/10/30/100 members), reflect (daily) |
 | **Realtime** | Live feed via a short-lived JWT when Realtime delivers VectorsDB events, otherwise 3-second polling (the `events` provisioning step checks which channel fires; see [verified](docs/verified.md)) |
 | **Messaging** | Optional tamper alert emails from the sentinel |
@@ -71,7 +71,7 @@ More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corre
 
 ## Security model
 
-- The checkpoint signing key lives only in the checkpoint Function. Verifiers need only the public key below and public header data.
+- The checkpoint signing key is stored only as a variable of the checkpoint Function. When provisioning generates it, it exists for the length of one production build, in that build container's memory: it is never a Netlify environment variable and nothing prints it. Verifiers need only the public key below and public header data.
 - Agent keys are shown once; only a SHA-256 hash and a short prefix are stored. Keys are scoped and revocable, and every write carries the agent ID.
 - The public verification routes return header fields and hashes, never memory text, and only for spaces that switch them on.
 - Memory text is rendered as plain text only; recall output marks the author and source of each memory.
@@ -82,6 +82,8 @@ More: [architecture](docs/architecture.md) · [spec corrections](docs/spec-corre
 - Only space owners create or revoke agent keys, and removing a member revokes the keys they created. Invite links are single-use (atomically), expire after 7 days, can be bound to a verified email, and only their SHA-256 hash is stored.
 - Memory text is untrusted data: it is delimited in every model prompt and escaped in agent-facing output, one write can retire at most 2 facts and one agent at most 10 per hour, and the rule-based fallback never retires another agent's memory.
 - Every page gets a per-request nonce Content-Security-Policy; connections are limited to this site and the configured Appwrite host. Fonts are self-hosted and nothing loads from third parties before cookie consent.
+
+**Reporting a vulnerability.** Email `engramdb@gmail.com` with `SECURITY` in the subject, not a public issue. [SECURITY.md](SECURITY.md) says what is in scope and what to include; [CONTRIBUTING.md](CONTRIBUTING.md) covers everything else.
 
 **Operator notes.** The Appwrite project ID is public (the browser needs it for Realtime), so Appwrite's account API can be called directly, outside Engram's limits. In the Appwrite console enable the Auth protections: password dictionary, password history, personal-data check, session limit and the built-in rate limits. Accounts created directly get `terms_required` from Engram until they accept the Terms. Residual risks: sign-up still tells someone that an address already has an account (rate-limited, neutral wording); the read-only demo makes the demo space readable by anyone by design; subjects and sources are part of the public header on spaces with public verification, so they reject e-mail addresses and phone numbers.
 
@@ -112,7 +114,7 @@ With no Appwrite variables, Engram runs on a local file-backed backend with a de
 
 `ENGRAM_DEMO_RESET=<same id>` re-seeds the demo space once. Remove `ENGRAM_PROVISION` afterwards; without it the step does nothing.
 
-The labeler's event trigger in `appwrite.json` (`databases.engram.collections.concepts.documents.*.update`) names the database, so keep `APPWRITE_DB_ID=engram` (the default) or change that event path to match. Whether VectorsDB documents raise `databases.*` or `vectorsdb.*` events is checked by the `events` provisioning step; until it reports one that fires, the app's inline relabelling at 3, 10, 30 and 100 members is what names concepts.
+The labeler is registered for both `databases.engram.collections.concepts.documents.*.update` and `vectorsdb.engram.collections.concepts.documents.*.update`. Appwrite accepts either name and the `events` provisioning step saw executions fire, but no `x-appwrite-event` header was logged, so which namespace delivered them is unproven and both stay registered ([verified](docs/verified.md) item 12). Both paths name the database, so keep `APPWRITE_DB_ID=engram` (the default) or change both to match. The app also relabels inline at 3, 10, 30 and 100 members, so concepts are named even when no event arrives.
 
 **Backups and restore.** Appwrite's database backup covers the VectorsDB collections only. Space settings live in team preferences and signed checkpoints in Storage, so export those too: `pnpm backup` writes every space team (name, preferences, members) and every file in the checkpoints bucket to `~/engram-backups/` (keep the file private). To restore after a loss:
 
@@ -152,7 +154,7 @@ The labeler's event trigger in `appwrite.json` (`databases.engram.collections.co
 ## Limitations and roadmap
 
 - The contradiction checker is only as good as its model; it can miss or over-flag, which is why the review inbox exists. Without a model key a rule-based classifier runs.
-- Checkpoints rebuild the Merkle tree from entry 0; fine at demo scale, an incremental frontier is next.
+- Checkpoints extend the previous checkpoint's stored Merkle frontier, and fall back to rebuilding from entry 0 when there is no usable frontier (the first checkpoint, or one signed before the sidecar existed).
 - Truncation is detectable only up to the latest signed checkpoint.
 - The demo history was seeded with past timestamps through an admin path; the seed says so. Seeding runs in short resumable slices, so a sandbox fills in over a few requests.
 - VectorsDB transactions did not work on this project during the hackathon; conditional writes keep every derived update safe, but a multi-document change is applied one document at a time (each one idempotent and re-applied by the next writer if an instance dies).

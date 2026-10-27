@@ -47,17 +47,38 @@ const PATTERNS: [RegExp, string][] = [
   [/((?:x-appwrite-key|authorization|x-api-key)["']?\s*[:=]\s*["']?)(?:Bearer\s+)?[^\s"',}]+/gi, "$1<redacted>"],
 ];
 
+/**
+ * A bare 64-character hex string: the shape of an Ed25519 checkpoint signing key (`pnpm keygen`). Its public half
+ * and a SHA-256 hash look exactly the same, so this runs last and skips the public keys this environment knows —
+ * the report has to carry those. No provisioning step prints a hash, so the remaining false-positive risk is small
+ * next to publishing a signing key in a build log.
+ */
+const HEX64 = /\b[0-9a-f]{64}\b/gi;
+
+/** Every 64-hex value in the non-secret (public-key) variables, which the hex rule must leave readable. */
+function publicHex(env: Record<string, string | undefined>): Set<string> {
+  const out = new Set<string>();
+  for (const [k, v] of Object.entries(env)) {
+    if (!v || !PUBLIC_NAME.test(k)) continue;
+    for (const m of v.matchAll(HEX64)) out.add(m[0].toLowerCase());
+  }
+  return out;
+}
+
 export function makeRedactor(env: Record<string, string | undefined>) {
-  const values = secretNames(env)
+  // Read `env` on every call rather than snapshotting it: provisioning generates CP_PRIVATE_KEY into this same
+  // object long after the redactor is built, and a snapshot taken before that would not know the new key's value.
+  const values = () => secretNames(env)
     .map((k) => [k, env[k]] as const)
     .filter((kv): kv is readonly [string, string] => typeof kv[1] === "string" && kv[1].trim().length >= 8)
     // Longest first, so a value that contains another is replaced whole.
     .sort((a, b) => b[1].length - a[1].length);
   return (text: string): string => {
     let out = String(text);
-    for (const [k, v] of values) out = out.split(v.trim()).join(`<${k}>`);
+    for (const [k, v] of values()) out = out.split(v.trim()).join(`<${k}>`);
     for (const [re, rep] of PATTERNS) out = out.replace(re, rep);
-    return out;
+    const known = publicHex(env);
+    return out.replace(HEX64, (hex) => (known.has(hex.toLowerCase()) ? hex : "<hex key>"));
   };
 }
 

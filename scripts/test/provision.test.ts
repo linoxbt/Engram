@@ -80,6 +80,21 @@ describe("redaction", () => {
     expect(r("X-Appwrite-Key: standard_abc")).not.toContain("standard_abc");
   });
 
+  it("redacts a secret put into the environment after the redactor was built", () => {
+    // provision.ts builds the redactor at startup and generates CP_PRIVATE_KEY into the same object 69 lines later.
+    const late: Record<string, string | undefined> = { APPWRITE_API_KEY: `standard_${"a".repeat(40)}` };
+    const r = makeRedactor(late);
+    late.CP_PRIVATE_KEY = "9f".repeat(32);
+    expect(r(`CP_PRIVATE_KEY=${late.CP_PRIVATE_KEY} done`)).toBe("CP_PRIVATE_KEY=<CP_PRIVATE_KEY> done");
+  });
+
+  it("masks a bare 64-hex key but keeps the public keys the report is for", () => {
+    const pub = "ec0a9a63949ad6b798f2f85d802d33d11e5c1f3940fc670a205c96290664da71";
+    const r = makeRedactor({ NEXT_PUBLIC_CP_PUBLIC_KEY: pub, CP_PUBLIC_KEYS: `engram-cp-2026-10:${pub}` });
+    expect(r(`signing key ${"7b".repeat(32)} end`)).toBe("signing key <hex key> end");
+    expect(r(`public key ${pub} end`)).toBe(`public key ${pub} end`);
+  });
+
   it("redacts nested report values without breaking JSON escaping", () => {
     const quoted = makeRedactor({ SEED_ADMIN_TOKEN: 'ab"cd\\ef12' });
     const out = redactDeep({ a: [{ b: 'token ab"cd\\ef12 here' }], n: 3 }, quoted);

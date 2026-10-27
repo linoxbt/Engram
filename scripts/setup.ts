@@ -4,9 +4,24 @@
  * Creates the VectorsDB database, four collections with HNSW cosine indexes, the checkpoints bucket (and a
  * separate exports bucket only if APPWRITE_EXPORTS_BUCKET names one; exports are streamed, never stored), and a
  * daily backup policy for the database where the plan allows it.
+ *
+ * Idempotent is not the same as convergent. Appwrite answers 409 for anything that already exists, so on a project
+ * provisioned earlier a changed dimension, description, bucket limit or backup retention would otherwise be a
+ * silent no-op. Every resource is therefore read back and compared with what this file asks for, and each
+ * difference is printed as a drift line and listed again at the end.
+ *
+ * Drift is reported, not applied. Changing a collection's dimension or a bucket's allowed extensions in place is
+ * destructive (every stored vector would become unreadable, existing files would stop being accepted), and this
+ * script runs unattended inside the production Netlify build, where an automatic change nobody asked for is the
+ * worse failure. Backup retention is the one safe case and still goes through the operator, so there is one rule
+ * instead of two. Data migrations are a separate matter: see "Migrations" in docs/architecture.md.
  */
 import "./env";
 import { AppwriteException, BackupServices, Backups, Client, Storage, VectorsDB, VectorsDBIndexType } from "node-appwrite";
+import {
+  BACKUP_SCHEDULE, CHECKPOINTS_BUCKET, COLLECTIONS, EXPORTS_BUCKET, INDEX_ATTRIBUTES, INDEX_KEY, INDEX_TYPE,
+  backupFields, bucketFields, collectionFields, driftOf, indexFields, type BucketSpec,
+} from "./lib/setup-spec";
 
 const endpoint = process.env.APPWRITE_ENDPOINT, project = process.env.APPWRITE_PROJECT_ID, key = process.env.APPWRITE_API_KEY;
 if (!endpoint || !project || !key) { console.error("Set APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID and APPWRITE_API_KEY."); process.exit(1); }
@@ -15,6 +30,12 @@ const client = new Client().setEndpoint(endpoint).setProject(project).setKey(key
 const vdb = new VectorsDB(client);
 const storage = new Storage(client);
 
+/** Differences between what this setup asks for and what the project already has. Reported, never applied. */
+const drift: string[] = [];
+function diff(label: string, want: Record<string, unknown>, have: Record<string, unknown>) {
+  for (const line of driftOf(label, want, have)) { drift.push(line); console.error(`! drift  ${line}`); }
+}
+
 async function ensure(label: string, fn: () => Promise<unknown>) {
   try { await fn(); console.log(`✓ created ${label}`); }
   catch (e) {
@@ -22,15 +43,6 @@ async function ensure(label: string, fn: () => Promise<unknown>) {
     else { console.error(`✗ ${label}:`, e instanceof Error ? e.message : e); throw e; }
   }
 }
-
-// Collections: documentSecurity per Document 2, section 7. No collection-level permissions:
-// every document is created by the server with read(team:<space team>).
-const COLLECTIONS = [
-  { id: "memories", name: "Memories", dimension: 768, documentSecurity: true, description: "Every chain entry: memories, forgets, links, summaries (nomic-embed-text)" },
-  { id: "concepts", name: "Concepts", dimension: 768, documentSecurity: true, description: "Concept centroids with labels" },
-  { id: "agents", name: "Agents", dimension: 384, documentSecurity: false, description: "Agent registry; vector is the description (all-minilm). Server only." },
-  { id: "recalls", name: "Recalls", dimension: 768, documentSecurity: true, description: "Logged recall queries with best distance" },
-];
 
 // Appwrite Cloud runs VectorsDB on dedicated compute: pass a specification (default Starter, s-1vcpu-1gb,
 // $10/month billed hourly). The organization must have dedicated databases enabled on its plan.
@@ -65,13 +77,14 @@ if (dbReady) {
     await sleep(5000);
   }
 }
-/** "Already exists" is only believed once the thing can actually be read back. */
-async function ensureVerified(label: string, create: () => Promise<unknown>, read: () => Promise<unknown>) {
+/** "Already exists" is only believed once the thing can actually be read back — and the read-back is then diffed. */
+async function ensureVerified<T>(label: string, create: () => Promise<unknown>, read: () => Promise<T>, check?: (have: T) => void) {
   for (let i = 0; i < 12; i++) {
     try { await create(); console.log(`✓ created ${label}`); return; }
     catch (e) {
       if (!(e instanceof AppwriteException) || (e.code !== 409 && e.code !== 404)) { console.error(`✗ ${label}:`, e instanceof Error ? e.message : e); throw e; }
-      if (await read().then(() => true, () => false)) { console.log(`· ${label} already exists`); return; }
+      const have = await read().then((x) => x, () => null);
+      if (have) { console.log(`· ${label} already exists`); check?.(have); return; }
       await sleep(5000);
     }
   }
@@ -80,31 +93,43 @@ async function ensureVerified(label: string, create: () => Promise<unknown>, rea
 for (const c of dbReady ? COLLECTIONS : []) {
   await ensureVerified(`collection ${c.id} (${c.dimension})`,
     () => vdb.createCollection({ databaseId: DB, collectionId: c.id, name: c.name, dimension: c.dimension, permissions: [], documentSecurity: c.documentSecurity, description: c.description }),
-    () => vdb.getCollection({ databaseId: DB, collectionId: c.id }));
+    () => vdb.getCollection({ databaseId: DB, collectionId: c.id }),
+    // A wrong dimension is the dangerous one: every vector already stored would be the wrong width.
+    (have) => diff(`collection ${c.id}`, collectionFields(c), collectionFields(have)));
   await ensureVerified(`index ${c.id}.embeddings hnsw_cosine`,
-    () => vdb.createIndex({ databaseId: DB, collectionId: c.id, key: "emb_cosine", type: VectorsDBIndexType.HnswCosine, attributes: ["embeddings"] }),
-    () => vdb.getIndex({ databaseId: DB, collectionId: c.id, key: "emb_cosine" }));
+    () => vdb.createIndex({ databaseId: DB, collectionId: c.id, key: INDEX_KEY, type: VectorsDBIndexType.HnswCosine, attributes: INDEX_ATTRIBUTES }),
+    () => vdb.getIndex({ databaseId: DB, collectionId: c.id, key: INDEX_KEY }),
+    // Keyed on the name alone, an index created with another metric or attribute would pass unnoticed.
+    (have) => diff(`index ${c.id}.${INDEX_KEY}`, { type: INDEX_TYPE, attributes: INDEX_ATTRIBUTES }, indexFields(have)));
 }
 // Look before creating: on a plan at its bucket limit, Appwrite reports the limit before it reports a duplicate.
-async function ensureBucket(label: string, bucketId: string, create: () => Promise<unknown>) {
-  try { await storage.getBucket({ bucketId }); console.log(`· ${label} already exists`); return; }
-  catch (e) { if (!(e instanceof AppwriteException && e.code === 404)) throw e; }
-  await ensure(label, create);
+async function ensureBucket(label: string, bucketId: string, want: BucketSpec, extra: Record<string, unknown> = {}) {
+  try {
+    const have = await storage.getBucket({ bucketId });
+    console.log(`· ${label} already exists`);
+    // A bucket whose limit or extension list drifted silently rejects checkpoint files at write time, not here.
+    diff(label, bucketFields(want), bucketFields(have));
+    return;
+  } catch (e) { if (!(e instanceof AppwriteException && e.code === 404)) throw e; }
+  await ensure(label, () => storage.createBucket({ bucketId, permissions: [], ...want, ...extra }));
 }
-await ensureBucket("bucket checkpoints", process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints", () => storage.createBucket({ bucketId: process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints", name: "Signed checkpoints", permissions: [], fileSecurity: true, maximumFileSize: 1_000_000, allowedFileExtensions: ["json"], encryption: false, antivirus: false }));
+const checkpointsBucket = process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints";
+await ensureBucket("bucket checkpoints", checkpointsBucket, CHECKPOINTS_BUCKET, { encryption: false, antivirus: false });
 // Exports share the checkpoints bucket unless a separate one is configured (the Free plan allows one bucket).
-if (process.env.APPWRITE_EXPORTS_BUCKET && process.env.APPWRITE_EXPORTS_BUCKET !== (process.env.APPWRITE_CHECKPOINTS_BUCKET ?? "checkpoints")) await ensureBucket("bucket exports", process.env.APPWRITE_EXPORTS_BUCKET!, () => storage.createBucket({ bucketId: process.env.APPWRITE_EXPORTS_BUCKET!, name: "Space exports", permissions: [], fileSecurity: true, maximumFileSize: 100_000_000, allowedFileExtensions: ["json"] }));
+if (process.env.APPWRITE_EXPORTS_BUCKET && process.env.APPWRITE_EXPORTS_BUCKET !== checkpointsBucket) {
+  await ensureBucket("bucket exports", process.env.APPWRITE_EXPORTS_BUCKET, EXPORTS_BUCKET);
+}
 
 // The HNSW index builds in the background; wait until it is available before benchmarking. Not available after
 // 3 minutes is an error: recall would silently fall back to slow scans or fail.
 for (const c of dbReady ? COLLECTIONS : []) {
   let status = "unknown";
   for (let i = 0; i < 90 && status !== "available"; i++) {
-    status = (await vdb.getIndex({ databaseId: DB, collectionId: c.id, key: "emb_cosine" })).status;
+    status = (await vdb.getIndex({ databaseId: DB, collectionId: c.id, key: INDEX_KEY })).status;
     if (status === "failed" || status === "stuck") throw new Error(`index ${c.id} is ${status}`);
     if (status !== "available") await sleep(2000);
   }
-  if (status !== "available") throw new Error(`index ${c.id}.emb_cosine is still "${status}" after 3 minutes; run setup again once it is available`);
+  if (status !== "available") throw new Error(`index ${c.id}.${INDEX_KEY} is still "${status}" after 3 minutes; run setup again once it is available`);
   console.log(`✓ index ${c.id} available`);
 }
 
@@ -117,13 +142,15 @@ if (dbReady) {
   try {
     const p = await backups.getPolicy({ policyId });
     backup = `policy ${p.$id} already exists (${p.schedule}, ${p.retention} days)`;
+    // ENGRAM_BACKUP_RETENTION_DAYS only ever reached createPolicy, so changing it did nothing on a live project.
+    diff(`backup policy ${policyId}`, { retention, schedule: BACKUP_SCHEDULE, enabled: true, resourceId: DB }, backupFields(p));
   } catch (e) {
     if (!(e instanceof AppwriteException && e.code === 404)) backup = `could not read backup policies: ${e instanceof Error ? e.message : e}`;
     else {
       // VectorsDB runs on a dedicated database; which service name the Backups API wants for it is tried in order.
       for (const service of [BackupServices.Vectorsdb, BackupServices.DedicatedDatabases]) {
         try {
-          await backups.createPolicy({ policyId, name: `Daily backup of ${DB}`, services: [service], resourceId: DB, retention, schedule: "17 3 * * *", enabled: true });
+          await backups.createPolicy({ policyId, name: `Daily backup of ${DB}`, services: [service], resourceId: DB, retention, schedule: BACKUP_SCHEDULE, enabled: true });
           backup = `created policy ${policyId} (${service}, daily at 03:17 UTC, ${retention} days)`;
           break;
         } catch (err) {
@@ -135,6 +162,11 @@ if (dbReady) {
     }
   }
   console.log(`${backup.startsWith("NOT") || backup.startsWith("could") ? "!" : "✓"} backup: ${backup}`);
+}
+if (drift.length) {
+  console.error(`\n! ${drift.length} resource(s) differ from this setup and were NOT changed:`);
+  for (const d of drift) console.error(`!   ${d}`);
+  console.error("! Apply these in the Appwrite console, or recreate the resource; a dimension change needs a re-embed.");
 }
 if (!dbReady) process.exitCode = 2;
 console.log(dbReady ? "\nDone. Next: add your hostnames as web platforms and deploy the Functions." : "\nPartially done (no VectorsDB yet). Next: add your hostnames as web platforms, run setup again for the backup policy, and deploy the Functions.");
