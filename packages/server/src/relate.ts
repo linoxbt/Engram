@@ -146,8 +146,12 @@ export async function relate(ctx: Ctx, m: NewMemory, neighbours: Neighbour[], op
   const fast: Relation[] = [];
   const rest: Neighbour[] = [];
   for (const n of neighbours) {
-    if (n.distance < s.duplicateDistance && n.kind === m.kind && (n.subject ?? null) === (m.subject ?? null)) {
-      fast.push({ id: n.id, relation: "duplicate", confidence: 1, reason: "Nearly identical meaning, same kind and subject." });
+    // An embedding this close is necessary but not sufficient for a duplicate: "the colour is blue" and "the
+    // colour is red" embed almost identically. The fast path only drops a write whose normalized wording is the
+    // same statement; a close neighbour that says something different goes to the classifier, which can still
+    // call it a duplicate, or recognise a changed fact as supersedes/contradicts instead of losing it.
+    if (n.distance < s.duplicateDistance && n.kind === m.kind && (n.subject ?? null) === (m.subject ?? null) && norm(n.text) === norm(m.text)) {
+      fast.push({ id: n.id, relation: "duplicate", confidence: 1, reason: "Same statement, same kind and subject." });
     } else if (n.subject && m.subject && n.subject !== m.subject) {
       fast.push({ id: n.id, relation: "unrelated", confidence: 1, reason: "Different subjects." });
     } else rest.push(n);

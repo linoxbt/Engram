@@ -65,9 +65,12 @@ export function formatRecall(r: RecallResult): string {
   }
   if (r.memories.length) lines.push(END("MEMORIES"));
   if (r.integrity) {
+    // The monitor's badge is the last background sweep, so it can trail a write by one call; only a verify (or a
+    // verified as-of recall) reflects this instant. Say which one this is instead of letting it read as current.
+    const label = r.integritySource === "monitor" ? "Integrity (last background check; run verify for the current state)" : "Integrity";
     lines.push(r.integrity.status === "tampered"
-      ? `Integrity: TAMPERED. ${r.integrity.firstFinding ?? ""} Verified only through #${r.integrity.validThrough}.`
-      : `Integrity: verified through #${r.integrity.validThrough}${r.checkpoint ? `, checkpoint ${r.checkpoint.fileId} signed ${when(r.checkpoint.createdAt)}` : ""}.`);
+      ? `${label}: TAMPERED. ${r.integrity.firstFinding ?? ""} Verified only through #${r.integrity.validThrough}.`
+      : `${label}: verified through #${r.integrity.validThrough}${r.checkpoint ? `, checkpoint ${r.checkpoint.fileId} signed ${when(r.checkpoint.createdAt)}` : ""}.`);
   } else if (r.checkpoint) {
     lines.push(`Latest signed checkpoint: ${r.checkpoint.fileId} (${r.checkpoint.size} entries).`);
   }

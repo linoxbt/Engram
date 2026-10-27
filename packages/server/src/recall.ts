@@ -50,6 +50,8 @@ export interface RecallResult {
   conflicts: number;
   checkpoint: CheckpointPointer | null;
   integrity: IntegrityStatus | null;
+  /** Where `integrity` comes from: a verification run by this request, or the monitor's last background sweep. */
+  integritySource: "replayed" | "monitor" | null;
   /** Authoritative as-of mode: how many chain entries were replayed. */
   replayed?: number;
   tookMs: number;
@@ -191,6 +193,7 @@ export async function recall(ctx: Ctx, raw: unknown, opts: { log?: boolean } = {
     // checkpoint) and the verdict of the verification just run.
     checkpoint: verified ? verified.checkpoint : cp,
     integrity: verified ? verified.integrity : space.settings.integrity,
+    integritySource: verified ? "replayed" : space.settings.integrity ? "monitor" : null,
     replayed,
     tookMs: Date.now() - t0,
   };

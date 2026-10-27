@@ -60,7 +60,7 @@ export interface SpaceInvite { id: string; tokenHash: string; email: string | nu
 
 export const SETTING_RANGES = {
   neighbourDistance: { min: 0.05, max: 0.9, label: "Neighbour distance", help: "How close an existing memory must be before Engram checks it for duplicates, supersessions and conflicts. Lower is stricter." },
-  duplicateDistance: { min: 0.0, max: 0.3, label: "Duplicate distance", help: "Below this distance, with the same kind and subject, a new memory is treated as a duplicate without asking the model." },
+  duplicateDistance: { min: 0.0, max: 0.3, label: "Duplicate distance", help: "Below this distance, with the same kind, subject and wording, a new memory is treated as a duplicate without asking the model." },
   conceptDistance: { min: 0.05, max: 0.9, label: "Concept distance", help: "How close a memory must be to a concept's centre to join it instead of starting a new concept." },
   checkpointEvery: { min: 1, max: 1000, label: "Checkpoint interval", help: "Sign a checkpoint after this many new entries, in addition to the scheduled run." },
 } as const;

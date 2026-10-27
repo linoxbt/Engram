@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { sha256Hex, type EntryMeta } from "@engram/core";
 import {
   ConflictError, DATA_END, LINK_TEXT, REFLECT_AGENT, RELATE_SYSTEM, RecallInput, RememberInput, append, applyPending, attack, authAgent, buildPrompt, capSupersessions, createAgent, embedDocument,
-  formatRecall, formatTimeline, getEntry, getSpace, loadChain, notesOf, recall, reflect, remember, resetSandbox, resolveConflict, retryRelate, timeline, verifyStoredSpace,
+  formatRecall, formatTimeline, getEntry, relate, getSpace, loadChain, notesOf, recall, reflect, remember, resetSandbox, resolveConflict, retryRelate, timeline, verifyStoredSpace,
   SEED_EMBED_BATCH, SEED_SAVE_EVERY, assignConcept, forget, latestCheckpoint, linkFound, listConflicts, runCheckpoint, sealSandbox, seedStory,
   type Backend, type Ctx, type SpaceInfo, type TxOp,
 } from "../src/index";
@@ -475,5 +475,57 @@ describe("sealing without an inline key", () => {
 
     b.jobs.triggerCheckpoint = async () => false;
     await expect(sealSandbox({ ...noKey, space })).rejects.toMatchObject({ code: "unavailable" });
+  });
+});
+
+describe("changed facts are never dropped as duplicates", () => {
+  const neighbour = (text: string) => ({
+    id: "m_testspace_000000000001", text, createdAt: "2026-10-20T10:00:00.000Z",
+    agent: "agent:a", agentName: "agent-a", subject: "test:widget", kind: "fact", distance: 0.01,
+  });
+  const mem = (text: string) => ({
+    text, kind: "fact", subject: "test:widget", createdAt: "2026-10-21T10:00:00.000Z", agentName: "agent-a", agent: "agent:a",
+  });
+
+  it("an embedding-close neighbour with different wording is not fast-pathed to duplicate", async () => {
+    const { ctx } = await setup();
+    const res = await relate(ctx, mem("The widget color is red."), [neighbour("The widget color is blue.")]);
+    const rel = res.relations.find((r) => r.id === "m_testspace_000000000001");
+    expect(rel?.relation).not.toBe("duplicate");
+  });
+
+  it("the same statement still fast-paths to duplicate, ignoring case and punctuation", async () => {
+    const { ctx } = await setup();
+    const res = await relate(ctx, mem("The widget color is BLUE"), [neighbour("The widget color is blue.")]);
+    const rel = res.relations.find((r) => r.id === "m_testspace_000000000001");
+    expect(rel).toMatchObject({ relation: "duplicate", confidence: 1 });
+    expect(res.via).toBe("fast");
+  });
+
+  it("remembering a changed value after the original creates a new entry instead of dropping it", async () => {
+    const { ctx, drain } = await setup();
+    const blue = await remember(ctx, { text: "The widget color is blue.", subject: "test:widget" });
+    expect(blue.status).toBe("created");
+    const red = await remember(ctx, { text: "The widget color is red.", subject: "test:widget" });
+    expect(red.status).toBe("created");
+    expect(red.id).not.toBe(blue.id);
+    // The exact same sentence again is still deduplicated.
+    const again = await remember(ctx, { text: "The widget color is blue.", subject: "test:widget" });
+    expect(again.status).toBe("duplicate");
+    expect(again.id).toBe(blue.id);
+    await drain();
+  });
+
+  it("recall without verify labels the integrity badge as the monitor's, not this instant's", async () => {
+    const { ctx, drain } = await setup();
+    await remember(ctx, { text: "The widget ships from Lagos.", subject: "test:widget" });
+    await drain();
+    const res = await recall(ctx, { query: "widget", k: 3 });
+    if (res.integrity) {
+      expect(res.integritySource).toBe("monitor");
+      expect(formatRecall(res)).toMatch(/last background check/);
+    } else {
+      expect(res.integritySource).toBeNull();
+    }
   });
 });
