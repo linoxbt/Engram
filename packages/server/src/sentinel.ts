@@ -120,5 +120,24 @@ export async function applyRetention(b: Backend, space: SpaceInfo, deadline = In
     if (Date.now() >= deadline) break;
     try { await forget(ctx, { id: m.$id, reason: `Retention policy: older than ${space.settings.retentionDays} days` }); n++; } catch (e) { console.error("[engram] retention forget failed", e); }
   }
+  await pruneRecallLogs(b, space, cutoff, deadline);
   return n;
+}
+
+/**
+ * Recall logs grow by one document per recall and are not chain entries, so nothing else ever removes them: a
+ * space with retention drops the ones past its window. Without this, every erasure has to page a collection that
+ * only ever gets bigger.
+ */
+const PRUNE_RECALLS_PER_RUN = 500;
+async function pruneRecallLogs(b: Backend, space: SpaceInfo, cutoff: string, deadline: number) {
+  for (let done = 0; done < PRUNE_RECALLS_PER_RUN && Date.now() < deadline;) {
+    const page = await b.vectors.query<{ createdAt: string }>("recalls", {
+      filters: [{ op: "eq", path: "metadata.space", values: [space.key] }, { op: "lt", path: "metadata.createdAt", value: cutoff }],
+      order: { field: "$id", dir: "asc" }, limit: 100, withVectors: false,
+    });
+    if (!page.length) return;
+    for (const d of page) await b.vectors.delete("recalls", d.$id).catch((e) => console.error("[engram] pruning a recall log failed", e));
+    done += page.length;
+  }
 }

@@ -2,11 +2,11 @@
  * Engine fixes from the fourth audit: the duplicate fast path, verified as-of recall, the background
  * re-classification sweep, the rule-based classifier, supersession budgets, bounded erasure and bounded caches.
  */
-import { describe, expect, it } from "vitest";
-import { iso } from "@engram/core";
+import { describe, expect, it, vi } from "vitest";
+import { iso, recallId } from "@engram/core";
 import {
-  append, authAgent, capSupersessions, createAgent, embedDocument, getEntry, getSpace, heuristicRelate, listConflicts, notesOf, recall, relate, remember,
-  retryRelate, runCheckpoint, SUPERSEDE_PER_HOUR, sweepPendingRelate, verifyStoredSpace, verifyThrottled,
+  append, applyRetention, authAgent, capSupersessions, createAgent, embedDocument, ERASE_ATTEMPTS, forget, listRecalls, getEntry, getSpace, heuristicRelate, listConflicts, notesOf, recall, relate, remember,
+  retryRelate, runCheckpoint, SUPERSEDE_PER_HOUR, sweepPendingRelate, updateSettings, verifyStoredSpace, verifyThrottled,
   type Neighbour, type NewMemory, type Scope,
 } from "../src/index";
 import { setup } from "./helpers";
@@ -201,5 +201,62 @@ describe("the supersession cap holds under concurrency", () => {
     expect(batches.flat().filter((r) => r.relation === "contradicts")).toHaveLength(10);
     // Another writer's budget is its own.
     expect((await capSupersessions(ctx, "a_someoneelse", [sup(id(99))])).map((r) => r.relation)).toEqual(["supersedes"]);
+  });
+});
+
+describe("erasure does bounded work", () => {
+  it("reads only the recall logs that could have returned the memory, a page at a time", async () => {
+    const { b, ctx, drain } = await setup();
+    // Logs written long before the memory existed cannot have returned it.
+    for (let i = 0; i < 40; i++) {
+      await b.vectors.create("recalls", recallId(ctx.space.key, Date.parse("2026-01-01T00:00:00.000Z") + i), {
+        embeddings: await embedDocument(ctx, `old query ${i}`),
+        metadata: { space: ctx.space.key, agent: "a_x", query: `old query ${i}`, asOf: null, k: "05", topDistance: null, returned: [], createdAt: iso(Date.parse("2026-01-01T00:00:00.000Z") + i) },
+      });
+    }
+    const a = await remember(ctx, { text: "Ada shared a delivery address: 14 Palm Close, Lekki.", subject: "customer:ada" });
+    await recall(ctx, { query: "delivery address", subject: "customer:ada", k: 5 });
+    await drain();
+
+    let read = 0;
+    const query = b.vectors.query.bind(b.vectors);
+    b.vectors.query = (async (coll, q) => { const r = await query(coll, q); if (coll === "recalls") read += r.length; return r; }) as typeof b.vectors.query;
+    await forget(ctx, { id: a.id, reason: "erasure requested" });
+    await drain();
+    // The forty older logs are never fetched; the one that returned the memory is redacted.
+    expect(read).toBeLessThanOrEqual(5);
+    const logs = await listRecalls(ctx, { limit: 100 });
+    expect(logs.filter((l) => l.query.startsWith("[redacted"))).toHaveLength(1);
+    expect(logs.filter((l) => l.query.startsWith("old query"))).toHaveLength(40);
+  });
+
+  it("stops retrying an erasure that keeps failing instead of re-queueing it forever", async () => {
+    const { b, ctx, drain } = await setup();
+    const a = await remember(ctx, { text: "Ada shared a delivery address: 14 Palm Close, Lekki.", subject: "customer:ada" });
+    await drain();
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let attempts = 0;
+    const query = b.vectors.query.bind(b.vectors);
+    b.vectors.query = (async (coll, q) => { if (coll === "recalls") { attempts++; throw new Error("storage is down"); } return query(coll, q); }) as typeof b.vectors.query;
+    await forget(ctx, { id: a.id, reason: "erasure requested" });
+    await drain();
+    err.mockRestore();
+    expect(attempts).toBeGreaterThan(1);
+    expect(attempts).toBeLessThanOrEqual(ERASE_ATTEMPTS);
+  });
+});
+
+describe("recall logs are pruned by the space's retention setting", () => {
+  it("deletes logs older than the retention window so the collection cannot grow forever", async () => {
+    const { b, ctx } = await setup();
+    const log = async (ms: number, q: string) => b.vectors.create("recalls", recallId(ctx.space.key, ms), {
+      embeddings: await embedDocument(ctx, q),
+      metadata: { space: ctx.space.key, agent: "a_x", query: q, asOf: null, k: "05", topDistance: null, returned: [], createdAt: iso(ms) },
+    });
+    await log(Date.now() - 40 * 86_400_000, "ancient");
+    await log(Date.now() - 86_400_000, "recent");
+    await updateSettings(b, ctx.space.key, { retentionDays: 30 });
+    expect(await applyRetention(b, (await getSpace(b, ctx.space.key))!)).toBe(0);
+    expect((await listRecalls(ctx, { limit: 100 })).map((l) => l.query)).toEqual(["recent"]);
   });
 });
