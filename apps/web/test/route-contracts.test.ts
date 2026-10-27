@@ -47,3 +47,24 @@ describe("expensive work is capped for people, not only for agent keys", () => {
   });
 });
 
+describe("the route wrappers", () => {
+  const api = read("lib/server/api.ts");
+
+  it("default to a private, uncacheable response that varies on who asked", () => {
+    expect(api).toContain('res.headers.set("Cache-Control", "private, no-store")');
+    expect(api).toContain('res.headers.set("Vary", "Cookie, Authorization")');
+    // Routes with a policy of their own (the public v1 reads, the export download) keep it.
+    expect(api).toContain('if (!res.headers.has("cache-control"))');
+    expect(read("app/api/v1/spaces/[key]/chain/route.ts")).toContain('"Netlify-Vary": "query"');
+  });
+
+  it("never trust a host header the caller writes for the same-origin check", () => {
+    expect(api).not.toMatch(/get\("x-forwarded-host"\)/);
+    expect(api).toContain('originAllowed(req.headers.get("origin"), own)');
+  });
+
+  it("gate a viewer's reads per route, not by method", () => {
+    expect(api).toContain("assertViewerReadAllowed(access.user, access, info.method, info.route)");
+  });
+});
+

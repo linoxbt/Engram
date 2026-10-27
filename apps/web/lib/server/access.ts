@@ -65,6 +65,14 @@ export function assertViewerReadAllowed(user: Pick<User, "guest">, access: { vie
   if (!ok) throw new EngramError("read_only", VIEWER_READ_MESSAGE);
 }
 
+/** Whether a cookie-authenticated write's Origin is one of ours (CSRF; see requireSameOrigin). */
+export function originAllowed(origin: string | null, ownHosts: (string | null | undefined)[]): boolean {
+  if (!origin || origin === "null") return true; // no Origin at all: SameSite and sec-fetch-site decide
+  let host = "";
+  try { host = new URL(origin).host; } catch { return false; }
+  return !!host && ownHosts.includes(host);
+}
+
 /**
  * Account-level writes a guest may still make. Everything else a signed-in guest sends (creating spaces or agent
  * keys, accepting invites, renaming, passkeys, verification emails) is read_only. Signing out, signing in as

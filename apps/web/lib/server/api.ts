@@ -1,7 +1,7 @@
 import "server-only";
 import { after, NextResponse, type NextRequest } from "next/server";
 import { authAgent, errorLogFields, getBackend, personCtx, requireScope, toErrorBody, EngramError, type Ctx, type Scope } from "@engram/server";
-import { assertSpaceWriteAllowed, assertViewerReadAllowed } from "./access";
+import { assertSpaceWriteAllowed, assertViewerReadAllowed, originAllowed } from "./access";
 import { logError, requestIdFor } from "./log";
 import { currentRequest, requestStore, type RequestInfo } from "./request";
 import { requireSpaceAccess, type SpaceAccess } from "./session";
@@ -38,10 +38,23 @@ async function handle(req: NextRequest, run: (info: RequestInfo) => Promise<Resp
     let logged = false;
     try { res = await run(info); } catch (e) { res = errorResponse(e); logged = true; }
     if (res.status >= 500 && !logged) logError({ reqId: info.reqId, route: info.route, status: res.status, code: "internal", message: `handler returned ${res.status}` });
-    try { res.headers.set("x-request-id", info.reqId); }
-    catch { res = new Response(res.body, res); res.headers.set("x-request-id", info.reqId); } // immutable headers (a proxied fetch)
+    try { stamp(res, info); }
+    catch { res = new Response(res.body, res); stamp(res, info); } // immutable headers (a proxied fetch)
     return res;
   });
+}
+
+/**
+ * Every response is correlatable, and private by default: an authenticated body (the caller's address, a member
+ * list, a plaintext agent key) must never land in a shared cache, and a cache that does keep it must key on who
+ * asked. Routes with their own policy (the public v1 reads, the export download) keep theirs untouched.
+ */
+function stamp(res: Response, info: RequestInfo) {
+  res.headers.set("x-request-id", info.reqId);
+  if (!res.headers.has("cache-control")) {
+    res.headers.set("Cache-Control", "private, no-store");
+    res.headers.set("Vary", "Cookie, Authorization");
+  }
 }
 
 /** For routes with bespoke responses (health): the same request-id and 5xx logging as the route wrappers. */
@@ -70,13 +83,10 @@ export function requireSameOrigin(req: NextRequest | Request) {
   if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return;
   const site = req.headers.get("sec-fetch-site");
   if (site === "cross-site") throw new EngramError("forbidden", "Cross-site requests are not allowed.");
-  const origin = req.headers.get("origin");
-  if (origin && origin !== "null") {
-    let host = "";
-    try { host = new URL(origin).host; } catch { host = ""; }
-    const own = [req.headers.get("x-forwarded-host"), req.headers.get("host"), hostOf(process.env.NEXT_PUBLIC_APP_URL)];
-    if (!host || !own.includes(host)) throw new EngramError("forbidden", "Cross-site requests are not allowed.");
-  }
+  // Only hosts the platform vouches for: x-forwarded-host is the caller's own text, so trusting it would let
+  // any Origin pass by naming itself.
+  const own = [req.headers.get("host"), hostOf(process.env.NEXT_PUBLIC_APP_URL)];
+  if (!originAllowed(req.headers.get("origin"), own)) throw new EngramError("forbidden", "Cross-site requests are not allowed.");
 }
 
 /** Agent-key routes under /api/v1. */

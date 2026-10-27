@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createLocalBackend, setConfig, toErrorBody, type Backend, type SpaceInvite, type TeamMember } from "@engram/server";
-import { assertViewerReadAllowed, VIEWER_ROLE } from "@/lib/server/access";
+import { assertViewerReadAllowed, originAllowed, VIEWER_ROLE } from "@/lib/server/access";
 import { clientIpFrom } from "@/lib/server/limits";
 import { publicInvites, publicMembers } from "@/lib/server/shapes";
 import { admitGuest, GUEST_ENTER_LIMIT, MAX_LIVE_GUESTS, sweepGuestSlots } from "@/lib/server/guest-slots";
@@ -48,6 +48,18 @@ describe("what a read-only viewer may read", () => {
       expect(() => assertViewerReadAllowed(person, viewer, "GET", r), r).not.toThrow();
     }
     expect(VIEWER_ROLE).toBe("viewer");
+  });
+});
+
+describe("same-origin check", () => {
+  it("accepts our own host and the configured app URL, and nothing a caller can name itself", () => {
+    const own = ["engram.example", "engram.netlify.app"];
+    expect(originAllowed("https://engram.example", own)).toBe(true);
+    expect(originAllowed(null, own)).toBe(true);
+    expect(originAllowed("null", own)).toBe(true);
+    expect(originAllowed("https://evil.com", own)).toBe(false);
+    expect(originAllowed("not a url", own)).toBe(false);
+    expect(originAllowed("https://engram.example.evil.com", own)).toBe(false);
   });
 });
 
