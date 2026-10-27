@@ -1,6 +1,7 @@
 import { type EntryMeta } from "@engram/core";
 import { parseEntryCursor, parseLimit, remember, type Filter } from "@engram/server";
 import { readJson, spaceRoute } from "@/lib/server/api";
+import { limitSpaceWork } from "@/lib/server/rate-limit";
 import { toFeedItem, agentNames } from "@engram/server";
 
 export const runtime = "nodejs";
@@ -21,4 +22,8 @@ export const GET = spaceRoute(async (ctx, _a, req) => {
   return { items: docs.map((d) => toFeedItem(d, names)), next: docs.length ? docs[docs.length - 1].$id : null };
 });
 
-export const POST = spaceRoute(async (ctx, _a, req) => remember(ctx, await readJson(req)));
+/** An embedding and a classifier call each: capped per person and space, the engine only caps agent keys. */
+export const POST = spaceRoute(async (ctx, access, req) => {
+  limitSpaceWork("remember", access.user.id, ctx.space.key);
+  return remember(ctx, await readJson(req));
+});

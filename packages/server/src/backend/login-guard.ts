@@ -44,8 +44,11 @@ export function loginKeys(email: string, client: string | undefined, now = Date.
   };
 }
 
-/** Claim the lowest free numbered slot under `prefix`, or null when all `max` are taken. */
-async function reserve(store: AttemptStore, prefix: string, max: number): Promise<string | null> {
+/**
+ * Claim the lowest free numbered slot under `prefix`, or null when all `max` are taken. Create-first, so it is an
+ * exact limit every server instance shares (also used for demo guest admission in apps/web).
+ */
+export async function reserveSlot(store: AttemptStore, prefix: string, max: number): Promise<string | null> {
   const taken = new Set((await store.files.list(store.bucket, prefix)).map((f) => f.fileId));
   for (let n = 0; n < max; n++) {
     const id = prefix + String(n).padStart(2, "0");
@@ -77,9 +80,9 @@ const isWrongPassword = (e: unknown) => isEngramError(e) && e.code === "unauthor
  */
 export async function guardedSignIn<T>(store: AttemptStore, email: string, client: string | undefined, attempt: () => Promise<T>, now = Date.now()): Promise<T> {
   const k = loginKeys(email, client, now);
-  const mine = await reserve(store, k.clientWindow, LOGIN_LIMITS.client.max);
+  const mine = await reserveSlot(store, k.clientWindow, LOGIN_LIMITS.client.max);
   if (!mine) throw locked(LOGIN_LIMITS.client.windowMs, now);
-  const shared = await reserve(store, k.accountWindow, LOGIN_LIMITS.account.max);
+  const shared = await reserveSlot(store, k.accountWindow, LOGIN_LIMITS.account.max);
   if (!shared) {
     await release(store, [mine]);
     throw locked(LOGIN_LIMITS.account.windowMs, now);

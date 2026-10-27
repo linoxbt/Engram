@@ -2,7 +2,8 @@ import { EngramError, getBackend, getSpace, GUEST_TTL_MS, membership } from "@en
 import { defer, route } from "@/lib/server/api";
 import { VIEWER_ROLE } from "@/lib/server/access";
 import { requireCookieConsent } from "@/lib/server/consent";
-import { clientIp, HOUR, rateLimit } from "@/lib/server/rate-limit";
+import { admitGuest, sweepGuestSlots } from "@/lib/server/guest-slots";
+import { clientIp } from "@/lib/server/rate-limit";
 import { currentUser, replaceSession } from "@/lib/server/session";
 
 export const runtime = "nodejs";
@@ -23,13 +24,17 @@ export const POST = route(async (req) => {
   const space = await getSpace(b, key);
   if (!space) throw new EngramError("not_found", "This deployment has no live demo.");
 
-  defer(() => b.auth.deleteGuests(new Date(Date.now() - GUEST_TTL_MS).toISOString(), CLEANUP_BATCH));
+  defer(async () => {
+    await b.auth.deleteGuests(new Date(Date.now() - GUEST_TTL_MS).toISOString(), CLEANUP_BATCH);
+    await sweepGuestSlots(b);
+  });
 
   // Already in (a guest coming back, or a member of the demo space): nothing to create.
   const me = await currentUser();
   if (me && (await membership(b, key, me.id))) return { ok: true, space: key };
 
-  rateLimit("demo-enter-ip", clientIp(req), 5, HOUR, "Too many demo visits from this network.");
+  // Shared across every server instance, and capped on live guests: each one below is a real account.
+  await admitGuest(b, clientIp(req));
 
   const { user, session } = await b.auth.createGuest();
   try {

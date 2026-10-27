@@ -7,6 +7,7 @@ import type { Backend } from "./types";
 export * from "./types";
 export { createLocalBackend, hashEmbed, HashEmbedder } from "./local";
 export { createAppwriteBackend } from "./appwrite";
+export { reserveSlot, type AttemptStore } from "./login-guard";
 
 const KEY = Symbol.for("engram.backend");
 type G = typeof globalThis & { [KEY]?: Backend };
