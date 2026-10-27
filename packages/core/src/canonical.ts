@@ -10,8 +10,12 @@ export function canonical(v: unknown): string {
   if (Array.isArray(v)) return "[" + v.map(canonical).join(",") + "]";
   if (typeof v === "object") {
     const o = v as Record<string, unknown>;
-    const keys = Object.keys(o).filter((k) => o[k] !== undefined).sort();
-    return "{" + keys.map((k) => JSON.stringify(k) + ":" + canonical(o[k])).join(",") + "}";
+    // Keys are normalised like values: hashing rests on one form, and leaving keys out of it was an asymmetry an
+    // attacker could aim at. Two keys that collide once normalised would make the object ambiguous, so they throw.
+    const pairs = Object.keys(o).filter((k) => o[k] !== undefined).map((k) => [k.normalize("NFC"), o[k]] as const);
+    pairs.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    for (let i = 1; i < pairs.length; i++) if (pairs[i][0] === pairs[i - 1][0]) throw new Error(`two keys share the same canonical key: ${pairs[i][0]}`);
+    return "{" + pairs.map(([k, val]) => JSON.stringify(k) + ":" + canonical(val)).join(",") + "}";
   }
   throw new Error(`unsupported type in hashed data: ${typeof v}`);
 }

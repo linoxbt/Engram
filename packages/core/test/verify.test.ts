@@ -56,7 +56,9 @@ describe("verifier", () => {
       const r = await run(res.entries, a.deepOnly ? "deep" : "standard");
       const rules = [...new Set(r.findings.map((f) => f.rule))].sort();
       expect(rules).toEqual([...a.expectRules].sort());
-      expect(r.findings.every((f) => f.severity === (a.id === "hide-supersession" ? "warning" : "critical"))).toBe(true);
+      // Derived state is recomputable from the signed chain, so hiding a supersession is tampering too, not a
+      // warning: outside the narrow in-flight window every attack in the lab is critical.
+      expect(r.findings.every((f) => f.severity === "critical")).toBe(true);
       if (a.id === "edit-text") {
         expect(r.findings[0].seq).toBe(5);
         expect(r.validThrough).toBe(4);
@@ -125,9 +127,17 @@ describe("hostile and malformed inputs", () => {
   it("entries with a null or garbage metadata, and null page elements, become findings instead of crashes", async () => {
     const entries = chain.entries.slice(0, 4);
     const headerOnly = (e: ChainEntry) => ({ $id: e.$id, h: e.metadata.h, hash: e.metadata.hash, metadata: null }) as unknown as ChainEntry;
-    // metadata: null reads as header-only and still verifies.
+    // metadata: null reads as header-only: the headers still verify, but standard mode must say out loud that the
+    // content, vector and derived checks never ran, or a server could switch them off one entry at a time.
     const r1 = await verifySpace({ space: SPACE, entries: entries.map(headerOnly) });
-    expect(r1.status).toBe("valid");
+    expect(r1.status).toBe("warning");
+    expect(r1.findings.map((f) => f.rule)).toEqual(["coverage"]);
+    expect(r1.checked).toEqual({ entries: 4, content: 0, vector: 0, derived: 0 });
+    // One entry alone reduced to its header, with the rest intact, is the selective downgrade: that is critical.
+    const some = [...entries];
+    some[2] = headerOnly(some[2]);
+    const r3 = await verifySpace({ space: SPACE, entries: some });
+    expect(r3.findings.some((f) => f.rule === "coverage" && f.severity === "critical")).toBe(true);
     // A null element and a metadata that is a number are reported, not thrown.
     const hostile = [entries[0], null, { $id: entries[2].$id, metadata: 7 }, entries[3]] as unknown as ChainEntry[];
     const r2 = await verifySpace({ space: SPACE, entries: hostile });

@@ -93,7 +93,9 @@ export function applyEntry(state: StateMap, id: string, h: Header): Set<string> 
         }
       // "refine" (both are true) and "dismiss" (the flag was wrong) are resolutions: both close the open pair.
       // The classifier's refines relations never become link entries (see retryRelate), so this cannot fire for them.
-      } else if (w) unlinkPair(t, w);
+      // Spelled out rather than left as a fall-through: a link forged with a memory kind must not clear a conflict,
+      // and `headerProblem` refuses one before it ever reaches here.
+      } else if ((h.kind === "refine" || h.kind === "dismiss") && w) unlinkPair(t, w);
     }
   }
   return changed;
@@ -103,7 +105,8 @@ export function applyEntry(state: StateMap, id: string, h: Header): Set<string> 
 export function replay(entries: { id: string; h: Header }[], until?: string): StateMap {
   const state: StateMap = new Map();
   for (const e of entries) {
-    if (until && e.h.createdAt > until) break;
+    // Skip, never stop: entries are ordered by seq, not by time, so one later-dated entry must not hide the rest.
+    if (until && e.h.createdAt > until) continue;
     applyEntry(state, e.id, e.h);
   }
   return state;

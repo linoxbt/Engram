@@ -3,7 +3,7 @@ import { verifySpace, type Report } from "@engram/core";
 import { caughtBy, LAYER, reportHeadline, staleBy, warningReason } from "@/lib/client/report-copy";
 import { SPACE, TestChain, checkpointAt, keys } from "../../../packages/core/test/helpers";
 
-const base: Report = { space: SPACE, entries: 5, validThrough: 4, checkpointsValid: 1, checkpointsTotal: 1, latestCheckpoint: null, findings: [], status: "valid", checkedAt: "2026-10-25T00:00:00.000Z", mode: "public" };
+const base: Report = { space: SPACE, entries: 5, checked: { entries: 5, content: 0, vector: 0, derived: 0 }, signaturesChecked: true, validThrough: 4, provenThrough: 4, checkpointsValid: 1, checkpointsUnchecked: 0, checkpointsTotal: 1, latestCheckpoint: null, findings: [], status: "valid", checkedAt: "2026-10-25T00:00:00.000Z", mode: "public" };
 
 describe("report headlines", () => {
   it("never calls a warning verified, and names the warning", async () => {

@@ -14,6 +14,11 @@
  *  7. Every ref points to an earlier entry of the same space.
  *  8. createdAt never decreases (2 s tolerance for clock skew).
  *
+ * Coverage: a check that could not run is reported, never passed over. An entry served header-only (or, in deep
+ * mode, without its vector) switches off the rules that would have covered it, so `Report.checked` says how many
+ * entries each rule really ran on and a `coverage` finding names the ones that were downgraded. `public` mode is
+ * the one legitimate headers-only mode.
+ *
  * Erasure in progress: between a forget entry and the erasure of its target's text, the text is legitimately still
  * stored, and the forget entry carries `applied: "false"`. That flag is operational and not hashed, so anyone with
  * database access can set it. It therefore only downgrades stored text to a warning for forget entries among the
@@ -34,6 +39,13 @@ import type { ChainEntry, Checkpoint, Finding, Header, PublicEntry, Report, Veri
 const SKEW_MS = 2000;
 /** Forget entries this close to the head may still be erasing their target (see the header comment). */
 export const ERASURE_WINDOW = 25;
+/**
+ * Derived state has its own, much shorter in-flight window. A neighbour update commits in the same request as the
+ * append that caused it (erasure, by contrast, waits for a later sweep), and an entry whose update has not landed
+ * still says so with `applied: "false"`. So only the entry being written, and the one before it in a page read
+ * mid-write, can legitimately disagree with the replay; anything older is a rewrite, not a race.
+ */
+export const DERIVED_WINDOW = 2;
 
 export interface EntryResult { seq: number; ok: boolean }
 
@@ -44,6 +56,7 @@ const isPublic = (e: Input): e is PublicEntry => typeof (e as ChainEntry).metada
 interface Kept { id: string; h: Header; hash: string; full?: ChainEntry; malformed?: boolean }
 
 const ZERO = "0".repeat(64);
+const LINK_KINDS = ["supersede", "refine", "dismiss", "contradict"];
 const STRING_FIELDS = ["space", "seq", "prevHash", "op", "kind", "agent", "contentHash", "embHash", "model", "importance", "confidence", "validFrom", "createdAt"];
 
 /** Shape check before hashing: a tampered header must yield a finding, never an exception. */
@@ -54,6 +67,9 @@ export function headerProblem(h: unknown): string | null {
   for (const k of STRING_FIELDS) if (typeof o[k] !== "string") return `${k} is not a string`;
   for (const k of ["subject", "source"]) if (o[k] !== null && typeof o[k] !== "string") return `${k} is not a string`;
   if (!["remember", "reflect", "forget", "link"].includes(o.op as string)) return "unknown op";
+  // A link entry's kind decides what the replay does with the pair, so it is as load-bearing as op itself:
+  // without this, a link forged with kind "fact" fell through the reducer and quietly unlinked a contradiction.
+  if (o.op === "link" && !LINK_KINDS.includes(o.kind as string)) return "a link entry's kind is not a link kind";
   const r = o.refs as Record<string, unknown> | undefined;
   if (!r || typeof r !== "object") return "refs are missing";
   for (const k of ["supersedes", "contradicts", "related", "derivedFrom"]) {
@@ -74,10 +90,23 @@ export class ChainVerifier {
   private kept: Kept[] = [];
   private prevHash: string | null = null;
   private prevSeq = -1;
-  private prevCreated = "";
+  /** Rule 8 runs against the running maximum, not the previous entry: otherwise the chain can walk back forever. */
+  private maxCreated = -Infinity;
   private state: StateMap = new Map();
   /** Targets of forget entries whose erasure has not landed yet (applied: "false"), with the forget entry's seq. */
   private erasing = new Map<string, number>();
+  /** What the verifier actually ran, reported as `checked` so a skipped check can never read as a passed one. */
+  private counts = { entries: 0, content: 0, vector: 0, derived: 0 };
+  /** Seqs the server served header-only although the mode asks for contents, and seqs with no vector in deep mode. */
+  private headerOnly: number[] = [];
+  private noVector: number[] = [];
+  /** Seq of the entry that last changed each ID's derived state, and the entries that say they are mid-update. */
+  private changedBy = new Map<string, number>();
+  private unapplied = new Set<number>();
+  private signaturesChecked = false;
+  private provenThrough = -1;
+  /** Checkpoints that were otherwise sound but whose signature nobody could check. Never counted as valid. */
+  private unchecked = 0;
   private trusted?: TrustedCheckpoint;
   /** Entries before this seq were vouched for elsewhere (a verified checkpoint); see `from`. */
   private offset = 0;
@@ -95,13 +124,15 @@ export class ChainVerifier {
     this.space = opts.space;
     this.mode = opts.mode ?? "standard";
     this.publicKeyHex = opts.publicKeyHex;
-    this.publicKeys = opts.publicKeys ?? {};
+    // Null-prototype: otherwise keyId "toString" resolves an inherited member and reads as a bad signature, and a
+    // caller's "__proto__" entry would never be found at all.
+    this.publicKeys = Object.assign(Object.create(null) as Record<string, string>, opts.publicKeys ?? {});
     this.trusted = opts.trusted;
     if (opts.from && opts.from.size > 0) {
       this.offset = opts.from.size;
       this.prevSeq = opts.from.size - 1;
       this.prevHash = opts.from.head;
-      this.prevCreated = opts.from.createdAt;
+      this.maxCreated = Date.parse(opts.from.createdAt);
     }
   }
 
@@ -145,6 +176,8 @@ export class ChainVerifier {
         out.push({ seq, ok: false });
         continue;
       }
+      const created = Date.parse(h.createdAt);
+      this.counts.entries++;
       try {
 
       // Rule 2: link.
@@ -170,25 +203,42 @@ export class ChainVerifier {
         this.add({ seq, rule: "refs", severity: "critical", message: `Entry #${seq} is a ${h.op} entry without a target.` });
       }
 
-      // Rule 8: time never runs backwards.
-      if (this.prevCreated && Date.parse(h.createdAt) + SKEW_MS < Date.parse(this.prevCreated)) {
-        this.add({ seq, rule: "time", severity: "critical", message: `Entry #${seq} is dated before the entry that precedes it.` });
+      // Rule 8: time never runs backwards. Against the running maximum, so SKEW_MS is an allowance per entry and
+      // not a budget per step that a chain can spend over and over to drift back without limit.
+      if (Number.isFinite(this.maxCreated) && created + SKEW_MS < this.maxCreated) {
+        this.add({ seq, rule: "time", severity: "critical", message: `Entry #${seq} is dated before an entry that precedes it.` });
       }
 
-      if (!isPublic(raw)) {
+      if (isPublic(raw)) {
+        // Rule 4, rule 6 and the derived replay all need the entry's contents. The mode decides whether that is
+        // legitimate; either way it is counted and, outside public mode, reported by `finish`.
+        if (this.mode !== "public") this.headerOnly.push(seq);
+      } else {
         const m = raw.metadata;
+        if (m.applied === "false") this.unapplied.add(seq);
         if (h.op === "forget" && r.target && m.applied === "false") this.erasing.set(r.target, seq);
         // Rule 4: content.
         if (m.c?.text != null) {
+          this.counts.content++;
           if (!m.c.salt || (await contentHash(m.c.salt, m.c.text)) !== h.contentHash) {
             this.add({ seq, rule: "content", severity: "critical", message: `Memory #${seq}'s text does not match its content hash. It was edited after it was written.` });
+          } else if (m.c.text !== m.c.text.normalize("NFC")) {
+            // The hash is taken over the NFC form, so a differently composed string with the same meaning passes
+            // rule 4. Keeping the hash as it is keeps every stored chain verifying; the text itself is flagged.
+            this.add({ seq, rule: "content", severity: "warning", message: `Memory #${seq}'s text is not in normal form NFC, so its content hash does not pin the exact characters stored.` });
           }
         }
         // Rule 6: vector (deep mode).
-        if (this.mode === "deep" && raw.vector && !isTombstone(raw.vector)) {
+        if (this.mode === "deep" && !Array.isArray(raw.vector)) this.noVector.push(seq);
+        else if (this.mode === "deep" && raw.vector && !isTombstone(raw.vector)) {
           const qv = quantize(raw.vector);
-          if ((await embHash(qv)) !== h.embHash && !(m.c?.salt && (await embHash(qv, m.c.salt)) === h.embHash)) {
-            this.add({ seq, rule: "vector", severity: "critical", message: `Memory #${seq}'s vector was replaced. Recall results could be poisoned.` });
+          try {
+            const bad = (await embHash(qv)) !== h.embHash && !(m.c?.salt && (await embHash(qv, m.c.salt)) === h.embHash);
+            this.counts.vector++;
+            if (bad) this.add({ seq, rule: "vector", severity: "critical", message: `Memory #${seq}'s vector was replaced. Recall results could be poisoned.` });
+          } catch {
+            // Out of range or not a number: not a vector this chain could ever have hashed.
+            this.add({ seq, rule: "vector", severity: "critical", message: `Memory #${seq}'s vector holds values no embedding can hold. It was written outside Engram.` });
           }
         }
         // Top-level copies of hashed fields.
@@ -205,11 +255,12 @@ export class ChainVerifier {
       } catch (e) {
         this.add({ seq, rule: "structure", severity: "critical", message: `Entry #${seq} could not be checked: ${e instanceof Error ? e.message : String(e)}.` });
       }
-      applyEntry(this.state, id, h);
+      // The causing entry decides whether a later derived mismatch is a race or a rewrite (see DERIVED_WINDOW).
+      for (const cid of applyEntry(this.state, id, h)) this.changedBy.set(cid, seq);
       this.kept.push({ id, h, hash, full: isPublic(raw) ? undefined : raw });
       this.prevHash = hash;
       this.prevSeq = seq;
-      this.prevCreated = h.createdAt;
+      if (Number.isFinite(created) && created > this.maxCreated) this.maxCreated = created;
       out.push({ seq, ok: this.criticalCount() === before });
     }
     return out;
@@ -221,6 +272,7 @@ export class ChainVerifier {
   async finish(checkpoints: Checkpoint[] = []): Promise<Report> {
     const resumed = this.offset > 0;
     if (this.mode !== "public" && !resumed) this.checkDerived();
+    this.checkCoverage();
     const cps = resumed ? 0 : await this.checkCheckpoints(checkpoints);
 
     const crit = this.findings.filter((f) => f.severity === "critical");
@@ -231,8 +283,12 @@ export class ChainVerifier {
     return {
       space: this.space,
       entries: n,
+      checked: { ...this.counts },
+      signaturesChecked: this.signaturesChecked,
       validThrough,
+      provenThrough: this.provenThrough,
       checkpointsValid: cps,
+      checkpointsUnchecked: this.unchecked,
       checkpointsTotal: resumed ? 0 : checkpoints.length,
       latestCheckpoint: latest ? { seq: Number(latest.seq), size: cpSize(latest), root: latest.root, createdAt: latest.createdAt } : null,
       findings: this.findings,
@@ -240,6 +296,29 @@ export class ChainVerifier {
       checkedAt: iso(),
       mode: this.mode,
     };
+  }
+
+  /**
+   * Coverage. Serving one entry header-only, or without its vector in deep mode, silently switches off the checks
+   * that would have covered it. Nothing legitimate omits only some entries' contents, and that shape is exactly
+   * how a hostile server would hide a single edited entry, so a partial omission is critical. A response that is
+   * uniformly header-only is a mode mismatch rather than evidence of tampering, so it is a warning — but it is
+   * still a finding, because the report must never read "valid" for checks that never ran. `public` mode is the
+   * one legitimate headers-only mode and is exempt.
+   */
+  private checkCoverage() {
+    const total = this.kept.length;
+    const say = (seqs: number[], rule: Finding["rule"], what: string, skipped: string) => {
+      const all = seqs.length >= total;
+      this.add({
+        seq: seqs[0], rule, severity: all ? "warning" : "critical",
+        message: all
+          ? `No entry was served with its ${what}, so ${skipped} did not run.`
+          : `${listSeqs(seqs)} served without ${seqs.length === 1 ? "its" : "their"} ${what} while the rest were served in full, so ${skipped} did not run for ${seqs.length === 1 ? "it" : "them"}.`,
+      });
+    };
+    if (this.headerOnly.length) say(this.headerOnly, "coverage", "contents", `the content and derived checks ${this.mode} mode promises`);
+    if (this.noVector.length) say(this.noVector, "vector", "vector", "the vector check deep mode promises");
   }
 
   private checkDerived() {
@@ -271,11 +350,17 @@ export class ChainVerifier {
           this.add({ seq, rule: "vector", severity: "warning", message: `Memory #${seq} was forgotten but its vector is still stored.` });
         }
       }
+      // Derived state is recomputable from the signed chain, so a mismatch is unambiguous — except while the
+      // entry that caused it is still being applied. That is the only honest excuse, and it is narrow.
+      const by = this.changedBy.get(k.id);
+      const inFlight = by !== undefined && (this.unapplied.has(by) || by >= this.kept.length - DERIVED_WINDOW);
+      const severity: Finding["severity"] = inFlight ? "warning" : "critical";
       const d = m.d;
       if (!d || typeof d !== "object") {
-        this.add({ seq, rule: "derived", severity: "warning", message: `Entry #${seq} has no derived state; replay says ${want.status}.` });
+        this.add({ seq, rule: "derived", severity, message: `Entry #${seq} has no derived state; replay says ${want.status}.` });
         continue;
       }
+      this.counts.derived++;
       const diffs: string[] = [];
       if (d.status !== want.status) diffs.push(`status says ${d.status}; replay says ${want.status}${want.supersededBy ? ` by #${seqOf(want.supersededBy)}` : ""}`);
       if (d.validTo !== want.validTo) diffs.push("validity end differs");
@@ -286,7 +371,7 @@ export class ChainVerifier {
         diffs.push("searchable copies disagree with derived state");
       }
       if (diffs.length) {
-        this.add({ seq, rule: "derived", severity: "warning", message: `Memory #${seq}: ${diffs.join("; ")}.` });
+        this.add({ seq, rule: "derived", severity, message: `Memory #${seq}: ${diffs.join("; ")}.` });
       }
     }
   }
@@ -299,12 +384,20 @@ export class ChainVerifier {
       return !problem;
     });
     const hasKeys = !!this.publicKeyHex || Object.keys(this.publicKeys).length > 0;
+    this.signaturesChecked = hasKeys && checkpoints.length > 0;
     if (checkpoints.length && !hasKeys) {
-      this.add({ seq: Math.max(0, this.kept.length - 1), rule: "signature", severity: "warning", message: "Checkpoint signatures were not checked: no public key was given to the verifier." });
+      // Stays a warning, not a critical: a missing key is this verifier's own configuration, and calling every
+      // unpinned deployment "tampered" would cry wolf. What changes is that nothing here is counted as valid.
+      this.add({ seq: Math.max(0, this.kept.length - 1), rule: "signature", severity: "warning", message: `No public key was given to the verifier, so ${checkpoints.length === 1 ? "this checkpoint proves" : "these checkpoints prove"} nothing: their signatures were not checked.` });
     }
     const t = this.trusted;
     if (!checkpoints.length && !t) return 0;
     const sorted = [...checkpoints].sort((a, b) => cpSize(a) - cpSize(b));
+    // The first checkpoint presented must be the genesis one. Otherwise a server can drop the early checkpoints,
+    // and the outside anchors that published their roots, and every remaining link still checks out.
+    if (sorted.length && !t && sorted[0].prevCheckpoint !== null) {
+      this.add({ seq: 0, rule: "checkpoint", severity: "warning", message: `The earliest checkpoint offered (${checkpointFileId(sorted[0])}) is not the first checkpoint of this space: it links back to ${sorted[0].prevCheckpoint}, which was not presented.` });
+    }
     const leaves = await Promise.all(this.kept.map((k) => leafHash(fromHex(k.hash))));
     const memo = new Map<string, Uint8Array>();
     const rootOf = async (lo: number, hi: number): Promise<Uint8Array> => {
@@ -329,7 +422,7 @@ export class ChainVerifier {
       const at = size - 1;
       let ok = true;
       if (hasKeys) {
-        const key = this.publicKeys[cp.keyId] ?? this.publicKeyHex;
+        const key = this.publicKeys[cp.keyId] ?? this.publicKeyHex; // null-prototype: never an inherited member
         if (!key) {
           ok = false;
           this.add({ seq: at, rule: "signature", severity: "critical", message: `Checkpoint ${checkpointFileId(cp)} is signed with an unknown key (${cp.keyId}).` });
@@ -364,7 +457,12 @@ export class ChainVerifier {
           });
         }
       }
-      if (ok) { valid++; lastGoodSize = size; }
+      // `lastGoodSize` tracks the structurally sound prefix for the message above; validity needs a signature too.
+      if (ok) {
+        lastGoodSize = size;
+        if (hasKeys) { valid++; this.provenThrough = Math.max(this.provenThrough, at); }
+        else this.unchecked++;
+      }
       prev = cp;
     }
 
@@ -419,6 +517,12 @@ export function checkpointProblem(cp: unknown, space?: string): string | null {
   return null;
 }
 
+const listSeqs = (seqs: number[]) => {
+  const shown = seqs.slice(0, 8).map((s) => `#${s}`);
+  const more = seqs.length - shown.length;
+  return `${seqs.length === 1 ? "Entry" : "Entries"} ${shown.join(", ")}${more ? ` and ${more} more` : ""} ${seqs.length === 1 ? "was" : "were"}`;
+};
+
 const sev = (s: Finding["severity"]) => (s === "critical" ? 0 : s === "warning" ? 1 : 2);
 const WORDS = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
 const numberWord = (n: number) => WORDS[n] ?? String(n);
@@ -440,17 +544,33 @@ export async function verifySpace(args: {
 
 export { entryId };
 
+/** Key ids that would write through to Object.prototype, or read back as something that was never configured. */
+const RESERVED_KEY_IDS = ["__proto__", "constructor", "prototype"];
+
 /**
- * Parses a keyring: "keyId:hex,keyId:hex". Malformed items are dropped. A single legacy key without an ID is
- * listed under `fallbackId` so checkpoints signed before keyrings existed still verify.
+ * Parses a keyring: "keyId:hex,keyId:hex". A single legacy key without an ID is listed under `fallbackId` so
+ * checkpoints signed before keyrings existed still verify. Items that do not parse are returned in `dropped`
+ * instead of vanishing: one malformed item used to empty the ring, which downgrades a site from pinned keys to
+ * trusting whatever the server offers, silently. The map has a null prototype so a key id can never resolve an
+ * inherited member, and reserved ids are refused outright.
  */
-export function parseKeyring(list: string | undefined | null, legacyKey?: string | null, fallbackId?: string | null): Record<string, string> {
-  const out: Record<string, string> = {};
+export function parseKeyringStrict(list: string | undefined | null, legacyKey?: string | null, fallbackId?: string | null): { keys: Record<string, string>; dropped: string[] } {
+  const keys = Object.create(null) as Record<string, string>;
+  const dropped: string[] = [];
   for (const item of (list ?? "").split(",")) {
-    const m = /^\s*([A-Za-z0-9._-]{1,64})\s*:\s*([0-9a-f]{64})\s*$/.exec(item);
-    if (m) out[m[1]] = m[2];
+    if (!item.trim()) continue;
+    const m = /^\s*([A-Za-z0-9._-]{1,64})\s*:\s*([0-9a-fA-F]{64})\s*$/.exec(item);
+    if (m && !RESERVED_KEY_IDS.includes(m[1])) keys[m[1]] = m[2].toLowerCase();
+    else dropped.push(item.trim());
   }
-  if (legacyKey && /^[0-9a-f]{64}$/.test(legacyKey) && fallbackId && !out[fallbackId]) out[fallbackId] = legacyKey;
-  return out;
+  const legacy = legacyKey?.trim();
+  if (legacy && /^[0-9a-fA-F]{64}$/.test(legacy) && fallbackId && !RESERVED_KEY_IDS.includes(fallbackId) && !keys[fallbackId]) keys[fallbackId] = legacy.toLowerCase();
+  else if (legacy && fallbackId && !keys[fallbackId]) dropped.push(fallbackId);
+  return { keys, dropped };
+}
+
+/** The map alone, for callers that only need the ring. See `parseKeyringStrict` to learn what was dropped. */
+export function parseKeyring(list: string | undefined | null, legacyKey?: string | null, fallbackId?: string | null): Record<string, string> {
+  return parseKeyringStrict(list, legacyKey, fallbackId).keys;
 }
 
