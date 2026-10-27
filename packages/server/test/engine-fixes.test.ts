@@ -50,20 +50,27 @@ function oneAtATime(b: Backend, fail: (op: TxOp) => boolean) {
   };
 }
 
-/** Every backend call takes `ms`: elapsed time / ms is the number of sequential round trips. */
-function slow(b: Backend, ms: number) {
-  const calls: string[] = [];
+/**
+ * Counts backend calls and the most that were ever in flight at once. Every call is held for `ms` so overlapping
+ * work really overlaps; both numbers are counts, never elapsed time, so a loaded machine cannot change them.
+ */
+function trace(b: Backend, ms: number) {
+  const t = { calls: [] as string[], inFlight: 0, peak: 0 };
   const wrap = (obj: Record<string, unknown>, name: string, methods: string[]) => {
     for (const m of methods) {
       const orig = (obj[m] as (...a: unknown[]) => Promise<unknown>).bind(obj);
-      obj[m] = async (...args: unknown[]) => { calls.push(`${name}.${m}`); await new Promise((r) => setTimeout(r, ms)); return orig(...args); };
+      obj[m] = async (...args: unknown[]) => {
+        t.calls.push(`${name}.${m}`);
+        t.peak = Math.max(t.peak, ++t.inFlight);
+        try { await new Promise((r) => setTimeout(r, ms)); return await orig(...args); } finally { t.inFlight--; }
+      };
     }
   };
   wrap(b.vectors as never, "vectors", ["create", "get", "update", "delete", "query", "transact"]);
   wrap(b.files as never, "files", ["put", "get", "list", "delete"]);
   wrap(b.teams as never, "teams", ["getPrefs", "updatePrefs"]);
   wrap(b.embedder as never, "embedder", ["embed"]);
-  return calls;
+  return t;
 }
 
 describe("derived state follows chain order", () => {
@@ -123,19 +130,18 @@ describe("remember round trips", () => {
     const agent = await authAgent(b, key, (t) => { tasks.push(t()); });
     await remember(agent, { text: "Ada is on the Pro plan, billed monthly.", subject: "customer:ada" });
     await Promise.all(tasks);
-    const ms = 40;
-    const calls = slow(b, ms);
-    const t = Date.now();
+    const t = trace(b, 2);
     // An agent write with an idempotency key whose classification supersedes a neighbour: the slowest common path.
     const r = await remember(agent, { text: "Ada downgraded from the Pro plan to Basic on 22 October.", subject: "customer:ada", idempotencyKey: "k1" });
-    const depth = (Date.now() - t) / ms;
-    const before = calls.length;
+    const roundTrips = t.calls.length;
+    const peak = t.peak;
     await Promise.all(tasks);
     expect(r.relations.map((x) => x.relation)).toEqual(["supersedes"]);
-    // 17 sequential round trips before this change; now: lock+replay | rate | embed | pending, nearest, head+refs,
-    // create+pending, the neighbour update.
-    expect(depth).toBeLessThan(8);
-    void before;
+    // Side by side: lock+replay, rate, embed and pending all start before any of them answers.
+    expect(peak).toBeGreaterThanOrEqual(4);
+    // 17 round trips before this change; now: lock+replay | rate | embed | pending, nearest, head+refs,
+    // create+pending, the neighbour update. Counted, not timed, so load cannot flake it.
+    expect(roundTrips).toBeLessThanOrEqual(15);
     expect((await verifyStoredSpace(b, space)).findings).toEqual([]);
   });
 });
