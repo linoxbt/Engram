@@ -227,9 +227,10 @@ const ATTRS = ["plan", "address", "email", "phone", "role", "price", "status", "
 const STOP = new Set("a an the is are was were be of to in on at for and or by with from as it its this that he she they his her their our we i".split(" "));
 
 const words = (t: string) => t.toLowerCase().replace(/'s\b/g, "").split(/[^a-z0-9]+/).filter((w) => w && !STOP.has(w));
-// Proper nouns and codes stand in for "values". Capitalised function words ("The", "This") are not values.
+// Proper nouns, numbers and codes stand in for "values". Capitalised function words ("The", "This") are not values.
 const COMMON = new Set("today yesterday tomorrow also however please note".split(" "));
-const values = (t: string) => new Set((t.match(/\b[A-Z][a-zA-Z0-9-]+\b/g) ?? []).map((w) => w.toLowerCase()).filter((w) => !STOP.has(w) && !COMMON.has(w)));
+const VALUE = /\b(?:[A-Z][a-zA-Z0-9-]+|[a-zA-Z0-9-]*\d[a-zA-Z0-9-]*)\b/g;
+const values = (t: string) => new Set((t.match(VALUE) ?? []).map((w) => w.toLowerCase()).filter((w) => !STOP.has(w) && !COMMON.has(w)));
 
 export function heuristicRelate(m: NewMemory, ns: Neighbour[]): Relation[] {
   const nw = new Set(words(m.text));
@@ -241,15 +242,23 @@ export function heuristicRelate(m: NewMemory, ns: Neighbour[]): Relation[] {
     const attr = ATTRS.find((a) => nw.has(a) && ow.has(a));
     const later = m.createdAt >= n.createdAt;
     if (overlap < 0.2 && !attr) return { id: n.id, relation: "unrelated" as const, confidence: 0.7, reason: "Little in common." };
-    if (attr) {
+    // Which words each statement has and the other does not. Each side having some is a REPLACEMENT: the two
+    // restate one fact with a different value, whatever the attribute is called and however the value is written.
+    // Only the new side having some is an ADDITION: the same fact with more detail.
+    const onlyOld = [...ow].filter((w) => !nw.has(w));
+    const replaced = overlap >= 0.5 && onlyOld.length > 0 && [...nw].some((w) => !ow.has(w));
+    const about = attr ? `the ${attr}` : "the same thing";
+    if (attr || replaced) {
       const nv = values(m.text), ov = values(n.text);
-      // Supersede only when the new statement reports a change to the same attribute and names a new value.
+      // Supersede only when the new statement reports a change and names a new value: retiring a memory on a
+      // rule's word stays conservative, and a named value (a proper noun, a number, a code) is the evidence.
       if (CHANGE.test(m.text) && later && [...nv].some((v) => !ov.has(v))) {
-        return { id: n.id, relation: "supersedes" as const, confidence: 0.8, reason: `New statement reports a change to the ${attr}.` };
+        return { id: n.id, relation: "supersedes" as const, confidence: 0.8, reason: `New statement reports a change to ${about}.` };
       }
-      // Contradict when a value the old statement relied on is absent from the new one.
-      if ([...ov].some((v) => !nv.has(v))) {
-        return { id: n.id, relation: "contradicts" as const, confidence: 0.6, reason: `They state different values for the ${attr}.` };
+      // Contradict when the new statement drops a value or a word the old one relied on. Without a model this is
+      // the honest answer: both cannot be true, and a person settles it. "Refines" would leave both standing.
+      if (replaced || [...ov].some((v) => !nv.has(v))) {
+        return { id: n.id, relation: "contradicts" as const, confidence: 0.6, reason: `They state different values for ${about}.` };
       }
     }
     return { id: n.id, relation: overlap >= 0.5 ? ("refines" as const) : ("unrelated" as const), confidence: 0.55, reason: overlap >= 0.5 ? "Adds detail to the same fact." : "Similar words, different facts." };

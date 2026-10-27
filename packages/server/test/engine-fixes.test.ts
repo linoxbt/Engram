@@ -51,18 +51,30 @@ function oneAtATime(b: Backend, fail: (op: TxOp) => boolean) {
 }
 
 /**
- * Counts backend calls and the most that were ever in flight at once. Every call is held for `ms` so overlapping
- * work really overlaps; both numbers are counts, never elapsed time, so a loaded machine cannot change them.
+ * Counts backend calls and the most that were ever in flight at once. The first calls are held at a barrier until
+ * `parallel` of them have arrived, so overlapping work always overlaps however loaded the machine is; code that
+ * waits for each call in turn never fills the barrier and reaches its escape instead. Both results are counts,
+ * never elapsed time.
  */
-function trace(b: Backend, ms: number) {
+function trace(b: Backend, parallel: number) {
   const t = { calls: [] as string[], inFlight: 0, peak: 0 };
+  let waiting: (() => void)[] = [];
+  let armed = true;
+  const barrier = async () => {
+    if (!armed) return;
+    if (waiting.length + 1 >= parallel) { armed = false; const w = waiting; waiting = []; for (const go of w) go(); return; }
+    await new Promise<void>((resolve) => {
+      const escape = setTimeout(() => { armed = false; const w = waiting; waiting = []; for (const go of w) go(); }, 2000);
+      waiting.push(() => { clearTimeout(escape); resolve(); });
+    });
+  };
   const wrap = (obj: Record<string, unknown>, name: string, methods: string[]) => {
     for (const m of methods) {
       const orig = (obj[m] as (...a: unknown[]) => Promise<unknown>).bind(obj);
       obj[m] = async (...args: unknown[]) => {
         t.calls.push(`${name}.${m}`);
         t.peak = Math.max(t.peak, ++t.inFlight);
-        try { await new Promise((r) => setTimeout(r, ms)); return await orig(...args); } finally { t.inFlight--; }
+        try { await barrier(); return await orig(...args); } finally { t.inFlight--; }
       };
     }
   };
@@ -130,7 +142,7 @@ describe("remember round trips", () => {
     const agent = await authAgent(b, key, (t) => { tasks.push(t()); });
     await remember(agent, { text: "Ada is on the Pro plan, billed monthly.", subject: "customer:ada" });
     await Promise.all(tasks);
-    const t = trace(b, 2);
+    const t = trace(b, 4);
     // An agent write with an idempotency key whose classification supersedes a neighbour: the slowest common path.
     const r = await remember(agent, { text: "Ada downgraded from the Pro plan to Basic on 22 October.", subject: "customer:ada", idempotencyKey: "k1" });
     const roundTrips = t.calls.length;

@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { iso } from "@engram/core";
 import {
-  append, authAgent, createAgent, embedDocument, getEntry, getSpace, heuristicRelate, notesOf, recall, relate, remember,
+  append, authAgent, createAgent, embedDocument, getEntry, getSpace, heuristicRelate, listConflicts, notesOf, recall, relate, remember,
   retryRelate, runCheckpoint, sweepPendingRelate, verifyStoredSpace, verifyThrottled,
   type Neighbour, type NewMemory, type Scope,
 } from "../src/index";
@@ -142,5 +142,46 @@ describe("the pending-classification sweep always makes progress", () => {
     // With the window free, the next sweep reaches the entry behind them.
     expect(await sweepPendingRelate(b, space)).toBe(1);
     expect((await getEntry(b, recent))!.metadata.d.relateStatus).toBe("done");
+  });
+});
+
+describe("with no classifier model a changed fact reaches the conflict inbox", () => {
+  // Six realistic updates, none of which uses an explicit change verb: the attribute stays, the value does not.
+  const UPDATES: [string, string][] = [
+    ["The widget color is blue.", "The widget color is red."],
+    ["The payout address is 0xAAA1.", "The payout address is 0xBBB2."],
+    ["The deploy status is green.", "The deploy status is red."],
+    ["The primary region is Frankfurt.", "The primary region is London."],
+    ["The retry limit is 3.", "The retry limit is 10."],
+    ["Ada is on the Pro plan.", "Ada is on the Basic plan."],
+  ];
+
+  it.each(UPDATES)("%s then %s is a conflict, not a refinement", (older, newer) => {
+    const [rel] = heuristicRelate(mem(newer), [neighbour(older, { distance: 0.3 })]);
+    expect(rel.relation).toBe("contradicts");
+  });
+
+  it("a statement that only adds detail is still a refinement", () => {
+    const [rel] = heuristicRelate(
+      mem("The widget color is blue, matching the 2024 catalogue."),
+      [neighbour("The widget color is blue.", { distance: 0.3 })]);
+    expect(rel.relation).toBe("refines");
+  });
+
+  it("two unrelated facts about different things stay unrelated", () => {
+    const [rel] = heuristicRelate(
+      mem("The build pipeline runs every Tuesday night."),
+      [neighbour("The widget color is blue.", { distance: 0.6 })]);
+    expect(rel.relation).toBe("unrelated");
+  });
+
+  it("the changed value lands in the conflict inbox end to end", async () => {
+    const { b, ctx, drain } = await setup();
+    await remember(ctx, { text: "The primary region is Frankfurt.", subject: "infra:eu" });
+    await remember(ctx, { text: "The primary region is London.", subject: "infra:eu" });
+    await drain();
+    const { pairs } = await listConflicts({ ...ctx, space: (await getSpace(b, ctx.space.key))! });
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].via).toBe("heuristic");
   });
 });
