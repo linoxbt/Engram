@@ -109,3 +109,37 @@ describe("checkpoint keyring", () => {
     expect(parseKeyring(`k1:${hex},bad,k2:xyz`, "b".repeat(64), "legacy")).toEqual({ k1: hex, legacy: "b".repeat(64) });
   });
 });
+
+describe("hostile and malformed inputs", () => {
+  it("a frontier that does not match the size is refused, never hashed into a wrong root", async () => {
+    const { frontierAppendHex, rootHex } = await import("../src/index");
+    const hashes = chain.entries.slice(0, 6).map((e) => e.metadata.hash);
+    const f3 = await frontierAppendHex([], 0, hashes.slice(0, 3));
+    await expect(frontierAppendHex(f3.slice(1), 3, hashes.slice(3))).rejects.toThrow(/frontier has 1 subtrees/);
+    await expect(frontierAppendHex(f3, 4, hashes.slice(3))).rejects.toThrow(RangeError);
+    // The matching frontier still reproduces the full rebuild.
+    const root = await (await import("../src/index")).frontierRootHex(await frontierAppendHex(f3, 3, hashes.slice(3)));
+    expect(root).toBe(await rootHex(hashes));
+  });
+
+  it("entries with a null or garbage metadata, and null page elements, become findings instead of crashes", async () => {
+    const entries = chain.entries.slice(0, 4);
+    const headerOnly = (e: ChainEntry) => ({ $id: e.$id, h: e.metadata.h, hash: e.metadata.hash, metadata: null }) as unknown as ChainEntry;
+    // metadata: null reads as header-only and still verifies.
+    const r1 = await verifySpace({ space: SPACE, entries: entries.map(headerOnly) });
+    expect(r1.status).toBe("valid");
+    // A null element and a metadata that is a number are reported, not thrown.
+    const hostile = [entries[0], null, { $id: entries[2].$id, metadata: 7 }, entries[3]] as unknown as ChainEntry[];
+    const r2 = await verifySpace({ space: SPACE, entries: hostile });
+    expect(r2.status).toBe("tampered");
+    expect(r2.findings.some((f) => f.rule === "structure" || f.rule === "header")).toBe(true);
+  });
+
+  it("sameSet treats duplicates as one element", async () => {
+    const { sameSet } = await import("../src/replay");
+    expect(sameSet(["m_1", "m_1"], ["m_1", "m_2"])).toBe(false);
+    expect(sameSet(["m_2", "m_1"], ["m_1", "m_2"])).toBe(true);
+    expect(sameSet(["m_1", "m_1"], ["m_1"])).toBe(true);
+    expect(sameSet([], [])).toBe(true);
+  });
+});

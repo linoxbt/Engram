@@ -85,6 +85,9 @@ export const verifyProofHex = (leaf: string, index: number, size: number, path: 
  * the largest-power-of-two split merkleRoot uses (the leftmost subtree is the largest power of two below n).
  */
 export async function frontierAppend(frontier: Uint8Array[], size: number, leaves: Uint8Array[]): Promise<Uint8Array[]> {
+  // A frontier that does not match the size (a bad sidecar restore) must fail loudly here: the collapse loop
+  // below would otherwise pop past the end and hash garbage into the root.
+  if (frontier.length !== popcount(size)) throw new RangeError(`frontier has ${frontier.length} subtrees but a tree over ${size} leaves has ${popcount(size)}`);
   const out = [...frontier];
   let n = size;
   for (const leaf of leaves) {

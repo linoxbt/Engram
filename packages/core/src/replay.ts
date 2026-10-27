@@ -91,6 +91,8 @@ export function applyEntry(state: StateMap, id: string, h: Header): Set<string> 
           if (!ws.contradictedBy.includes(t)) ws.contradictedBy.push(t);
           touch(t); touch(w);
         }
+      // "refine" (both are true) and "dismiss" (the flag was wrong) are resolutions: both close the open pair.
+      // The classifier's refines relations never become link entries (see retryRelate), so this cannot fire for them.
       } else if (w) unlinkPair(t, w);
     }
   }
@@ -107,4 +109,8 @@ export function replay(entries: { id: string; h: Header }[], until?: string): St
   return state;
 }
 
-export const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+export const sameSet = (a: string[], b: string[]) => {
+  // Compare as sets: with plain lengths, ["x","x"] would pass against ["x","y"].
+  const sa = new Set(a), sb = new Set(b);
+  return sa.size === sb.size && [...sa].every((x) => sb.has(x));
+};

@@ -38,7 +38,8 @@ export const ERASURE_WINDOW = 25;
 export interface EntryResult { seq: number; ok: boolean }
 
 type Input = ChainEntry | PublicEntry;
-const isPublic = (e: Input): e is PublicEntry => (e as PublicEntry).h !== undefined && (e as ChainEntry).metadata === undefined;
+/** Full entries carry a real metadata object; anything else (hostile pages included) is read as header-only. */
+const isPublic = (e: Input): e is PublicEntry => typeof (e as ChainEntry).metadata !== "object" || (e as ChainEntry).metadata === null;
 
 interface Kept { id: string; h: Header; hash: string; full?: ChainEntry; malformed?: boolean }
 
@@ -109,8 +110,10 @@ export class ChainVerifier {
   /** Feed a page of entries in chain order. Returns a per-entry verdict for animation. */
   async push(page: Input[]): Promise<EntryResult[]> {
     const out: EntryResult[] = [];
-    for (const raw of page) {
-      const id = raw.$id;
+    for (const rawIn of page) {
+      // A hostile page can hold anything, nulls included: malformed entries must become findings, never crashes.
+      const raw: Input = rawIn && typeof rawIn === "object" ? rawIn : ({ $id: "" } as PublicEntry);
+      const id = typeof raw.$id === "string" ? raw.$id : "";
       const h = isPublic(raw) ? raw.h : raw.metadata.h;
       const hash = isPublic(raw) ? raw.hash : raw.metadata.hash;
       const before = this.criticalCount();
