@@ -40,7 +40,7 @@ describe("labeler Function", () => {
       await b.vectors.create("memories", `m_${space.key}_${String(i).padStart(12, "0")}`, { embeddings: [1, 0], metadata: { space: space.key, status: "active", c: { text: `Kestrel Foods invoice question ${i}` }, d: { concept: concept(space.key) } } }, []);
     }
   });
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
   it("skips a create event for a one-member concept without touching storage", async () => {
     const get = vi.spyOn(b.vectors, "get");
@@ -70,6 +70,15 @@ describe("labeler Function", () => {
     await b.vectors.update("concepts", c.$id, { metadata: { ...c.metadata, labeledAtMembers: "00000003" } });
     await vi.advanceTimersByTimeAsync(5000);
     expect((await p).data).toEqual({ ok: true, skipped: true });
+  });
+
+  it("reports a failure instead of throwing when the space cannot be read", async () => {
+    // getSpace reads the space state store; without files.read Appwrite answers 401, which is not a not-found.
+    vi.spyOn(b.files, "get").mockRejectedValue(Object.assign(new Error("general_unauthorized_scope"), { code: 401 }));
+    const r = await run({ space: space.key, concept: concept(space.key) });
+    expect(r.status).toBe(500);
+    expect(r.data).toEqual({ ok: false, error: "label failed" });
+    expect(r.logs.join()).toContain("general_unauthorized_scope");
   });
 
   it("an HTTP call labels unconditionally; events from other collections are ignored", async () => {
