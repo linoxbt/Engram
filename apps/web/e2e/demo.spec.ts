@@ -59,6 +59,18 @@ test.describe.serial("signature path", () => {
     await expect(page.getByText(/Verified through #\d+\. Signed/)).toBeVisible();
   });
 
+  test("at phone width the verified chain is readable without colour", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await signIn(page);
+    await page.goto(`/app/${sandbox}/chain`);
+    await page.getByRole("button", { name: /Verify in this browser/ }).click();
+    await expect(page.getByText(/Verified through #\d+\. Signed/)).toBeVisible();
+    // The narrow strip used to say pass or fail in colour alone, with no accessible name at all.
+    const row = page.getByRole("option", { name: /, verified$/ }).first();
+    await expect(row).toBeVisible();
+    expect(await row.locator("svg").count()).toBeGreaterThan(0);
+  });
+
   test("recall finds the downgrade, and the conflict is in the inbox", async ({ page }) => {
     await signIn(page);
     await page.goto(`/app/${sandbox}/memories`);
