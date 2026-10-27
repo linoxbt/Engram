@@ -1,5 +1,6 @@
 import { agentNames, conceptMembers, labelConcept, toFeedItem } from "@engram/server";
 import { spaceRoute } from "@/lib/server/api";
+import { limitSpaceWork } from "@/lib/server/rate-limit";
 
 export const runtime = "nodejs";
 export const GET = spaceRoute<{ key: string; id: string }>(async (ctx, _a, _r, { id }) => {
@@ -8,4 +9,7 @@ export const GET = spaceRoute<{ key: string; id: string }>(async (ctx, _a, _r, {
   return { members: docs.map((d) => toFeedItem(d, names)) };
 });
 /** Re-label with the model now. */
-export const POST = spaceRoute<{ key: string; id: string }>(async (ctx, _a, _r, { id }) => labelConcept(ctx, id));
+export const POST = spaceRoute<{ key: string; id: string }>(async (ctx, access, _r, { id }) => {
+  limitSpaceWork("concept", access.user.id, ctx.space.key);
+  return labelConcept(ctx, id);
+});

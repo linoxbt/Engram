@@ -39,6 +39,35 @@ function expandV6(ip: string): string[] | null {
 }
 
 /**
+ * The address a request is limited by. In production only the platform's own client-IP header counts: Netlify
+ * sets `x-nf-client-connection-ip` at its edge and overwrites whatever the caller sent, while `x-real-ip` is not
+ * a header Netlify sets at all and `x-forwarded-for` is partly the caller's own text — trusting either would let
+ * one line of headers give every request a fresh address and void every IP-keyed limit here. Outside production
+ * those two are a convenience for proxies in front of `next dev`. A request with no usable address shares the
+ * single strict "unknown" bucket rather than going unlimited.
+ */
+export function clientIpFrom(headers: Headers, prod: boolean): string {
+  const platform = headers.get("x-nf-client-connection-ip");
+  if (prod || platform) return clientKey(platform);
+  return clientKey(headers.get("x-real-ip") ?? headers.get("x-forwarded-for")?.split(",").pop()?.trim());
+}
+
+/**
+ * Per-person, per-space budgets for the costly work a MEMBER can start. The engine's own limiter only guards
+ * agent keys (`enforceRate` skips `user:` actors), so without these a signed-in member of any space could spend
+ * the model budget, or rebuild and sign the whole Merkle tree, in a loop. Generous enough that nobody working by
+ * hand reaches one.
+ */
+export const SPACE_WORK_LIMITS = {
+  remember: { max: 240, message: "Too many memories written to this space." },
+  concept: { max: 60, message: "Too many concept labels requested." },
+  reflect: { max: 30, message: "Too many reflections requested." },
+  checkpoint: { max: 20, message: "Too many checkpoints sealed for this space." },
+  conflict: { max: 120, message: "Too many conflict decisions." },
+  forget: { max: 120, message: "Too many memories forgotten." },
+} as const;
+
+/**
  * Fixed-window counters in least-recently-used order. When full, expired windows go first, then the entries
  * touched longest ago: never everything at once, so flooding it with fresh keys cannot wipe an attacker's own
  * counter while they keep using it.

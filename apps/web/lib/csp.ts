@@ -32,6 +32,13 @@ export function pageCsp(opts: { nonce: string; dev: boolean; appwriteEndpoint?: 
   ].join("; ");
 }
 
+/**
+ * Requests the nonce middleware deliberately skips: Next.js router prefetches, which are data for the client
+ * router, not documents to run. They would otherwise come back with no policy at all, so they get one that lets
+ * nothing execute. A real navigation never carries those headers, so it always gets the nonce policy above.
+ */
+export const PREFETCH_CSP = "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
+
 /** API responses are data, never documents: nothing may load or frame them. */
 export const API_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 

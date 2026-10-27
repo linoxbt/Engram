@@ -2,7 +2,8 @@ import { EngramError, getBackend, getSpace, GUEST_TTL_MS, membership } from "@en
 import { defer, route } from "@/lib/server/api";
 import { VIEWER_ROLE } from "@/lib/server/access";
 import { requireCookieConsent } from "@/lib/server/consent";
-import { clientIp, HOUR, rateLimit } from "@/lib/server/rate-limit";
+import { admitGuest, sweepGuestSlots } from "@/lib/server/guest-slots";
+import { clientIp } from "@/lib/server/rate-limit";
 import { currentUser, replaceSession } from "@/lib/server/session";
 
 export const runtime = "nodejs";
@@ -11,9 +12,10 @@ export const runtime = "nodejs";
 const CLEANUP_BATCH = 10;
 
 /**
- * The read-only live demo: a throwaway guest account (no email, no password anyone knows) that is a "viewer" of the
- * demo space, signed in with a session cookie. Viewers can read everything a member reads and write nothing.
- * Guests are deleted after 24 hours, a few at a time, by later visits.
+ * The read-only live demo: a throwaway guest account (no email, no password anyone knows) that is a "viewer" of
+ * the demo space, signed in with a session cookie. Viewers read the routes a demo needs and write nothing.
+ * Admission is rationed per network and capped on live guests (guest-slots.ts), because each one below is a
+ * real Appwrite account. Guests are deleted after 24 hours, a few at a time, by later visits.
  */
 export const POST = route(async (req) => {
   requireCookieConsent(req);
@@ -23,13 +25,17 @@ export const POST = route(async (req) => {
   const space = await getSpace(b, key);
   if (!space) throw new EngramError("not_found", "This deployment has no live demo.");
 
-  defer(() => b.auth.deleteGuests(new Date(Date.now() - GUEST_TTL_MS).toISOString(), CLEANUP_BATCH));
+  defer(async () => {
+    await b.auth.deleteGuests(new Date(Date.now() - GUEST_TTL_MS).toISOString(), CLEANUP_BATCH);
+    await sweepGuestSlots(b);
+  });
 
   // Already in (a guest coming back, or a member of the demo space): nothing to create.
   const me = await currentUser();
   if (me && (await membership(b, key, me.id))) return { ok: true, space: key };
 
-  rateLimit("demo-enter-ip", clientIp(req), 5, HOUR, "Too many demo visits from this network.");
+  // Shared across every server instance, and capped on live guests: each one below is a real account.
+  await admitGuest(b, clientIp(req));
 
   const { user, session } = await b.auth.createGuest();
   try {
