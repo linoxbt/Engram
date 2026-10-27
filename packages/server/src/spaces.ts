@@ -154,20 +154,33 @@ export async function listSpacesForUser(b: Backend, userId: string): Promise<Spa
   return spaces.filter((s): s is SpaceInfo => !!s);
 }
 
-/** For scheduled Functions: bounded parallelism, and one unreadable team is skipped rather than failing the run. */
-export async function listAllSpaces(b: Backend, concurrency = 8): Promise<SpaceInfo[]> {
+/**
+ * For scheduled Functions: bounded parallelism, and one unreadable team is skipped rather than failing the run.
+ * The keys that could not be read come back too: a sweep that silently covers fewer spaces than exist is how an
+ * integrity monitor stops watching one without anybody noticing.
+ */
+export async function listAllSpacesDetailed(b: Backend, concurrency = 8): Promise<{ spaces: SpaceInfo[]; unreadable: string[] }> {
   const teams = await b.teams.listAll("sp_");
   const out: (SpaceInfo | null)[] = [];
+  const unreadable: string[] = [];
   let next = 0;
   const worker = async () => {
     while (next < teams.length) {
       const i = next++;
       try { out[i] = await getSpace(b, teams[i].teamId.slice(3)); }
-      catch (e) { console.error(`[engram] could not read space ${teams[i].teamId}`, e); }
+      catch (e) {
+        unreadable.push(teams[i].teamId.slice(3));
+        console.error(`[engram] could not read space ${teams[i].teamId}`, e);
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, teams.length) }, worker));
-  return out.filter((s): s is SpaceInfo => !!s);
+  return { spaces: out.filter((s): s is SpaceInfo => !!s), unreadable };
+}
+
+/** The list alone, for callers that only need the spaces they can read. */
+export async function listAllSpaces(b: Backend, concurrency = 8): Promise<SpaceInfo[]> {
+  return (await listAllSpacesDetailed(b, concurrency)).spaces;
 }
 
 /** Danger zone: remove every document (agents and their keys included), checkpoint and export file, then the team. */

@@ -11,7 +11,7 @@ import { backgroundDefer, ALL_SCOPES, type Ctx, type SpaceInfo } from "./context
 import { forget } from "./forget";
 import { retryRelate } from "./remember";
 import type { RememberInput } from "./schemas";
-import { listAllSpaces } from "./spaces";
+import { listAllSpacesDetailed } from "./spaces";
 import { verifyAndRecord, type VerifyOptions } from "./verify";
 
 export type SentinelResult = {
@@ -44,7 +44,8 @@ export async function runSentinel(b: Backend, opts: { spaces?: SpaceInfo[]; rete
   const started = Date.now();
   const budget = scheduleBudgetMs(opts.budgetMs);
   const deadline = started + budget;
-  const spaces = [...(opts.spaces ?? (await listAllSpaces(b)))]
+  const listed = opts.spaces ? { spaces: opts.spaces, unreadable: [] as string[] } : await listAllSpacesDetailed(b);
+  const spaces = [...listed.spaces]
     .sort((x, y) => (x.settings.integrity?.checkedAt ?? "").localeCompare(y.settings.integrity?.checkedAt ?? ""));
   const results: SentinelResult[] = [];
   const skipped: string[] = [];
@@ -64,7 +65,8 @@ export async function runSentinel(b: Backend, opts: { spaces?: SpaceInfo[]; rete
       results.push({ space: s.key, status: "error", validThrough: -1, findings: 0 });
     }
   }
-  return { results, skipped };
+  // `unreadable` is not `skipped`: those spaces were never looked at, so the run covered less than it appears to.
+  return { results, skipped, unreadable: listed.unreadable };
 }
 
 /**

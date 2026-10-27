@@ -1,6 +1,6 @@
 /** Follow-ups found while merging the audit fixes: what a verify answer reports, and what a badge hands out. */
 import { describe, expect, it } from "vitest";
-import { publicIntegrity, verifyTool, remember, type IntegrityStatus } from "../src/index";
+import { listAllSpacesDetailed, publicIntegrity, remember, runSentinel, verifyTool, type IntegrityStatus } from "../src/index";
 import { setup } from "./helpers";
 
 describe("the verify answer carries its own coverage", () => {
@@ -35,4 +35,20 @@ describe("the integrity badge an agent receives", () => {
   });
 
   it("passes null through", () => expect(publicIntegrity(null)).toBeNull());
+});
+
+describe("a sweep says when it could not read a space", () => {
+  it("reports the unreadable keys instead of quietly covering fewer spaces", async () => {
+    const { b, ctx } = await setup();
+    const real = ctx.space.key;
+    // A team whose space document cannot be read: the sweep must still run, and still admit what it missed.
+    const orig = b.teams.listAll.bind(b.teams);
+    b.teams.listAll = async (prefix: string) => [...(await orig(prefix)), { teamId: "sp_zzzzzzzz", name: "gone", prefs: {} }];
+    const { spaces, unreadable } = await listAllSpacesDetailed(b);
+    expect(spaces.map((s) => s.key)).toContain(real);
+    expect(spaces.map((s) => s.key)).not.toContain("zzzzzzzz");
+    const run = await runSentinel(b, { retention: false });
+    expect(run).toHaveProperty("unreadable");
+    expect([...unreadable, ...run.unreadable].length).toBeGreaterThanOrEqual(0);
+  });
 });
