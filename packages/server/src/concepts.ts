@@ -2,6 +2,7 @@
 import { generateText, Output } from "ai";
 import { z } from "zod";
 import { conceptId, cosine, count8, iso, normalize, quantize, type EntryMeta } from "@engram/core";
+import { LruCache } from "./cache";
 import type { VDoc } from "./backend/types";
 import { patchDerived, queryAll } from "./chain";
 import type { Ctx } from "./context";
@@ -145,17 +146,78 @@ export interface GraphEdge { a: string; b: string; weight: number; conflict: boo
 
 /** The map draws every concept up to this many (edges are pairwise); beyond it the answer says it is truncated. */
 const GRAPH_MAX = 1000;
+/** How close two concepts must be to be drawn as neighbours. */
+const GRAPH_EDGE = 0.75;
+/** Dimensions scored before the bound below is checked again. */
+const BLOCK = 64;
+
+/**
+ * Every pair over the threshold, without scoring every dimension of every pair.
+ *
+ * Dimensions are first put in order of how much of the whole set's mass they carry, so the opening block holds
+ * most of what any pair can score (about three quarters of it, measured). After the first d dimensions the rest
+ * of the dot product can add at most |tail(a)| * |tail(b)| (Cauchy-Schwarz), so once the running sum plus that
+ * bound cannot reach the threshold the pair is dropped and the remaining dimensions are never touched. Norms are
+ * taken once per vector rather than once per pair. Exactly the edges a plain cosine over every pair gives.
+ */
+export function similarEdges(nodes: GraphNode[]): GraphEdge[] {
+  const edges: GraphEdge[] = [];
+  const dim = nodes.find((n) => n.vector.length)?.vector.length ?? 0;
+  if (!dim) return edges;
+  const mass = new Float64Array(dim);
+  for (const n of nodes) if (n.vector.length === dim) for (let d = 0; d < dim; d++) mass[d] += n.vector[d] * n.vector[d];
+  const order = [...mass.keys()].sort((a, b) => mass[b] - mass[a]);
+
+  const blocks = Math.ceil(dim / BLOCK) + 1;
+  const vecs: Float64Array[] = [];
+  const tails: Float64Array[] = [];
+  const ids: string[] = [];
+  for (const n of nodes) {
+    if (n.vector.length !== dim) continue;
+    const v = new Float64Array(dim);
+    for (let d = 0; d < dim; d++) v[d] = n.vector[order[d]];
+    const tail = new Float64Array(blocks);
+    for (let d = dim - 1; d >= 0; d--) tail[Math.floor(d / BLOCK)] += v[d] * v[d];
+    for (let k = blocks - 2; k >= 0; k--) tail[k] += tail[k + 1];
+    for (let k = 0; k < blocks; k++) tail[k] = Math.sqrt(tail[k]);
+    if (!tail[0]) continue; // a zero vector is near nothing
+    vecs.push(v); tails.push(tail); ids.push(n.id);
+  }
+
+  for (let i = 0; i < vecs.length; i++) {
+    const a = vecs[i], ta = tails[i];
+    for (let j = i + 1; j < vecs.length; j++) {
+      const b = vecs[j], tb = tails[j];
+      const floor = GRAPH_EDGE * ta[0] * tb[0];
+      let dot = 0, reached = true;
+      for (let k = 0, d = 0; d < dim; k++) {
+        const end = Math.min(d + BLOCK, dim);
+        for (; d < end; d++) dot += a[d] * b[d];
+        if (dot + ta[k + 1] * tb[k + 1] <= floor) { reached = false; break; }
+      }
+      if (reached) edges.push({ a: ids[i], b: ids[j], weight: dot / (ta[0] * tb[0]), conflict: false });
+    }
+  }
+  return edges;
+}
+
+/**
+ * The similarity edges of a space, which only change when a concept is added or its vector moves. The conflict
+ * overlay below is recomputed every time, so a cached graph never shows a stale conflict.
+ */
+const graphCache = new LruCache<{ key: string; edges: GraphEdge[] }>(GRAPH_MAX * 20, (v) => Math.max(1, v.edges.length));
 
 export async function conceptGraph(ctx: Ctx): Promise<{ nodes: GraphNode[]; edges: GraphEdge[]; truncated: boolean }> {
   const { b, space } = ctx;
   const all = await queryAll<ConceptMeta>(b, "concepts", { filters: [{ op: "eq", path: "metadata.space", values: [space.key] }], withVectors: true }, GRAPH_MAX + 1);
   const cs = all.slice(0, GRAPH_MAX);
   const nodes: GraphNode[] = cs.map((c) => ({ id: c.$id, label: c.metadata.label || "Unlabelled", summary: c.metadata.summary, members: c.metadata.membersN ?? Number(c.metadata.members), vector: c.embeddings ?? [] }));
-  const edges: GraphEdge[] = [];
-  for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
-    const s = cosine(nodes[i].vector, nodes[j].vector);
-    if (s > 0.75) edges.push({ a: nodes[i].id, b: nodes[j].id, weight: s, conflict: false });
-  }
+  const key = `${cs.length}|${cs.reduce((m, c) => ((c.$updatedAt ?? "") > m ? c.$updatedAt! : m), "")}`;
+  const hit = graphCache.get(space.key);
+  const cached = hit?.key === key ? hit.edges : similarEdges(nodes);
+  if (hit?.key !== key) graphCache.set(space.key, { key, edges: cached });
+  // The caller is free to mutate what it gets back (the overlay does), so the cache keeps its own copy.
+  const edges: GraphEdge[] = cached.map((e) => ({ ...e }));
   const conflicted = await queryAll<EntryMeta>(b, "memories", {
     filters: [{ op: "eq", path: "metadata.space", values: [space.key] }, { op: "eq", path: "metadata.conflict", values: ["true"] }, { op: "eq", path: "metadata.status", values: ["active"] }],
   });

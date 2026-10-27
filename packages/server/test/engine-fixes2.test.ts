@@ -3,9 +3,9 @@
  * re-classification sweep, the rule-based classifier, supersession budgets, bounded erasure and bounded caches.
  */
 import { describe, expect, it, vi } from "vitest";
-import { iso, recallId } from "@engram/core";
+import { cosine, iso, recallId } from "@engram/core";
 import {
-  append, applyRetention, authAgent, capSupersessions, createAgent, embedDocument, ERASE_ATTEMPTS, forget, listRecalls, getEntry, getSpace, heuristicRelate, listConflicts, notesOf, recall, relate, remember,
+  append, applyRetention, authAgent, capSupersessions, conceptGraph, hashEmbed, similarEdges, createAgent, embedDocument, ERASE_ATTEMPTS, forget, listRecalls, getEntry, getSpace, heuristicRelate, listConflicts, notesOf, recall, relate, remember,
   LruCache, retryRelate, runCheckpoint, SUPERSEDE_PER_HOUR, sweepPendingRelate, updateSettings, verifyStoredSpace, verifyThrottled,
   type Neighbour, type NewMemory, type Scope,
 } from "../src/index";
@@ -291,5 +291,41 @@ describe("per-process caches are bounded by what they hold", () => {
     expect([c.size, c.weight]).toEqual([1, 3]);
     c.delete("a");
     expect([c.size, c.weight]).toEqual([0, 0]);
+  });
+});
+
+describe("the concept map is not a full pairwise scan on every request", () => {
+  const vectors = () => {
+    const words = "billing refund invoice customer plan server deploy region latency cache vector memory agent policy".split(" ");
+    let seed = 11;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+    return Array.from({ length: 120 }, (_, i) => ({
+      id: `c_${i}`, label: "l", summary: "s", members: 1,
+      vector: hashEmbed(Array.from({ length: 6 }, () => words[Math.floor(rnd() * words.length)]).join(" "), 768),
+    }));
+  };
+
+  it("finds exactly the pairs a full cosine scan finds", () => {
+    const nodes = vectors();
+    const naive = [];
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+      const s = cosine(nodes[i].vector, nodes[j].vector);
+      if (s > 0.75) naive.push(`${nodes[i].id}|${nodes[j].id}|${s.toFixed(9)}`);
+    }
+    expect(naive.length).toBeGreaterThan(0);
+    expect(similarEdges(nodes).map((e) => `${e.a}|${e.b}|${e.weight.toFixed(9)}`)).toEqual(naive);
+  });
+
+  it("reuses the computed edges until a concept changes", async () => {
+    const { b, ctx, drain } = await setup();
+    for (const t of ["Ada is on the Pro plan.", "Ada prefers email.", "The server runs in Frankfurt."]) await remember(ctx, { text: t });
+    await drain();
+    const first = await conceptGraph(ctx);
+    const again = await conceptGraph(ctx);
+    expect(again.edges).toEqual(first.edges);
+    // A new concept changes the cache key, so the graph grows rather than being served stale.
+    await remember(ctx, { text: "Quarterly revenue grew by eleven percent in Lagos and Nairobi." });
+    await drain();
+    expect((await conceptGraph(ctx)).nodes.length).toBeGreaterThan(first.nodes.length);
   });
 });
