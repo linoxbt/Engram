@@ -179,7 +179,7 @@ export async function capSupersessions(ctx: Ctx, actor: string, relations: Relat
   });
 }
 
-const noteable = (r: Relation) => r.relation === "supersedes" || r.relation === "contradicts" || r.relation === "refines";
+const noteable = (r: Relation) => r.relation !== "unrelated";
 const notesFrom = (rs: Relation[], via: RelationVia): RelationNotes =>
   Object.fromEntries(rs.filter(noteable).map((r) => [r.id, { relation: r.relation, reason: r.reason, via }]));
 
@@ -297,12 +297,18 @@ export async function retryRelate(ctx: Ctx, id: string, vector: number[], input:
     near.map((n) => ({ id: n.$id, text: n.metadata.c.text ?? "", createdAt: n.metadata.createdAt, agent: n.metadata.agent, agentName: names[n.metadata.agent] ?? n.metadata.agent, subject: n.metadata.subject, kind: n.metadata.kind, distance: n.$distance ?? 1 })),
     { timeoutMs: 15_000, fallback: true });
   if (res.status === "pending") return;
-  const found = effective(await capSupersessions(ctx, actor, res.relations)).filter((r) => r.relation === "supersedes" || r.relation === "contradicts");
+  const capped = effective(await capSupersessions(ctx, actor, res.relations));
+  // A duplicate found this late cannot un-append the write, so the copy is retired in favour of the original:
+  // without it the two stay active side by side forever with nothing to repair them. Never capped, because it
+  // retires the writer's own new memory and not a neighbour's, so it cannot wipe anything.
+  const dup = capped.find((r) => r.relation === "duplicate");
+  const found = capped.filter((r) => r.relation === "supersedes" || r.relation === "contradicts");
   const via: RelationVia = res.via === "heuristic" ? "heuristic" : "model";
+  if (dup) await linkFound(ctx, { target: id, other: dup.id, kind: "supersede", reason: dup.reason, via });
   for (const r of found) {
     await linkFound(ctx, { target: r.id, other: id, kind: r.relation === "supersedes" ? "supersede" : "contradict", reason: r.reason, via });
   }
   // Reasons live on the newer memory (derived, erasable), where the conflict inbox looks for them.
-  const notes = notesFrom(found, via);
-  await patchDerived(ctx.b, id, (d) => ({ relateStatus: "done", ...(found.length ? { reasons: { ...notesOf(d), ...notes } } : {}) }));
+  const notes = notesFrom([...(dup ? [dup] : []), ...found], via);
+  await patchDerived(ctx.b, id, (d) => ({ relateStatus: "done", ...(Object.keys(notes).length ? { reasons: { ...notesOf(d), ...notes } } : {}) }));
 }

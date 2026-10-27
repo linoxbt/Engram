@@ -4,8 +4,8 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  authAgent, createAgent, getSpace, heuristicRelate, recall, relate, remember, runCheckpoint, verifyThrottled,
-  type Neighbour, type NewMemory, type Scope,
+  authAgent, createAgent, embedDocument, getEntry, getSpace, heuristicRelate, notesOf, recall, relate, remember,
+  retryRelate, runCheckpoint, verifyStoredSpace, verifyThrottled, type Neighbour, type NewMemory, type Scope,
 } from "../src/index";
 import { setup } from "./helpers";
 
@@ -96,5 +96,29 @@ describe("verified as-of recall is behind the verify scope and the verify budget
     const { person } = await verifiableSpace(["recall", "verify"]);
     expect((await recall(person, asOf, { log: false })).mode).toBe("as-of-verified");
     expect((await recall(person, asOf, { log: false })).mode).toBe("as-of-verified");
+  });
+});
+
+describe("a duplicate found by the background re-check is repaired, not dropped", () => {
+  const TEXT = "Invoices go out on the first of the month.";
+
+  it("retires the later copy in favour of the original and records why", async () => {
+    const { b, ctx, drain } = await setup();
+    const first = await remember(ctx, { text: TEXT, subject: "policy:billing" });
+    // The first classification timed out, so the write landed before anything knew it said nothing new.
+    const second = await remember(ctx, { text: TEXT, subject: "policy:billing" }, { skipRelate: true });
+    expect(second.status).toBe("created");
+    await drain();
+
+    await retryRelate(ctx, second.id, await embedDocument(ctx, TEXT), { text: TEXT, kind: "fact", subject: "policy:billing" });
+
+    const later = (await getEntry(b, second.id))!.metadata;
+    expect(later.d.status).toBe("superseded");
+    expect(later.d.supersededBy).toBe(first.id);
+    expect(notesOf(later.d)[first.id]).toMatchObject({ relation: "duplicate" });
+    expect(later.d.relateStatus).toBe("done");
+    // The original is untouched and still the live answer.
+    expect((await getEntry(b, first.id))!.metadata.d.status).toBe("active");
+    expect((await verifyStoredSpace(b, ctx.space)).findings).toEqual([]);
   });
 });
