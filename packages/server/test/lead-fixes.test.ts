@@ -1,6 +1,6 @@
 /** Follow-ups found while merging the audit fixes: what a verify answer reports, and what a badge hands out. */
 import { describe, expect, it } from "vitest";
-import { listAllSpacesDetailed, publicIntegrity, remember, runSentinel, verifyTool, type IntegrityStatus } from "../src/index";
+import { heuristicRelate, listAllSpacesDetailed, publicIntegrity, remember, runSentinel, verifyTool, type IntegrityStatus } from "../src/index";
 import { setup } from "./helpers";
 
 describe("the verify answer carries its own coverage", () => {
@@ -50,5 +50,32 @@ describe("a sweep says when it could not read a space", () => {
     const run = await runSentinel(b, { retention: false });
     expect(run).toHaveProperty("unreadable");
     expect([...unreadable, ...run.unreadable].length).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("without a classifier, a stopword-only difference is a conflict", () => {
+  const neighbour = (text: string) => ({
+    id: "m_testspace_000000000001", text, createdAt: "2026-10-20T10:00:00.000Z",
+    agent: "agent:a", agentName: "a", subject: "s:1", kind: "fact", distance: 0.01,
+  });
+  const mem = (text: string) => ({ text, kind: "fact", subject: "s:1", createdAt: "2026-10-21T10:00:00.000Z", agentName: "a", agent: "agent:a" });
+
+  it.each([
+    ["The server moved to Berlin.", "The server moved from Berlin."],
+    ["Payment is due to Acme.", "Payment is due from Acme."],
+    ["He approved the refund.", "She approved the refund."],
+  ])("treats %s against %s as a conflict, not a refinement", (oldText, newText) => {
+    const [r] = heuristicRelate(mem(newText), [neighbour(oldText)]);
+    expect(r.relation).toBe("contradicts");
+  });
+
+  it("still calls an added detail a refinement", () => {
+    const [r] = heuristicRelate(mem("Ada is on the Pro plan, billed monthly."), [neighbour("Ada is on the Pro plan.")]);
+    expect(r.relation).toBe("refines");
+  });
+
+  it("still calls the same sentence a duplicate", () => {
+    const [r] = heuristicRelate(mem("The server moved to Berlin."), [neighbour("The server moved to Berlin.")]);
+    expect(r.relation).toBe("duplicate");
   });
 });

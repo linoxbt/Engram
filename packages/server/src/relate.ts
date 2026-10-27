@@ -227,6 +227,8 @@ const ATTRS = ["plan", "address", "email", "phone", "role", "price", "status", "
 const STOP = new Set("a an the is are was were be of to in on at for and or by with from as it its this that he she they his her their our we i".split(" "));
 
 const words = (t: string) => t.toLowerCase().replace(/'s\b/g, "").split(/[^a-z0-9]+/).filter((w) => w && !STOP.has(w));
+/** The matcher's view of a sentence: what is left once the words it ignores are gone. */
+const norm = (t: string) => words(t).join(" ");
 // Proper nouns, numbers and codes stand in for "values". Capitalised function words ("The", "This") are not values.
 const COMMON = new Set("today yesterday tomorrow also however please note".split(" "));
 const VALUE = /\b(?:[A-Z][a-zA-Z0-9-]+|[a-zA-Z0-9-]*\d[a-zA-Z0-9-]*)\b/g;
@@ -236,6 +238,12 @@ export function heuristicRelate(m: NewMemory, ns: Neighbour[]): Relation[] {
   const nw = new Set(words(m.text));
   return ns.map((n) => {
     if (sameStatement(n.text, m.text)) return { id: n.id, relation: "duplicate" as const, confidence: 0.95, reason: "Same statement." };
+    // Same words once the matcher's stopwords are dropped, but not the same sentence: the difference is carried
+    // entirely by a word this heuristic cannot see ("moved to" against "moved from", "He" against "She"). Those
+    // two statements cannot both be true, and guessing which wins is exactly what a person is for.
+    if (norm(n.text) === norm(m.text)) {
+      return { id: n.id, relation: "contradicts" as const, confidence: 0.6, reason: "The two differ only in a word that changes the meaning." };
+    }
     const ow = new Set(words(n.text));
     const shared = [...nw].filter((w) => ow.has(w));
     const overlap = shared.length / Math.max(1, Math.min(nw.size, ow.size));
