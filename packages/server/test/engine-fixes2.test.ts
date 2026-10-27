@@ -5,8 +5,8 @@
 import { describe, expect, it } from "vitest";
 import { iso } from "@engram/core";
 import {
-  append, authAgent, createAgent, embedDocument, getEntry, getSpace, heuristicRelate, listConflicts, notesOf, recall, relate, remember,
-  retryRelate, runCheckpoint, sweepPendingRelate, verifyStoredSpace, verifyThrottled,
+  append, authAgent, capSupersessions, createAgent, embedDocument, getEntry, getSpace, heuristicRelate, listConflicts, notesOf, recall, relate, remember,
+  retryRelate, runCheckpoint, SUPERSEDE_PER_HOUR, sweepPendingRelate, verifyStoredSpace, verifyThrottled,
   type Neighbour, type NewMemory, type Scope,
 } from "../src/index";
 import { setup } from "./helpers";
@@ -183,5 +183,23 @@ describe("with no classifier model a changed fact reaches the conflict inbox", (
     const { pairs } = await listConflicts({ ...ctx, space: (await getSpace(b, ctx.space.key))! });
     expect(pairs).toHaveLength(1);
     expect(pairs[0].via).toBe("heuristic");
+  });
+});
+
+describe("the supersession cap holds under concurrency", () => {
+  const sup = (id: string) => ({ id, relation: "supersedes" as const, confidence: 0.9, reason: "Reports a change." });
+
+  it("ten writes racing each other retire ten memories, not twenty", async () => {
+    const { ctx } = await setup();
+    const id = (n: number) => `m_${ctx.space.key}_${String(n).padStart(12, "0")}`;
+    // Each of ten concurrent writes is classified as superseding two neighbours: 20 wanted, 10 allowed.
+    const batches = await Promise.all(Array.from({ length: 10 }, (_, i) =>
+      capSupersessions(ctx, "a_oneagent", [sup(id(i * 2)), sup(id(i * 2 + 1))])));
+    const retired = batches.flat().filter((r) => r.relation === "supersedes");
+    expect(retired).toHaveLength(SUPERSEDE_PER_HOUR);
+    // Everything over the cap becomes a conflict for a person, never a silent drop.
+    expect(batches.flat().filter((r) => r.relation === "contradicts")).toHaveLength(10);
+    // Another writer's budget is its own.
+    expect((await capSupersessions(ctx, "a_someoneelse", [sup(id(99))])).map((r) => r.relation)).toEqual(["supersedes"]);
   });
 });

@@ -152,8 +152,8 @@ describe("remember round trips", () => {
     // Side by side: lock+replay, rate, embed and pending all start before any of them answers.
     expect(peak).toBeGreaterThanOrEqual(4);
     // 17 round trips before this change; now: lock+replay | rate | embed | pending, nearest, head+refs,
-    // create+pending, the neighbour update. Counted, not timed, so load cannot flake it.
-    expect(roundTrips).toBeLessThanOrEqual(15);
+    // the supersession slot, create+pending, the neighbour update. Counted, not timed, so load cannot flake it.
+    expect(roundTrips).toBeLessThanOrEqual(16);
     expect((await verifyStoredSpace(b, space)).findings).toEqual([]);
   });
 });
@@ -245,8 +245,10 @@ describe("prompt injection and supersession caps", () => {
     for (let i = 0; i < 14; i++) ids.push((await append(ctx, { op: "remember", kind: "fact", subject: null, text: `old ${i}` })).id);
     const three = await capSupersessions(ctx, ctx.actor, [sup(ids[0]), sup(ids[1]), sup(ids[2])]);
     expect(three.map((r) => r.relation)).toEqual(["supersedes", "supersedes", "contradicts"]);
-    // Ten retirements by this writer within the hour use up its budget.
-    for (let i = 0; i < 5; i++) await append(ctx, { op: "remember", kind: "fact", subject: null, text: `new ${i}`, refs: { supersedes: [ids[2 * i], ids[2 * i + 1]] } });
+    // Ten retirements by this writer within the hour use up its budget: two here, two in each of the next four.
+    for (let i = 1; i < 5; i++) {
+      expect((await capSupersessions(ctx, ctx.actor, [sup(ids[2 * i]), sup(ids[2 * i + 1])])).map((r) => r.relation)).toEqual(["supersedes", "supersedes"]);
+    }
     expect((await capSupersessions(ctx, ctx.actor, [sup(ids[12])])).map((r) => r.relation)).toEqual(["contradicts"]);
     // Another writer's budget is its own.
     expect((await capSupersessions(ctx, "a_someone_else", [sup(ids[12])])).map((r) => r.relation)).toEqual(["supersedes"]);

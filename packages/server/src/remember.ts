@@ -149,18 +149,36 @@ async function takeIdemLock(ctx: Ctx, idem: string, replay: () => Promise<Rememb
 export const SUPERSEDE_PER_WRITE = 2;
 export const SUPERSEDE_PER_HOUR = 10;
 
-/** How many memories this writer retired in the last hour (its own remembers and supersede links). */
-async function supersessionsLastHour(ctx: Ctx, actor: string, stopAt: number): Promise<number> {
-  const filters: Filter[] = [spaceF(ctx), { op: "eq", path: "metadata.agent", values: [actor] }, { op: "eq", path: "metadata.op", values: ["remember", "link"] },
-    { op: "gte", path: "metadata.createdAt", value: iso(Date.now() - 3_600_000) }];
-  let n = 0;
-  let cursor: string | undefined;
-  for (;;) {
-    const page = await ctx.b.vectors.query<EntryMeta>("memories", { filters, order: { field: "$id", dir: "desc" }, limit: 200, cursorAfter: cursor, withVectors: false });
-    for (const d of page) n += d.metadata.op === "link" ? (d.metadata.kind === "supersede" ? 1 : 0) : d.metadata.h.refs.supersedes.length;
-    if (n >= stopAt || page.length < 200) return n;
-    cursor = page[page.length - 1].$id;
+/**
+ * Claim up to `want` of this writer's supersession slots for the current hour. A slot is a file created with a
+ * deterministic ID, the same create-first lock as `idm_` and `cpl_`: parallel writes race for distinct IDs and the
+ * storage refuses a duplicate. Counting what the chain already retired and writing afterwards did not hold — ten
+ * concurrent writes each read zero and retired twenty. Slots from earlier hours are swept as they are met, so one
+ * writer's slots never outnumber the cap.
+ */
+async function reserveSupersessions(ctx: Ctx, actor: string, want: number): Promise<number> {
+  const { files } = ctx.b;
+  const bucket = ctx.cfg.appwrite.checkpointsBucket;
+  const mine = `sup_${ctx.space.key}_${(await sha256Hex(actor)).slice(0, 8)}_`;
+  const window = `${mine}${Math.floor(Date.now() / 3_600_000).toString(36)}_`;
+  const taken = new Set<string>();
+  for (const f of await files.list(bucket, mine)) {
+    if (f.fileId.startsWith(window)) taken.add(f.fileId);
+    else await files.delete(bucket, f.fileId).catch(() => undefined); // an earlier hour: that budget is gone
   }
+  const body = new TextEncoder().encode(JSON.stringify({ at: iso(), actor }));
+  let got = 0;
+  for (let n = 0; n < SUPERSEDE_PER_HOUR && got < want; n++) {
+    const id = `${window}${String(n).padStart(2, "0")}`;
+    if (taken.has(id)) continue;
+    try {
+      await files.put(bucket, id, `${id}.json`, body, ctx.b.teamRead(ctx.space.teamId));
+      got++;
+    } catch (e) {
+      if (!isConflict(e)) throw e; // another writer took this slot this instant: try the next
+    }
+  }
+  return got;
 }
 
 /**
@@ -171,8 +189,7 @@ async function supersessionsLastHour(ctx: Ctx, actor: string, stopAt: number): P
 export async function capSupersessions(ctx: Ctx, actor: string, relations: Relation[]): Promise<Relation[]> {
   const wanted = relations.filter((r) => r.relation === "supersedes" && r.confidence >= THRESHOLDS.supersedes).length;
   if (!wanted) return relations;
-  const used = await supersessionsLastHour(ctx, actor, SUPERSEDE_PER_HOUR);
-  let budget = Math.min(SUPERSEDE_PER_WRITE, Math.max(0, SUPERSEDE_PER_HOUR - used));
+  let budget = await reserveSupersessions(ctx, actor, Math.min(SUPERSEDE_PER_WRITE, wanted));
   return relations.map((r) => {
     if (r.relation !== "supersedes" || r.confidence < THRESHOLDS.supersedes || budget-- > 0) return r;
     return { ...r, relation: "contradicts" as const, reason: `${r.reason} Over the supersession limit, so a person decides.`.trim() };
