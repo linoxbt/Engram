@@ -59,9 +59,17 @@ export const PENDING_DERIVED_WINDOW = ERASURE_WINDOW;
  * And how long a pending claim stays plausible in wall-clock time. Position alone is not enough: a space that
  * stops being written to keeps its last entries inside the window for good, so on a dormant chain the flag would
  * still buy unlimited grace. A neighbour update lands in the same request, and the sentinel sweeps every 15
- * minutes, so an hour is generous. `createdAt` is inside the hashed header, so moving it breaks the header hash.
+ * minutes, so an hour is generous. `createdAt` is inside the hashed header, so moving it breaks the header hash,
+ * and the age is bounded in both directions: an entry dated ahead of the clock is not a write still in flight.
  */
 export const PENDING_MAX_AGE_MS = 60 * 60 * 1000;
+/**
+ * Allowance for the gap between the clock reading `now` and the one that wrote `createdAt`. SKEW_MS is two
+ * seconds because rule 8 compares entries written by the same server; this comparison crosses machines — the
+ * verifier usually runs in a visitor's browser — so it needs room for an ordinary wrong clock. Five minutes
+ * matches what the write path already allows a caller's explicit `createdAt` to run ahead by.
+ */
+export const CLOCK_SKEW_MS = 5 * 60_000;
 
 export interface EntryResult { seq: number; ok: boolean }
 
@@ -381,7 +389,10 @@ export class ChainVerifier {
       // A pending claim must be recent in time as well as in position, or a chain that stops growing would hold
       // its last entries inside the window for good. The settled window is two entries, which no clock can stretch.
       const causedAt = by === undefined ? undefined : this.createdBySeq.get(by);
-      const fresh = !pending || (causedAt !== undefined && this.now - causedAt <= PENDING_MAX_AGE_MS + SKEW_MS);
+      // Bounded at both ends. Past: the claim expires. Future: a negative age would otherwise sit inside any
+      // limit for good, and the verifier must hold for a chain from anywhere, not only one this server wrote.
+      const age = causedAt === undefined ? undefined : this.now - causedAt;
+      const fresh = !pending || (age !== undefined && age >= -CLOCK_SKEW_MS && age <= PENDING_MAX_AGE_MS + CLOCK_SKEW_MS);
       const inFlight = by !== undefined && by >= this.kept.length - window && fresh;
       const severity: Finding["severity"] = inFlight ? "warning" : "critical";
       const d = m.d;

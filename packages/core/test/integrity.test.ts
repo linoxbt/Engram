@@ -93,6 +93,39 @@ describe("a derived mismatch held open by the unhashed `applied` flag", () => {
     expect(stale.status).toBe("tampered");
     expect(stale.findings.find((f) => f.rule === "derived")).toMatchObject({ seq: 0, severity: "critical" });
   });
+
+  // The verifier runs in a browser, so `now` is the visitor's clock and `createdAt` came from the server. A
+  // laptop a minute behind must not turn a write that really is in flight into a tamper verdict.
+  it("tolerates an ordinary clock difference between the visitor and the server", async () => {
+    const chain = new TestChain();
+    await chain.add({ text: "Ada is on the Starter plan.", subject: "customer:ada" });
+    await chain.add({ op: "link", kind: "supersede", text: "Ada upgraded.", subject: "customer:ada", refs: { supersedes: [chain.id(0)], target: chain.id(0) } });
+    const es = chain.clone();
+    es[0].metadata = { ...es[0].metadata, d: { ...es[0].metadata.d, status: "active", supersededBy: null }, status: "active" };
+    es[1].metadata = { ...es[1].metadata, applied: "false" };
+    const causedAt = Date.parse(es[1].metadata.h.createdAt);
+    const r = await verifySpace({ space: SPACE, entries: es, now: causedAt - 60_000 });
+    expect(r.findings.find((f) => f.rule === "derived")?.severity).toBe("warning");
+  });
+
+  /**
+   * The verifier must not lean on the server having rejected a future timestamp. Given a chain from anywhere —
+   * an export, a hostile server — an entry dated ahead of now would make `now - createdAt` negative and so sit
+   * inside any age limit forever. A write claiming to come from the future is not a write still in flight.
+   */
+  it("does not treat an entry dated in the future as still in flight", async () => {
+    const chain = new TestChain();
+    await chain.add({ text: "Ada is on the Starter plan.", subject: "customer:ada" });
+    await chain.add({ op: "link", kind: "supersede", text: "Ada upgraded.", subject: "customer:ada", refs: { supersedes: [chain.id(0)], target: chain.id(0) } });
+    const es = chain.clone();
+    es[0].metadata = { ...es[0].metadata, d: { ...es[0].metadata.d, status: "active", supersededBy: null }, status: "active" };
+    es[1].metadata = { ...es[1].metadata, applied: "false" };
+    // Verify as if the causing entry is dated a year ahead of the clock.
+    const wayBefore = Date.parse(es[1].metadata.h.createdAt) - 365 * 24 * 60 * 60 * 1000;
+    const r = await verifySpace({ space: SPACE, entries: es, now: wayBefore });
+    expect(r.findings.find((f) => f.rule === "derived")).toMatchObject({ seq: 0, severity: "critical" });
+    expect(r.status).toBe("tampered");
+  });
 });
 
 describe("hostile checkpoint fields", () => {
