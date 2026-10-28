@@ -55,6 +55,13 @@ export const DERIVED_WINDOW = 2;
  * Writers apply pending entries oldest-first on every append, so a genuine one is resolved long before this.
  */
 export const PENDING_DERIVED_WINDOW = ERASURE_WINDOW;
+/**
+ * And how long a pending claim stays plausible in wall-clock time. Position alone is not enough: a space that
+ * stops being written to keeps its last entries inside the window for good, so on a dormant chain the flag would
+ * still buy unlimited grace. A neighbour update lands in the same request, and the sentinel sweeps every 15
+ * minutes, so an hour is generous. `createdAt` is inside the hashed header, so moving it breaks the header hash.
+ */
+export const PENDING_MAX_AGE_MS = 60 * 60 * 1000;
 
 export interface EntryResult { seq: number; ok: boolean }
 
@@ -112,6 +119,9 @@ export class ChainVerifier {
   /** Seq of the entry that last changed each ID's derived state, and the entries that say they are mid-update. */
   private changedBy = new Map<string, number>();
   private unapplied = new Set<number>();
+  /** createdAt of each entry, by seq: the hashed timestamp an in-flight claim is measured against. */
+  private createdBySeq = new Map<number, number>();
+  private readonly now: number;
   private signaturesChecked = false;
   private provenThrough = -1;
   /** Checkpoints that were otherwise sound but whose signature nobody could check. Never counted as valid. */
@@ -129,8 +139,11 @@ export class ChainVerifier {
   constructor(opts: {
     space: string; mode?: VerifyMode; publicKeyHex?: string; publicKeys?: Record<string, string>; trusted?: TrustedCheckpoint;
     from?: { size: number; head: string; createdAt: string };
+    /** Wall clock, injectable so tests are deterministic. Only used to expire a pending in-flight claim. */
+    now?: number;
   }) {
     this.space = opts.space;
+    this.now = opts.now ?? Date.now();
     this.mode = opts.mode ?? "standard";
     this.publicKeyHex = opts.publicKeyHex;
     // Null-prototype: otherwise keyId "toString" resolves an inherited member and reads as a bad signature, and a
@@ -225,6 +238,7 @@ export class ChainVerifier {
       } else {
         const m = raw.metadata;
         if (m.applied === "false") this.unapplied.add(seq);
+        this.createdBySeq.set(seq, created);
         if (h.op === "forget" && r.target && m.applied === "false") this.erasing.set(r.target, seq);
         // Rule 4: content.
         if (m.c?.text != null) {
@@ -362,8 +376,13 @@ export class ChainVerifier {
       // Derived state is recomputable from the signed chain, so a mismatch is unambiguous — except while the
       // entry that caused it is still being applied. That is the only honest excuse, and it is narrow.
       const by = this.changedBy.get(k.id);
-      const window = this.unapplied.has(by!) ? PENDING_DERIVED_WINDOW : DERIVED_WINDOW;
-      const inFlight = by !== undefined && by >= this.kept.length - window;
+      const pending = by !== undefined && this.unapplied.has(by);
+      const window = pending ? PENDING_DERIVED_WINDOW : DERIVED_WINDOW;
+      // A pending claim must be recent in time as well as in position, or a chain that stops growing would hold
+      // its last entries inside the window for good. The settled window is two entries, which no clock can stretch.
+      const causedAt = by === undefined ? undefined : this.createdBySeq.get(by);
+      const fresh = !pending || (causedAt !== undefined && this.now - causedAt <= PENDING_MAX_AGE_MS + SKEW_MS);
+      const inFlight = by !== undefined && by >= this.kept.length - window && fresh;
       const severity: Finding["severity"] = inFlight ? "warning" : "critical";
       const d = m.d;
       if (!d || typeof d !== "object") {
@@ -546,8 +565,9 @@ export async function verifySpace(args: {
   publicKeys?: Record<string, string>;
   mode?: VerifyMode;
   trusted?: TrustedCheckpoint;
+  now?: number;
 }): Promise<Report> {
-  const v = new ChainVerifier({ space: args.space, mode: args.mode, publicKeyHex: args.publicKeyHex, publicKeys: args.publicKeys, trusted: args.trusted });
+  const v = new ChainVerifier({ space: args.space, mode: args.mode, publicKeyHex: args.publicKeyHex, publicKeys: args.publicKeys, trusted: args.trusted, now: args.now });
   await v.push(args.entries);
   return v.finish(args.checkpoints ?? []);
 }

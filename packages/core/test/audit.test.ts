@@ -201,7 +201,9 @@ describe("A9 derived tampering outside the in-flight window is critical", () => 
     const es = c.clone();
     es[1].metadata = { ...es[1].metadata, applied: "false" };
     const res = await runAttack("hide-supersession", es);
-    const r = await verifySpace({ space: SPACE, entries: res.entries });
+    // The fixture dates its chain in the past; this test is about the flag, so pin the clock to just after the
+    // write. PENDING_MAX_AGE_MS, which expires the same claim on a dormant chain, has its own test in integrity.
+    const r = await verifySpace({ space: SPACE, entries: res.entries, now: Date.parse(es[1].metadata.h.createdAt) + 5_000 });
     expect(r.findings.filter((f) => f.rule === "derived").every((f) => f.severity === "warning")).toBe(true);
   });
 });

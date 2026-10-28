@@ -46,7 +46,9 @@ async function unsuperseded(after: number) {
   // The tamper: #0 reads active again, so agents keep using the outdated fact.
   es[0].metadata = { ...es[0].metadata, d: { ...es[0].metadata.d, status: "active", supersededBy: null }, status: "active" };
   es[1].metadata = { ...es[1].metadata, applied: "false" };
-  return verifySpace({ space: SPACE, entries: es });
+  // The fixture dates its chain in the past, so pin the clock just after the supersession: this helper is about
+  // position, and the separate test below covers the clock.
+  return verifySpace({ space: SPACE, entries: es, now: Date.parse(es[1].metadata.h.createdAt) + 5_000 });
 }
 
 describe("a derived mismatch held open by the unhashed `applied` flag", () => {
@@ -66,6 +68,30 @@ describe("a derived mismatch held open by the unhashed `applied` flag", () => {
   it("gives a pending entry a longer grace than a settled one, but still a bounded one", () => {
     expect(PENDING_DERIVED_WINDOW).toBeGreaterThan(DERIVED_WINDOW);
     expect(Number.isFinite(PENDING_DERIVED_WINDOW)).toBe(true);
+  });
+
+  /**
+   * Position alone is not enough. A space that stops being written to keeps its last entries inside the window
+   * for good, so on a dormant chain the flag would still buy unlimited grace. A write is in flight for seconds;
+   * `createdAt` is inside the hashed header, so an attacker cannot move it without breaking the header hash.
+   */
+  it("expires the grace on a dormant chain, where position alone would never push the entry out", async () => {
+    const chain = new TestChain();
+    await chain.add({ text: "Ada is on the Starter plan.", subject: "customer:ada" });
+    await chain.add({ op: "link", kind: "supersede", text: "Ada upgraded.", subject: "customer:ada", refs: { supersedes: [chain.id(0)], target: chain.id(0) } });
+    const es = chain.clone();
+    es[0].metadata = { ...es[0].metadata, d: { ...es[0].metadata.d, status: "active", supersededBy: null }, status: "active" };
+    es[1].metadata = { ...es[1].metadata, applied: "false" };
+    const causedAt = Date.parse(es[1].metadata.h.createdAt);
+
+    // Seconds after the write: still plausibly landing.
+    const fresh = await verifySpace({ space: SPACE, entries: es, now: causedAt + 5_000 });
+    expect(fresh.findings.find((f) => f.rule === "derived")?.severity).toBe("warning");
+
+    // A day later, the chain never having grown: no longer a race, whatever the flag says.
+    const stale = await verifySpace({ space: SPACE, entries: es, now: causedAt + 24 * 60 * 60 * 1000 });
+    expect(stale.status).toBe("tampered");
+    expect(stale.findings.find((f) => f.rule === "derived")).toMatchObject({ seq: 0, severity: "critical" });
   });
 });
 
