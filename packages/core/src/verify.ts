@@ -41,11 +41,20 @@ const SKEW_MS = 2000;
 export const ERASURE_WINDOW = 25;
 /**
  * Derived state has its own, much shorter in-flight window. A neighbour update commits in the same request as the
- * append that caused it (erasure, by contrast, waits for a later sweep), and an entry whose update has not landed
- * still says so with `applied: "false"`. So only the entry being written, and the one before it in a page read
- * mid-write, can legitimately disagree with the replay; anything older is a rewrite, not a race.
+ * append that caused it (erasure, by contrast, waits for a later sweep), so only the entry being written, and the
+ * one before it in a page read mid-write, can legitimately disagree with the replay; anything older is a rewrite,
+ * not a race. An entry that still says `applied: "false"` gets PENDING_DERIVED_WINDOW instead — wider, because a
+ * crashed writer is real, but bounded, because the flag is not hashed and whoever holds the database sets it.
  */
 export const DERIVED_WINDOW = 2;
+/**
+ * The same window for an entry that still says `applied: "false"`. A crashed writer can leave an append pending
+ * while later entries land on top, so a pending entry deserves more grace than a settled one — but `applied` is
+ * not hashed, so it cannot buy unlimited grace. Without a bound here, anyone with database access could park a
+ * rewritten derived state behind a flag they control and hold the finding at "warning" forever, at any depth.
+ * Writers apply pending entries oldest-first on every append, so a genuine one is resolved long before this.
+ */
+export const PENDING_DERIVED_WINDOW = ERASURE_WINDOW;
 
 export interface EntryResult { seq: number; ok: boolean }
 
@@ -353,7 +362,8 @@ export class ChainVerifier {
       // Derived state is recomputable from the signed chain, so a mismatch is unambiguous — except while the
       // entry that caused it is still being applied. That is the only honest excuse, and it is narrow.
       const by = this.changedBy.get(k.id);
-      const inFlight = by !== undefined && (this.unapplied.has(by) || by >= this.kept.length - DERIVED_WINDOW);
+      const window = this.unapplied.has(by!) ? PENDING_DERIVED_WINDOW : DERIVED_WINDOW;
+      const inFlight = by !== undefined && by >= this.kept.length - window;
       const severity: Finding["severity"] = inFlight ? "warning" : "critical";
       const d = m.d;
       if (!d || typeof d !== "object") {

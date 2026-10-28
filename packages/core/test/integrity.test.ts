@@ -1,7 +1,7 @@
 /** Integrity fixes: resurrection behind an unhashed flag, hostile checkpoint fields, resumed verification, frontiers. */
 import { describe, expect, it } from "vitest";
 import {
-  ChainVerifier, ERASURE_WINDOW, buildCheckpoint, checkpointProblem, frontierAppendHex, frontierRootHex, popcount, rootHex, signCheckpoint,
+  ChainVerifier, DERIVED_WINDOW, ERASURE_WINDOW, PENDING_DERIVED_WINDOW, buildCheckpoint, checkpointProblem, frontierAppendHex, frontierRootHex, popcount, rootHex, signCheckpoint,
   verifySpace, type Checkpoint,
 } from "../src/index";
 import { SPACE, TestChain, checkpointAt, keys } from "./helpers";
@@ -30,6 +30,42 @@ describe("erasure in progress", () => {
     const old = await resurrected(ERASURE_WINDOW + 5);
     expect(old.status).toBe("tampered");
     expect(old.findings.find((f) => f.rule === "content")).toMatchObject({ seq: 0, severity: "critical" });
+  });
+});
+
+/**
+ * A superseded memory flipped back to active, with the supersession that caused it flagged "pending". `applied`
+ * is not hashed, so this is the one lever a server with database access has over the verifier's severity.
+ */
+async function unsuperseded(after: number) {
+  const chain = new TestChain();
+  await chain.add({ text: "Ada is on the Starter plan.", subject: "customer:ada" }); // 0
+  await chain.add({ op: "link", kind: "supersede", text: "Ada upgraded.", subject: "customer:ada", refs: { supersedes: [chain.id(0)], target: chain.id(0) } }); // 1
+  for (let i = 0; i < after; i++) await chain.add({ text: `later ${i}` });
+  const es = chain.clone();
+  // The tamper: #0 reads active again, so agents keep using the outdated fact.
+  es[0].metadata = { ...es[0].metadata, d: { ...es[0].metadata.d, status: "active", supersededBy: null }, status: "active" };
+  es[1].metadata = { ...es[1].metadata, applied: "false" };
+  return verifySpace({ space: SPACE, entries: es });
+}
+
+describe("a derived mismatch held open by the unhashed `applied` flag", () => {
+  it("is a warning while the supersession really could still be landing", async () => {
+    const recent = await unsuperseded(0);
+    expect(recent.status).toBe("warning");
+    expect(recent.findings.find((f) => f.rule === "derived")?.severity).toBe("warning");
+  });
+
+  // The whole point of the window: the flag is an excuse for a race, and a race does not last 30 entries.
+  it("becomes critical once the chain has grown past the window, whatever the unhashed flag says", async () => {
+    const old = await unsuperseded(PENDING_DERIVED_WINDOW + 5);
+    expect(old.status).toBe("tampered");
+    expect(old.findings.find((f) => f.rule === "derived")).toMatchObject({ seq: 0, severity: "critical" });
+  });
+
+  it("gives a pending entry a longer grace than a settled one, but still a bounded one", () => {
+    expect(PENDING_DERIVED_WINDOW).toBeGreaterThan(DERIVED_WINDOW);
+    expect(Number.isFinite(PENDING_DERIVED_WINDOW)).toBe(true);
   });
 });
 
