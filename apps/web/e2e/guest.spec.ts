@@ -70,6 +70,48 @@ test.describe.serial("the read-only guest demo", () => {
     await ctx.close();
   });
 
+  test("a guest's chain carries headers and hashes, never a content salt", async ({ browser, baseURL }) => {
+    const ctx = await browser.newContext();
+    await ctx.addCookies([{ name: "engram_consent", value: "accepted", url: baseURL! }]);
+    const page = await ctx.newPage();
+    expect((await page.request.post("/api/demo/enter")).ok()).toBe(true);
+
+    const res = await page.request.get(`/api/app/spaces/${DEMO_SPACE}/chain?limit=500`);
+    expect(res.status()).toBe(200);
+    const body = await res.text();
+    // A salt beside a content hash is what makes a guessed text checkable offline. /export is closed to a
+    // viewer for exactly this; reading the same documents one page at a time must not reopen it.
+    expect(body).not.toContain("salt");
+    const { entries } = JSON.parse(body) as { entries: { $id: string; h?: unknown; hash?: string; metadata?: unknown }[] };
+    expect(entries.length).toBeGreaterThan(0);
+    for (const e of entries) {
+      expect(e.metadata).toBeUndefined();
+      expect(e.h).toBeDefined();
+      expect(typeof e.hash).toBe("string");
+    }
+    // Deep mode has nothing to hand a viewer either: vectors carry the meaning of the text.
+    const deep = await page.request.get(`/api/app/spaces/${DEMO_SPACE}/chain?limit=5&vectors=1`);
+    const deepBody = (await deep.json()) as { entries: { vector?: number[] }[] };
+    for (const e of deepBody.entries) expect(e.vector).toBeUndefined();
+    await ctx.close();
+  });
+
+  test("the guest chain page still draws the chain from headers alone", async ({ browser, baseURL }) => {
+    const ctx = await browser.newContext();
+    await ctx.addCookies([{ name: "engram_consent", value: "accepted", url: baseURL! }]);
+    const page = await ctx.newPage();
+    expect((await page.request.post("/api/demo/enter")).ok()).toBe(true);
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+
+    await page.goto(`/app/${DEMO_SPACE}/chain`);
+    // Entries with no `metadata` used to throw here and leave a guest an empty page.
+    await expect(page.getByRole("heading", { name: /Chain/ }).first()).toBeVisible();
+    await expect(page.locator('[data-testid="chain-strip"], svg, canvas').first()).toBeVisible({ timeout: 15_000 });
+    expect(errors, errors.join("\n")).toEqual([]);
+    await ctx.close();
+  });
+
   test("a member of the same account still sees every write control", async ({ page, baseURL }) => {
     await page.context().addCookies([{ name: "engram_consent", value: "accepted", url: baseURL! }]);
     await page.goto("/login");

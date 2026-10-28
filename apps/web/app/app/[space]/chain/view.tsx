@@ -3,8 +3,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type ChainEntry, type Checkpoint, type Report } from "@engram/core";
+import { type Checkpoint, type Report } from "@engram/core";
 import { api } from "@/lib/client/api";
+import { entryBlock, type AnyEntry } from "@/lib/client/entry-shape";
 import { useSpaceInfo } from "@/lib/client/hooks";
 import { checkSignature, sigState, type SigCheck } from "@/lib/client/proof";
 import { hasPinnedKeys, runVerification, trustedKeyFor } from "@/lib/client/verify";
@@ -15,10 +16,10 @@ import { ReportVerdict } from "@/components/report-status";
 import { PageHeader, useCanWrite, useOpenMemory } from "@/components/space-shell";
 import { Button, Card, CopyButton, ErrorNote, Pill, Skeleton, cx, useToast } from "@/components/ui";
 
-type Page = { entries: ChainEntry[]; next: string | null };
+type Page = { entries: AnyEntry[]; next: string | null };
 
-async function fetchAll(space: string, vectors: boolean): Promise<ChainEntry[]> {
-  const out: ChainEntry[] = [];
+async function fetchAll(space: string, vectors: boolean): Promise<AnyEntry[]> {
+  const out: AnyEntry[] = [];
   let cursor: string | null = null;
   for (;;) {
     const p: Page = await api<Page>(`/api/app/spaces/${space}/chain?limit=500${vectors ? "&vectors=1" : ""}${cursor ? `&cursor=${cursor}` : ""}`);
@@ -59,7 +60,7 @@ export function ChainView() {
     return () => { live = false; };
   }, [cps.data, pub, info.data]);
 
-  const blocks = useMemo(() => (chain.data ?? []).map((e) => ({ seq: Number(e.metadata.seq), op: e.metadata.op, status: e.metadata.d?.status, hash: e.metadata.hash, text: e.metadata.c?.text })), [chain.data]);
+  const blocks = useMemo(() => (chain.data ?? []).map(entryBlock), [chain.data]);
   const cpSizes = useMemo(() => (cps.data?.checkpoints ?? []).map((c) => Number(c.size)), [cps.data]);
 
   const recordServer = useMutation({

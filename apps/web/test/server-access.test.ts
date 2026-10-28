@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createLocalBackend, setConfig, toErrorBody, type Backend, type SpaceInvite, type TeamMember } from "@engram/server";
+import type { ChainEntry } from "@engram/core";
 import { assertViewerReadAllowed, originAllowed, VIEWER_ROLE } from "@/lib/server/access";
 import { clientIpFrom } from "@/lib/server/limits";
-import { publicInvites, publicMembers } from "@/lib/server/shapes";
+import { publicChainEntries, publicInvites, publicMembers } from "@/lib/server/shapes";
 import { admitGuest, GUEST_ENTER_LIMIT, MAX_LIVE_GUESTS, sweepGuestSlots } from "@/lib/server/guest-slots";
 
 const SP = "/api/app/spaces/abcd1234";
@@ -145,5 +146,38 @@ describe("demo guest admission", () => {
     expect(await sweepGuestSlots(b, Date.now() + 2 * GUEST_ENTER_LIMIT.windowMs)).toBe(1);
     // Swept, so the window starts clean rather than leaving a file behind for good.
     await expect(admitGuest(b, "203.0.113.9", t)).resolves.toBeUndefined();
+  });
+});
+
+describe("the chain a viewer receives carries no content salt", () => {
+  const entry = (seq: string): ChainEntry => ({
+    $id: `m_demo_${seq}`,
+    metadata: {
+      c: { salt: "eVpf1eNbLC8joDm3AfcEIQ==", text: "Orbit Clinics mainly uses the appointment reminders." },
+      d: { access: "00000000", status: "active", concept: null, validTo: null, forgottenAt: null, forgottenBy: null, lastAccessAt: null, relateStatus: "skipped", supersededBy: null, contradictedBy: [] },
+      h: { v: "1", op: "remember", seq, kind: "fact", refs: { target: null, related: [], supersedes: [], contradicts: [], derivedFrom: [] }, agent: "a_demo_x", model: "nomic-embed-text", space: "demo", source: null, embHash: "e".repeat(64), subject: "customer:sara", prevHash: "p".repeat(64), createdAt: "2026-10-19T08:00:07.000Z", validFrom: "2026-10-19T08:00:07.000Z", confidence: "07", importance: "06", contentHash: "c".repeat(64) },
+      op: "remember",
+      hash: "h".repeat(64),
+      idem: null,
+    } as unknown as ChainEntry["metadata"],
+    vector: [0.1, 0.2],
+  });
+
+  // The salt is why /export is closed to viewers: text alone is the demo's whole point, but salt beside a
+  // content hash turns "is this what it says" into an offline guessing game against every other space.
+  it("strips c, the derived block and the vector for a viewer, keeping what the verifier needs", () => {
+    const out = publicChainEntries([entry("000000000000")], true);
+    expect(out).toEqual([{ $id: "m_demo_000000000000", h: entry("000000000000").metadata.h, hash: "h".repeat(64) }]);
+    expect(JSON.stringify(out)).not.toContain("salt");
+    expect(JSON.stringify(out)).not.toContain("Orbit Clinics");
+  });
+
+  it("hands a member the whole entry, so the in-browser verifier can still recompute content hashes", () => {
+    const e = entry("000000000001");
+    expect(publicChainEntries([e], false)).toEqual([e]);
+  });
+
+  it("never lets a viewer pull embedding vectors, which carry the text's meaning", () => {
+    expect(publicChainEntries([entry("000000000002")], true)[0]).not.toHaveProperty("vector");
   });
 });

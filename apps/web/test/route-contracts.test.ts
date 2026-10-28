@@ -93,3 +93,23 @@ describe("page responses", () => {
     expect(PREFETCH_CSP).toContain("frame-ancestors 'none'");
   });
 });
+
+describe("the chain endpoint is the one bulk read a viewer keeps, so it must stay projected", () => {
+  // /export was closed to viewers because it hands out content salts. /chain reads the same documents and
+  // would hand out the same salts page by page, which is the same leak with more requests.
+  it("projects every entry through publicChainEntries before returning it", () => {
+    const src = space("chain/route.ts");
+    expect(src).toContain("publicChainEntries(");
+    expect(src).toMatch(/entries: publicChainEntries\([\s\S]*?access\.viewer,?\s*\)/);
+  });
+
+  it("refuses deep mode to a viewer rather than reading vectors it will not return", () => {
+    expect(space("chain/route.ts")).toMatch(/sp\.get\("vectors"\) === "1" && !access\.viewer/);
+  });
+
+  it("the public v1 chain never grew a text or salt field", () => {
+    const src = read("app/api/v1/spaces/[key]/chain/route.ts");
+    expect(src).toContain("h: d.metadata.h");
+    expect(src).not.toMatch(/metadata\.c\b/);
+  });
+});

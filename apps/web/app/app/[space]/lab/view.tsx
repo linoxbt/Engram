@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ATTACKS, type AttackInfo, type ChainEntry, type Checkpoint, type Report } from "@engram/core";
+import { entryBlock, entryText } from "@/lib/client/entry-shape";
 import { api } from "@/lib/client/api";
 import { finishSeeding, seedErrorReason, type SeedProgress, type SeedState } from "@/lib/client/seed";
 import { useSpaceInfo } from "@/lib/client/hooks";
@@ -43,7 +44,7 @@ export function LabView() {
   const [cards, setCards] = useState<Record<string, CardState>>({});
   const [states, setStates] = useState<Map<number, BlockState>>(new Map());
   const [focus, setFocus] = useState<number | null>(null);
-  const target = useMemo(() => chain.data?.find((e) => /downgraded/i.test(e.metadata.c?.text ?? ""))?.metadata.seq, [chain.data]);
+  const target = useMemo(() => chain.data?.find((e) => /downgraded/i.test(entryText(e)))?.metadata.seq, [chain.data]);
   const patch = (id: string, p: Partial<CardState> | ((c: CardState) => CardState)) => setCards((c) => ({ ...c, [id]: typeof p === "function" ? p(c[id] ?? {}) : { ...(c[id] ?? {}), ...p } }));
 
   const refresh = () => Promise.all([qc.invalidateQueries({ queryKey: ["space", space, "chain-all"] }), qc.invalidateQueries({ queryKey: ["space", space, "checkpoints"] })]);
@@ -131,7 +132,7 @@ export function LabView() {
   }
 
   const busy = Object.values(cards).some((c) => c.attacking || c.verifying) || reset.isPending;
-  const blocks = (chain.data ?? []).map((e) => ({ seq: Number(e.metadata.seq), op: e.metadata.op, status: e.metadata.d?.status, hash: e.metadata.hash, text: e.metadata.c?.text }));
+  const blocks = (chain.data ?? []).map(entryBlock);
   const sealHint = !signing ? undefined : canSeal ? (signing.inline ? "Sign a checkpoint at the head now." : "Ask the checkpoint Function to sign the head.") : "No signing key here and no checkpoint Function configured.";
   return (
     <div className="space-y-4">
